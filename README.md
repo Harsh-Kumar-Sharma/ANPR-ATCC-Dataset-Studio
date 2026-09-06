@@ -36,3 +36,11 @@ Read in this order: 1. `docs/01_PRD.md` 2.
 Codex must inspect the repository first and continue from the first
 incomplete phase in `02_IMPLEMENTATION_PLAN.md`. Do not regenerate
 working code from scratch.
+
+## Getting Started (Phase 0)
+
+-   `backend/` — FastAPI backend. See `backend/README.md`.
+-   `desktop/` — Electron + React + TypeScript desktop shell. See
+    `desktop/README.md`.
+
+Current status: `docs/HANDOFF.md`.

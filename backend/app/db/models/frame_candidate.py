@@ -1,0 +1,41 @@
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import Float, ForeignKey, Integer, JSON, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class FrameCandidate(Base):
+    """A candidate frame within a vehicle track. See docs/05_DATABASE_DESIGN.md.
+
+    ``blur_score``/``sharpness_score``/``area_ratio``/``flags_json``
+    are populated by the Phase 3 frame-quality signals and stay null
+    until then - Phase 2 only records what the detector/tracker
+    directly observed.
+    """
+
+    __tablename__ = "frame_candidates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    track_id: Mapped[str] = mapped_column(ForeignKey("tracks.id"), nullable=False, index=True)
+    frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    timestamp_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    image_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    bbox_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    detector_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    detector_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    blur_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sharpness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    area_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    flags_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)

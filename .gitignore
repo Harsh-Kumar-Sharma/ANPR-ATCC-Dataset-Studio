@@ -1,0 +1,22 @@
+# Backend (Python)
+backend/.venv/
+backend/data/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+
+# Desktop (Node/Electron)
+desktop/node_modules/
+desktop/dist/
+desktop/dist-electron/
+desktop/release/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
