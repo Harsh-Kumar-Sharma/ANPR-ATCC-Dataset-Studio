@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { IconAlert, IconBox, IconCheck } from "../Icons";
 import type { DatasetVersion, Project } from "../types";
 
 interface Props {
@@ -51,21 +52,37 @@ function DatasetPanel({ project }: Props) {
 
   return (
     <div className="dataset-panel">
-      <h3>Dataset</h3>
-      <button disabled={exporting} onClick={handleExport}>
-        {exporting ? "Exporting..." : "Export Dataset Version"}
+      <div className="section-title">
+        <IconBox /> Dataset
+      </div>
+
+      <button className="btn-primary btn-block" disabled={exporting} onClick={handleExport}>
+        {exporting ? "Exporting…" : "Export Dataset Version"}
       </button>
-      {error && <p className="error">{error}</p>}
-      {message && <p className="status">{message}</p>}
+
+      {error && (
+        <p className="error" style={{ marginTop: "0.6rem" }}>
+          <IconAlert /> {error}
+        </p>
+      )}
+      {message && (
+        <p className="status" style={{ marginTop: "0.6rem" }}>
+          <IconCheck /> {message}
+        </p>
+      )}
+
       <ul className="dataset-version-list">
         {versions.map((v) => (
           <li key={v.id}>
-            v{v.version} - seed {v.split_seed}
+            <span>
+              v{v.version} · seed {v.split_seed}
+            </span>
             <button onClick={() => handleRetrainingHandoff(v)}>Retraining handoff</button>
           </li>
         ))}
         {versions.length === 0 && <li className="empty">No exports yet.</li>}
       </ul>
+
       {handoffContent && (
         <pre className="handoff-instructions">
           {`v${versions.find((v) => v.id === handoffVersionId)?.version}:\n${handoffContent}`}

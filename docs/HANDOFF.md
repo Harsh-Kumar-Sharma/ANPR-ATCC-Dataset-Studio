@@ -3,6 +3,196 @@
 This file is updated by Codex after every meaningful implementation
 session.
 
+## Post-Build Session: UI/UX Redesign
+
+Direct user request ("make ui and ux better"). A live design review
+before starting (stub-detector backend + Vite dev server driven through
+the browser tool) found the app functionally complete but visually
+unstyled: default-HTML look, no spacing/typography system, all 6 sidebar
+panels stacked in one long column causing a double-scrollbar overflow
+bug, and - most importantly - the Track Review screen (the single
+most-used screen) rendering its frame image tiny and cramped. This
+session was a full design-system rewrite, not piecemeal CSS tweaks.
+
+### What changed
+
+-   **`desktop/src/index.css`** rewritten from scratch as a token-based
+    design system: light-theme tokens on `:root`, dark overrides via
+    `@media (prefers-color-scheme: dark)` (matches the existing
+    `color-scheme: light dark` pattern). Tokens for background layers,
+    borders, text, accent, success/warning/danger, radii, shadows, and
+    fonts, plus component classes for buttons, badges, cards, and every
+    panel's specific layout.
+-   **`desktop/src/Icons.tsx`** (new): small inline SVG icon set
+    (folder, film, broadcast, box, chart, arrow-left, play, check,
+    alert, x, inbox) - chosen over an icon library dependency since the
+    set needed is small and fixed.
+-   **`desktop/src/App.tsx`**: replaced the single vertical stack of all
+    6 panels with a **tab-based sidebar** (Sources / Live / Dataset /
+    Insights). This directly fixes the double-scrollbar/overflow bug.
+    Selecting a track from an Insights-tab queue (Active Learning,
+    disagreements) now switches back to the Sources tab so the review
+    workspace is actually visible.
+-   **Every sidebar component** (`ProjectPicker`, `SourcePanel`,
+    `TrackBrowser`, `RtspPanel`, `DatasetPanel`, `EvaluationPanel`,
+    `ActiveLearningPanel`) rewritten to use the new tokens/classes:
+    section headers with icons, `.card`-wrapped stat blocks, semantic
+    badges (`bucket-*`, `review-*`), consistent button variants
+    (`btn-primary`/`btn-ghost`/`btn-danger-ghost`).
+-   **`TrackReview.tsx`** (the main workspace, redesigned last): large
+    prominent image viewer (`.frame-image-wrap`, checkered-transparency
+    background for the cropped frame, up to 480px tall) with the bbox
+    overlay drawn as an SVG `<rect>`, a horizontal filmstrip of
+    thumbnails, and the review controls (class picker, numeric bbox
+    editor, accept/hard/failed actions, OCR panel) moved into cards on
+    the right in a responsive 2-column grid that collapses to 1 column
+    under 900px. Keyboard shortcuts are now shown as `.kbd` pill tags
+    instead of plain text. The bbox editor stayed numeric-input-only
+    (no drag-to-resize on the image) - out of scope for a visual
+    redesign pass.
+
+### Verified
+
+-   `npx tsc -b` in `desktop/` - clean, no errors.
+-   `npx vitest run` in `desktop/` - `tests/App.test.tsx` still passes
+    against the restructured `App.tsx`.
+-   Live-verified in the browser tool against the real dev server and a
+    stub-detector backend with real seeded data (project/source/track):
+    ProjectPicker, all 4 sidebar tabs, and the Track Review screen all
+    render correctly with no layout regressions; clicked through
+    tab-switching, "Review" from an Active Learning queue item
+    (confirmed it switches back to Sources tab with the right track
+    selected), and a full class-select + Accept submission (confirmed
+    the badge updates to ACCEPTED and the success message renders).
+-   Not tested: RTSP panel's live/reconnecting/disconnected states
+    (would need an actual or faked RTSP source), and Windows
+    high-contrast/forced-colors accessibility modes.
+
+## Post-Phase-9 Session: Desktop Build & Packaging
+
+Not one of `docs/02_IMPLEMENTATION_PLAN.md`'s numbered phases - a
+direct user request ("how do I make a build of this") to turn the
+working dev setup into a real, distributable Windows build. Verified
+by actually running the packaged app, not just configuring it.
+
+### What was built
+
+-   **`backend/launcher.py`**: the PyInstaller entry point (separate
+    from `app/main.py`, which stays the dev-mode entry point via
+    `uvicorn app.main:app`). Points data/workspace/model-weight paths
+    at `%LOCALAPPDATA%\ANPR-ATCC-Dataset-Studio\` (never next to the
+    executable - an installed app under Program Files is often not
+    writable without elevation), creates the DB schema, starts
+    uvicorn.
+-   **PyInstaller packaging** of the backend (`backend/README.md` has
+    the exact command): onedir output, ~1.1GB, bundling torch,
+    torchvision, onnxruntime, opencv, ultralytics, RapidOCR, and the
+    `trackers`/`supervision` packages this project depends on.
+-   **`electron-builder`** configured in `desktop/package.json`
+    (`npm run dist`): packages the Electron app plus the PyInstaller
+    backend (via `extraResources`) into a Windows build.
+-   **`electron/main.ts`** now spawns the bundled backend as a child
+    process on launch (waiting for `/health` before loading the UI)
+    and stops it on quit - previously it only ever loaded the
+    renderer, assuming a backend was already running separately.
+
+### Three real bugs found by actually running the packaged build, not by reading PyInstaller's docs
+
+1.  Assumed PyInstaller onedir puts bundled data files next to the
+    `.exe`. Wrong as of PyInstaller 6.x - they're under an `_internal/`
+    subfolder. Would have mattered less after fix #2 below removed the
+    need for those files entirely, but is the reason fix #2 was found
+    in the first place (chasing why `alembic.ini` wasn't where
+    expected led to actually running the build).
+2.  Alembic's migration path (`command.upgrade`) dynamically
+    file-loads `env.py`, which itself dynamically file-loads every
+    revision script - this doesn't survive being frozen
+    (`ModuleNotFoundError: No module named 'app'` from inside the
+    packaged exe, despite `import app` working everywhere else in the
+    same process). Fixed by not using Alembic in the packaged build at
+    all: `Base.metadata.create_all()` produces an identical end state
+    for a fresh install (there is no existing packaged-app database to
+    migrate *from* yet), without any of that fragility. This is a
+    deliberate, documented scope limit, not an oversight - see
+    `launcher.py`'s docstring.
+3.  `uvicorn.run("app.main:app", ...)` (the string form) makes uvicorn
+    re-import the module by name at runtime - same class of problem,
+    confirmed by running it (`Could not import module "app.main"`).
+    Fixed by importing the FastAPI `app` object directly and passing
+    it to `uvicorn.run()` instead.
+
+After all three fixes, the packaged `.exe` was run directly (not just
+built) and verified: health check, project creation, video import, and
+a **full detect+track run** (loading `yolo26n.pt` through torch,
+running ByteTrack) all completed successfully, with data correctly
+landing under `%LOCALAPPDATA%`. RapidOCR specifically wasn't
+re-exercised inside the frozen build in this pass (no track existed to
+run it against) - worth a specific check before relying on OCR in a
+packaged build, though `--collect-all rapidocr` and
+`--collect-all onnxruntime` (the same runtime the working YOLO path
+also depends on) make a failure here less likely than it would
+otherwise be.
+
+### electron-builder's NSIS target: a real environment limitation, not a code bug
+
+Building the actual installer (`npm run dist`, `win.target: "nsis"`)
+fails in this sandbox: electron-builder downloads a `winCodeSign`
+package (bundling macOS signing tools alongside the Windows ones) and
+extracting it requires creating symlinks, which Windows blocks for
+non-elevated processes unless Developer Mode is on. `CSC_IDENTITY_AUTO_DISCOVERY=false`
+(the standard fix for the code-signing-only case) delayed but didn't
+avoid this - NSIS packaging itself hits the same requirement later.
+
+This is a system-level permission question, not something to route
+around silently - "modifying system or security settings" is on this
+session's explicit prohibited-actions list, so enabling Developer Mode
+was never attempted. To get the real NSIS `.exe` installer, do one of:
+
+-   Enable Developer Mode: Settings -> Privacy & security -> For
+    developers -> Developer Mode -> On. Then `npm run dist` in
+    `desktop/` should complete the NSIS step too.
+-   Run `npm run dist` from an elevated (Administrator) terminal.
+
+**What was verified instead, since the config target itself couldn't
+be**: `npx electron-builder --win dir` (skips NSIS, produces
+`release/win-unpacked/` directly) completed the actual packaging step
+successfully every time - the reported failure happens in a later,
+non-essential step that runs regardless of target. The resulting
+`release/win-unpacked/ANPR-ATCC Dataset Studio.exe` **was launched
+directly and confirmed working**: Electron started, spawned
+`anpr-atcc-backend.exe` as a child process automatically, and the
+backend became healthy within its normal startup window - the full
+intended runtime behavior, working end to end, just not yet wrapped in
+an NSIS installer.
+
+### Known issues / assumptions (this session)
+
+-   `win.target` in `desktop/package.json` is still `"nsis"` (the
+    intended default) - it was not changed to `"dir"` permanently,
+    since NSIS is genuinely what should ship once Developer Mode/admin
+    is available. Don't "fix" the failing NSIS build by silently
+    swapping the target without the user asking for that trade-off.
+-   The backend build is ~1.1GB and the full packaged app will be
+    larger - no attempt was made to slim it down (e.g. dropping the
+    non-headless `opencv-python` that coexists with
+    `opencv-python-headless` in the venv, which is itself worth
+    investigating separately - see below).
+-   Noticed but did not fix: both `opencv-python` and
+    `opencv-python-headless` are installed in `backend/.venv`. Only
+    `opencv-python-headless` is an intended dependency
+    (`pyproject.toml`); the non-headless one arrived transitively
+    (likely via the `ultralytics` ecosystem) and its coexistence with
+    the headless variant hasn't caused an observed problem, but is
+    worth a closer look before shipping - two `cv2` native binary sets
+    loaded into the same process is the kind of thing that works until
+    it doesn't.
+-   No auto-update mechanism, code signing, or release/CI pipeline -
+    this covers "can a build be produced and does it run", not a
+    shippable release process.
+-   Cross-platform (`mac`/`linux` targets in `package.json`) are
+    configured but entirely unverified - this session only had a
+    Windows sandbox to test in.
+
 ## Current Phase
 
 Phase 9 --- RTSP (complete) - **this was the last phase in

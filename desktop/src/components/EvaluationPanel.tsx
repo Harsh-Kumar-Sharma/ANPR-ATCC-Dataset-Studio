@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { IconAlert, IconChart } from "../Icons";
 import type { EvaluationReport, Track } from "../types";
 
 interface Props {
@@ -35,43 +36,68 @@ function EvaluationPanel({ tracks }: Props) {
 
   return (
     <div className="evaluation-panel">
-      <h3>Evaluation (latest run)</h3>
-      <button disabled={loading} onClick={handleLoad}>
-        {loading ? "Loading..." : "Load Evaluation"}
+      <div className="section-title">
+        <IconChart /> Evaluation (latest run)
+      </div>
+
+      <button className="btn-primary btn-block" disabled={loading} onClick={handleLoad}>
+        {loading ? "Loading…" : "Load Evaluation"}
       </button>
-      {error && <p className="error">{error}</p>}
+
+      {error && (
+        <p className="error" style={{ marginTop: "0.6rem" }}>
+          <IconAlert /> {error}
+        </p>
+      )}
+
       {report && (
-        <div className="evaluation-report">
-          <p>
-            Tracks: {report.track_counts.confirmed} confirmed / {report.track_counts.failed} failed /{" "}
-            {report.track_counts.unreviewed} unreviewed (of {report.track_counts.total})
-          </p>
-          <p>
-            Detection recall:{" "}
-            {report.detection_recall === null
-              ? "n/a (freeze this source with a ground-truth count first)"
-              : `${(report.detection_recall * 100).toFixed(0)}%`}
-          </p>
-          <p>
-            Duplicate track pairs: {report.duplicate_track_pairs.length}, fragmented track pairs:{" "}
-            {report.fragmented_track_pairs.length}
-          </p>
-          <p>
-            OCR agreement:{" "}
-            {report.ocr_metrics.agreement_rate === null
-              ? "n/a"
-              : `${(report.ocr_metrics.agreement_rate * 100).toFixed(0)}% (${report.ocr_metrics.tracks_with_ocr} track(s))`}
-          </p>
-          <p>Class distribution:</p>
+        <div className="card evaluation-report" style={{ marginTop: "0.8rem" }}>
+          <div className="stat-row">
+            <span>Confirmed / failed / unreviewed</span>
+            <strong>
+              {report.track_counts.confirmed} / {report.track_counts.failed} / {report.track_counts.unreviewed}
+            </strong>
+          </div>
+          <div className="stat-row">
+            <span>Detection recall</span>
+            <strong>{report.detection_recall === null ? "n/a" : `${(report.detection_recall * 100).toFixed(0)}%`}</strong>
+          </div>
+          {report.detection_recall === null && (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85em", margin: "-0.2rem 0 0" }}>
+              Freeze this source with a ground-truth count (Sources tab) to measure recall.
+            </p>
+          )}
+          <div className="stat-row">
+            <span>Duplicate / fragmented pairs</span>
+            <strong>
+              {report.duplicate_track_pairs.length} / {report.fragmented_track_pairs.length}
+            </strong>
+          </div>
+          <div className="stat-row">
+            <span>OCR agreement</span>
+            <strong>
+              {report.ocr_metrics.agreement_rate === null
+                ? "n/a"
+                : `${(report.ocr_metrics.agreement_rate * 100).toFixed(0)}% (${report.ocr_metrics.tracks_with_ocr})`}
+            </strong>
+          </div>
+
+          <div className="section-title" style={{ marginTop: "0.3rem" }}>
+            Class distribution
+          </div>
           <ul className="class-distribution-list">
             {Object.entries(report.class_distribution).map(([name, count]) => (
               <li key={name}>
-                {name}: {count}
+                <span>{name}</span>
+                <strong>{count}</strong>
               </li>
             ))}
             {Object.keys(report.class_distribution).length === 0 && <li className="empty">None yet.</li>}
           </ul>
-          <p>Failure gallery ({report.failure_gallery.length}):</p>
+
+          <div className="section-title" style={{ marginTop: "0.3rem" }}>
+            Failure gallery ({report.failure_gallery.length})
+          </div>
           <div className="failure-gallery">
             {report.failure_gallery.map((item) => (
               <img
@@ -81,6 +107,7 @@ function EvaluationPanel({ tracks }: Props) {
                 title={`${item.bucket ?? "?"} / ${item.review_status}`}
               />
             ))}
+            {report.failure_gallery.length === 0 && <span className="empty">None.</span>}
           </div>
         </div>
       )}

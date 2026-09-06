@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { IconAlert, IconCheck, IconFilm, IconPlay } from "../Icons";
 import type { Project, Source } from "../types";
 
 interface Props {
@@ -69,7 +70,10 @@ function SourcePanel({ project, onProcessed }: Props) {
 
   return (
     <div className="source-panel">
-      <h3>Sources</h3>
+      <div className="section-title">
+        <IconFilm /> Sources
+      </div>
+
       <form onSubmit={handleImport} className="import-form">
         <input
           type="text"
@@ -77,30 +81,47 @@ function SourcePanel({ project, onProcessed }: Props) {
           value={path}
           onChange={(e) => setPath(e.target.value)}
         />
-        <button type="submit">Import</button>
+        <button type="submit" className="btn-primary" disabled={!path.trim()}>
+          Import
+        </button>
       </form>
 
-      {error && <p className="error">{error}</p>}
-      {status && <p className="status">{status}</p>}
+      {error && (
+        <p className="error" style={{ marginBottom: "0.6rem" }}>
+          <IconAlert /> {error}
+        </p>
+      )}
+      {status && (
+        <p className="status" style={{ marginBottom: "0.6rem" }}>
+          <IconCheck /> {status}
+        </p>
+      )}
 
       <ul className="source-list">
         {sources.map((s) => (
           <li key={s.id}>
-            <span title={s.path_or_uri}>{s.path_or_uri.split(/[\\/]/).pop()}</span>
-            <span className="meta">
-              {s.width}x{s.height} @ {s.fps}fps, {s.frame_count}f
+            <span className="source-name" title={s.path_or_uri}>
+              {s.path_or_uri.split(/[\\/]/).pop()}
             </span>
-            <button disabled={busySourceId === s.id} onClick={() => handleProcess(s)}>
-              {busySourceId === s.id ? "Processing..." : "Detect + Track"}
-            </button>
+            <span className="meta">
+              {s.width}x{s.height} @ {s.fps}fps · {s.frame_count} frames
+            </span>
+            <div className="source-actions">
+              <button disabled={busySourceId === s.id} onClick={() => handleProcess(s)}>
+                <IconPlay />
+                {busySourceId === s.id ? "Processing…" : "Detect + Track"}
+              </button>
+            </div>
             {s.is_frozen ? (
-              <span className="frozen-badge">frozen - {s.ground_truth_vehicle_count} real vehicles</span>
+              <span className="frozen-badge">
+                <IconCheck /> Frozen · {s.ground_truth_vehicle_count} real vehicles
+              </span>
             ) : (
               <span className="freeze-control">
                 <input
                   type="number"
                   min={1}
-                  placeholder="ground truth count"
+                  placeholder="ground truth #"
                   value={groundTruthDrafts[s.id] ?? ""}
                   onChange={(e) => setGroundTruthDrafts((prev) => ({ ...prev, [s.id]: e.target.value }))}
                 />

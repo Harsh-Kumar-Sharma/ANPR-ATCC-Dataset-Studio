@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { IconAlert, IconInbox } from "../Icons";
 import type { DisagreementItem, Project, QueueItem, Track } from "../types";
 
 interface Props {
@@ -9,6 +10,12 @@ interface Props {
 }
 
 type Tab = "low-confidence" | "hard-failed" | "disagreements";
+
+const TAB_LABEL: Record<Tab, string> = {
+  "low-confidence": "Low confidence",
+  "hard-failed": "Hard/Failed",
+  disagreements: "Disagreements",
+};
 
 function ActiveLearningPanel({ project, tracks, onSelectTrack }: Props) {
   const [tab, setTab] = useState<Tab | null>(null);
@@ -35,26 +42,33 @@ function ActiveLearningPanel({ project, tracks, onSelectTrack }: Props) {
 
   return (
     <div className="active-learning-panel">
-      <h3>Active Learning</h3>
-      <div className="al-tabs">
-        <button className={tab === "low-confidence" ? "selected" : ""} onClick={() => load("low-confidence")}>
-          Low confidence
-        </button>
-        <button className={tab === "hard-failed" ? "selected" : ""} onClick={() => load("hard-failed")}>
-          Hard/Failed
-        </button>
-        <button className={tab === "disagreements" ? "selected" : ""} onClick={() => load("disagreements")}>
-          Disagreements
-        </button>
+      <div className="section-title">
+        <IconInbox /> Active Learning
       </div>
-      {error && <p className="error">{error}</p>}
+
+      <div className="al-tabs">
+        {(Object.keys(TAB_LABEL) as Tab[]).map((t) => (
+          <button key={t} className={tab === t ? "selected" : ""} onClick={() => load(t)}>
+            {TAB_LABEL[t]}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <p className="error">
+          <IconAlert /> {error}
+        </p>
+      )}
 
       {(tab === "low-confidence" || tab === "hard-failed") && (
         <ul className="al-queue-list">
           {queue.map((item) => (
             <li key={item.track_id}>
               <span>
-                {item.bucket ?? "?"} / {item.review_status} - {(item.confidence * 100).toFixed(0)}%
+                <span className={`badge bucket-${item.bucket ?? "unknown"}`} style={{ marginRight: "0.4rem" }}>
+                  {item.bucket ?? "?"}
+                </span>
+                {(item.confidence * 100).toFixed(0)}% confidence
               </span>
               <button onClick={() => reviewTrack(item.track_id)}>Review</button>
             </li>

@@ -9,7 +9,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dist": "npm run build && electron-builder"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -22,11 +23,43 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",
     "electron": "^32.1.2",
+    "electron-builder": "^25.1.8",
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.8",
     "vite-plugin-electron": "^0.28.8",
     "vite-plugin-electron-renderer": "^0.14.6",
     "vitest": "^2.1.2"
+  },
+  "build": {
+    "appId": "com.anpr-atcc.dataset-studio",
+    "productName": "ANPR-ATCC Dataset Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/anpr-atcc-backend",
+        "to": "backend"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "mac": {
+      "target": "dmg"
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { IconAlert, IconCheck, IconX } from "../Icons";
 import type { AtccClass, FrameCandidate, OcrCandidate, Project, Track, TrackTimeline } from "../types";
 
 interface Props {
@@ -166,9 +167,14 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
-  if (error && !timeline) return <p className="error">{error}</p>;
-  if (!timeline) return <p>Loading track...</p>;
-  if (!currentFrame) return <p>This track has no frame candidates.</p>;
+  if (error && !timeline)
+    return (
+      <p className="error" style={{ padding: "1.5rem" }}>
+        <IconAlert /> {error}
+      </p>
+    );
+  if (!timeline) return <p className="placeholder">Loading track…</p>;
+  if (!currentFrame) return <p className="placeholder">This track has no frame candidates.</p>;
 
   // The saved image is already cropped to the frame's own detected bbox
   // (see docs/HANDOFF.md Phase 4 note), so the overlay maps the edited
@@ -190,10 +196,15 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
     <div className="track-review">
       <div className="review-header">
         <h2>
-          Track {track.tracker_track_id} - {track.bucket ?? "unclassified"}
+          Track {track.tracker_track_id}
+          {track.bucket && <span className={`badge bucket-${track.bucket}`}>{track.bucket}</span>}
         </h2>
         <span className="hint">
-          Shortcuts: &larr;/&rarr; frame, A accept, H hard, F failed, [ / ] prev/next track
+          <span className="kbd">&larr;</span>/<span className="kbd">&rarr;</span> frame
+          <span className="kbd">A</span> accept
+          <span className="kbd">H</span> hard
+          <span className="kbd">F</span> failed
+          <span className="kbd">[</span>/<span className="kbd">]</span> prev/next track
         </span>
       </div>
 
@@ -214,9 +225,9 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
             </svg>
           </div>
           <p className="frame-meta">
-            frame {currentFrame.frame_index} @ {currentFrame.timestamp_ms}ms - {currentFrame.detector_class} (
+            frame {currentFrame.frame_index} @ {currentFrame.timestamp_ms}ms &middot; {currentFrame.detector_class} (
             {(currentFrame.detector_confidence * 100).toFixed(0)}%)
-            {currentFrame.flags_json?.truncated && <span className="flag"> truncated</span>}
+            {currentFrame.flags_json?.truncated && <span className="flag">truncated</span>}
           </p>
 
           <div className="filmstrip">
@@ -228,64 +239,74 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
                 title={`frame ${f.frame_index}`}
               >
                 <img src={api.frameImageUrl(f.id)} alt="" />
-                {f.flags_json?.roles.includes("best_detection") && <span className="star">*</span>}
+                {f.flags_json?.roles.includes("best_detection") && <span className="star">&#9733;</span>}
               </button>
             ))}
           </div>
         </div>
 
         <div className="review-controls">
-          <label>
-            Class
-            <select value={classId} onChange={(e) => setClassId(e.target.value === "" ? "" : Number(e.target.value))}>
-              <option value="">(none)</option>
-              {classSchema.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="card">
+            <label>
+              Class
+              <select value={classId} onChange={(e) => setClassId(e.target.value === "" ? "" : Number(e.target.value))}>
+                <option value="">(none)</option>
+                {classSchema.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <fieldset className="bbox-editor">
-            <legend>Bounding box (source-frame pixels)</legend>
-            {(["x1", "y1", "x2", "y2"] as const).map((label, i) => (
-              <label key={label}>
-                {label}
-                <input
-                  type="number"
-                  value={bbox[i]}
-                  onChange={(e) => {
-                    const next = [...bbox] as Bbox;
-                    next[i] = Number(e.target.value);
-                    setBbox(next);
-                  }}
-                />
-              </label>
-            ))}
-          </fieldset>
+            <fieldset className="bbox-editor">
+              <legend>Bounding box (source-frame pixels)</legend>
+              {(["x1", "y1", "x2", "y2"] as const).map((label, i) => (
+                <label key={label}>
+                  {label}
+                  <input
+                    type="number"
+                    value={bbox[i]}
+                    onChange={(e) => {
+                      const next = [...bbox] as Bbox;
+                      next[i] = Number(e.target.value);
+                      setBbox(next);
+                    }}
+                  />
+                </label>
+              ))}
+            </fieldset>
+          </div>
 
           <div className="review-actions">
-            <button disabled={saving} onClick={() => submit("accepted")}>
-              Accept (A)
+            <button className="btn-primary" disabled={saving} onClick={() => submit("accepted")}>
+              <IconCheck /> Accept <span className="kbd">A</span>
             </button>
-            <button disabled={saving} onClick={() => submit("hard")}>
-              Mark Hard (H)
+            <button className="btn-ghost" disabled={saving} onClick={() => submit("hard")}>
+              <IconAlert /> Hard <span className="kbd">H</span>
             </button>
-            <button disabled={saving} onClick={() => submit("failed")}>
-              Mark Failed (F)
+            <button className="btn-danger-ghost" disabled={saving} onClick={() => submit("failed")}>
+              <IconX /> Failed <span className="kbd">F</span>
             </button>
           </div>
 
           <p className="review-status-line">Current status: {track.review_status}</p>
-          {error && <p className="error">{error}</p>}
-          {message && <p className="status">{message}</p>}
+          {error && (
+            <p className="error">
+              <IconAlert /> {error}
+            </p>
+          )}
+          {message && (
+            <p className="status">
+              <IconCheck /> {message}
+            </p>
+          )}
 
-          <div className="ocr-panel">
+          <div className="ocr-panel card">
             <div className="ocr-panel-header">
               <h4>Plate OCR</h4>
               <button disabled={ocrRunning} onClick={handleRunOcr}>
-                {ocrRunning ? "Running..." : "Run OCR"}
+                {ocrRunning ? "Running…" : "Run OCR"}
               </button>
             </div>
             <ul className="ocr-candidate-list">
@@ -293,10 +314,14 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
                 <li key={c.id} className={c.selected ? "selected" : ""}>
                   <span className="ocr-text">{c.normalized_text || "(no text)"}</span>
                   <span className="ocr-meta">
-                    {c.source} - {(c.confidence * 100).toFixed(0)}%
+                    {c.source} &middot; {(c.confidence * 100).toFixed(0)}%
                   </span>
                   {!c.selected && <button onClick={() => handleSelectOcr(c.id)}>Select</button>}
-                  {c.selected && <span className="badge">selected</span>}
+                  {c.selected && (
+                    <span className="badge badge-success">
+                      <IconCheck /> selected
+                    </span>
+                  )}
                 </li>
               ))}
               {ocrCandidates.length === 0 && <li className="empty">No OCR attempts yet.</li>}
@@ -308,7 +333,7 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
                 value={correctionText}
                 onChange={(e) => setCorrectionText(e.target.value)}
               />
-              <button onClick={handleCorrectOcr}>Save correction</button>
+              <button onClick={handleCorrectOcr}>Save</button>
             </div>
           </div>
         </div>

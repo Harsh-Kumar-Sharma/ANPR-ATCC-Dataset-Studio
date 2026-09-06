@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { IconAlert, IconBroadcast, IconCheck } from "../Icons";
 import type { Project, RtspSessionStatus } from "../types";
 
 interface Props {
@@ -13,6 +14,7 @@ function RtspPanel({ project, onSessionEnded }: Props) {
   const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<RtspSessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -25,6 +27,7 @@ function RtspPanel({ project, onSessionEnded }: Props) {
     e.preventDefault();
     if (!url.trim()) return;
     setError(null);
+    setStarting(true);
     try {
       const result = await api.startRtspSession(project.id, url.trim(), expectedFps);
       setRunId(result.run.id);
@@ -42,6 +45,8 @@ function RtspPanel({ project, onSessionEnded }: Props) {
       }, 1000);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -55,10 +60,19 @@ function RtspPanel({ project, onSessionEnded }: Props) {
   }
 
   const isActive = status !== null && !status.stopped;
+  const dotClass = status?.connected ? "connected" : status && status.reconnect_attempts > 0 ? "reconnecting" : "disconnected";
+  const statusLabel = status?.connected
+    ? "Connected"
+    : status && status.reconnect_attempts > 0
+      ? `Reconnecting (attempt ${status.reconnect_attempts})…`
+      : "Disconnected";
 
   return (
     <div className="rtsp-panel">
-      <h3>Live RTSP</h3>
+      <div className="section-title">
+        <IconBroadcast /> Live RTSP
+      </div>
+
       {!isActive && (
         <form onSubmit={handleStart} className="rtsp-start-form">
           <input
@@ -67,28 +81,60 @@ function RtspPanel({ project, onSessionEnded }: Props) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
-          <input
-            type="number"
-            min={1}
-            title="expected FPS"
-            value={expectedFps}
-            onChange={(e) => setExpectedFps(Number(e.target.value))}
-          />
-          <button type="submit">Start Live Capture</button>
+          <label className="fps-control">
+            Expected FPS
+            <input
+              type="number"
+              min={1}
+              value={expectedFps}
+              onChange={(e) => setExpectedFps(Number(e.target.value))}
+            />
+          </label>
+          <button type="submit" className="btn-primary btn-block" disabled={!url.trim() || starting}>
+            {starting ? "Starting…" : "Start Live Capture"}
+          </button>
         </form>
       )}
-      {error && <p className="error">{error}</p>}
+
+      {error && (
+        <p className="error" style={{ marginTop: "0.6rem" }}>
+          <IconAlert /> {error}
+        </p>
+      )}
+
       {status && (
-        <div className="rtsp-status">
-          <p>
-            {status.connected ? "connected" : status.reconnect_attempts > 0 ? "reconnecting..." : "disconnected"}
-            {status.error && <span className="error"> - {status.error}</span>}
-          </p>
-          <p>
-            frames: {status.frames_captured} (dropped {status.frames_dropped}) - tracks: {status.tracks_persisted}
-          </p>
-          {isActive && <button onClick={handleStop}>Stop</button>}
-          {status.stopped && <p className="status">Session ended.</p>}
+        <div className="card rtsp-status" style={{ marginTop: "0.8rem" }}>
+          <span className="rtsp-status-line">
+            <span className={`status-dot ${dotClass}`} />
+            {statusLabel}
+          </span>
+          {status.error && (
+            <p className="error">
+              <IconAlert /> {status.error}
+            </p>
+          )}
+          <div className="stat-row">
+            <span>Frames captured</span>
+            <strong>{status.frames_captured}</strong>
+          </div>
+          <div className="stat-row">
+            <span>Dropped</span>
+            <strong>{status.frames_dropped}</strong>
+          </div>
+          <div className="stat-row">
+            <span>Tracks persisted</span>
+            <strong>{status.tracks_persisted}</strong>
+          </div>
+          {isActive && (
+            <button className="btn-danger-ghost btn-block" onClick={handleStop}>
+              Stop
+            </button>
+          )}
+          {status.stopped && (
+            <p className="status">
+              <IconCheck /> Session ended.
+            </p>
+          )}
         </div>
       )}
     </div>

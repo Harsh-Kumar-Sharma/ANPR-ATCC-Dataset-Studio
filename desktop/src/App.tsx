@@ -8,12 +8,23 @@ import RtspPanel from "./components/RtspPanel";
 import SourcePanel from "./components/SourcePanel";
 import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
+import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconFilm, IconInbox } from "./Icons";
 import type { Project, Track } from "./types";
+
+type Tab = "workflow" | "live" | "dataset" | "insights";
+
+const TABS: { id: Tab; label: string; icon: JSX.Element }[] = [
+  { id: "workflow", label: "Sources", icon: <IconFilm /> },
+  { id: "live", label: "Live", icon: <IconBroadcast /> },
+  { id: "dataset", label: "Dataset", icon: <IconBox /> },
+  { id: "insights", label: "Insights", icon: <IconChart /> },
+];
 
 function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("workflow");
 
   const refreshTracks = useCallback(() => {
     if (!project) return;
@@ -26,10 +37,16 @@ function App() {
     setProject(p);
     setTracks([]);
     setSelectedTrackId(null);
+    setTab("workflow");
   }
 
   function handleReviewed(updated: Track) {
     setTracks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  }
+
+  function selectTrack(track: Track) {
+    setSelectedTrackId(track.id);
+    setTab("workflow");
   }
 
   function handleNavigateTrack(direction: 1 | -1) {
@@ -50,16 +67,38 @@ function App() {
   return (
     <div className="app-layout">
       <aside className="sidebar">
-        <button className="back-link" onClick={() => handleSelectProject(null)}>
-          &larr; Projects
-        </button>
-        <h2>{project.name}</h2>
-        <SourcePanel project={project} onProcessed={refreshTracks} />
-        <RtspPanel project={project} onSessionEnded={refreshTracks} />
-        <TrackBrowser tracks={tracks} selectedTrackId={selectedTrackId} onSelect={(t) => setSelectedTrackId(t.id)} />
-        <DatasetPanel project={project} />
-        <EvaluationPanel tracks={tracks} />
-        <ActiveLearningPanel project={project} tracks={tracks} onSelectTrack={(t) => setSelectedTrackId(t.id)} />
+        <div className="sidebar-header">
+          <button className="back-link" onClick={() => handleSelectProject(null)}>
+            <IconArrowLeft /> Projects
+          </button>
+          <h2>{project.name}</h2>
+        </div>
+
+        <nav className="tab-bar">
+          {TABS.map((t) => (
+            <button key={t.id} className={tab === t.id ? "selected" : ""} onClick={() => setTab(t.id)}>
+              {t.icon}
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-content">
+          {tab === "workflow" && (
+            <>
+              <SourcePanel project={project} onProcessed={refreshTracks} />
+              <TrackBrowser tracks={tracks} selectedTrackId={selectedTrackId} onSelect={selectTrack} />
+            </>
+          )}
+          {tab === "live" && <RtspPanel project={project} onSessionEnded={refreshTracks} />}
+          {tab === "dataset" && <DatasetPanel project={project} />}
+          {tab === "insights" && (
+            <>
+              <EvaluationPanel tracks={tracks} />
+              <ActiveLearningPanel project={project} tracks={tracks} onSelectTrack={selectTrack} />
+            </>
+          )}
+        </div>
       </aside>
       <main className="main-panel">
         {selectedTrack ? (
@@ -71,7 +110,10 @@ function App() {
             onNavigateTrack={handleNavigateTrack}
           />
         ) : (
-          <p className="placeholder">Select a track to begin review.</p>
+          <div className="placeholder">
+            <IconInbox />
+            <p>Select a track from Sources to begin review.</p>
+          </div>
         )}
       </main>
     </div>

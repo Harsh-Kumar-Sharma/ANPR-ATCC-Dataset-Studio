@@ -1,3 +1,4 @@
+import { IconBox } from "../Icons";
 import type { Track } from "../types";
 
 interface Props {
@@ -15,7 +16,9 @@ const BUCKET_LABEL: Record<string, string> = {
 function TrackBrowser({ tracks, selectedTrackId, onSelect }: Props) {
   return (
     <div className="track-browser">
-      <h3>Tracks ({tracks.length})</h3>
+      <div className="section-title">
+        <IconBox /> Tracks ({tracks.length})
+      </div>
       <ul className="track-list">
         {tracks.map((t) => (
           <li key={t.id} className={t.id === selectedTrackId ? "selected" : ""}>
@@ -25,7 +28,7 @@ function TrackBrowser({ tracks, selectedTrackId, onSelect }: Props) {
               </span>
               <span className={`badge review-${t.review_status}`}>{t.review_status}</span>
               <span className="ts">
-                {t.start_ts}-{t.end_ts}ms
+                {t.start_ts}–{t.end_ts}ms
               </span>
             </button>
           </li>
