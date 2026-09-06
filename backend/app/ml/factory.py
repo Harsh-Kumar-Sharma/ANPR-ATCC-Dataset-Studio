@@ -3,6 +3,8 @@ from functools import lru_cache
 from app.core.config import get_settings
 from app.ml.bytetrack_tracker import DEFAULT_LOST_TRACK_BUFFER, ByteTrackTracker
 from app.ml.detector import Detector
+from app.ml.plate_ocr import PlateOcrEngine
+from app.ml.rapidocr_engine import RapidOcrEngine
 from app.ml.tracker import Tracker
 from app.ml.yolo_detector import DEFAULT_MODEL_WEIGHTS, YoloDetector
 
@@ -20,3 +22,10 @@ def create_tracker(frame_rate: float) -> Tracker:
     """Trackers accumulate state across calls within a single run, so a
     fresh instance is required per processing run (never shared)."""
     return ByteTrackTracker(frame_rate=frame_rate, lost_track_buffer=DEFAULT_LOST_TRACK_BUFFER)
+
+
+@lru_cache
+def get_default_ocr_engine() -> PlateOcrEngine:
+    """An OCR engine is expensive to load - reuse one instance across
+    requests, same reasoning as get_default_detector()."""
+    return RapidOcrEngine()

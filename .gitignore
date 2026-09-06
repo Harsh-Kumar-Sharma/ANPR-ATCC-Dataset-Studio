@@ -3,6 +3,7 @@ backend/.venv/
 backend/data/
 backend/__pycache__/
 backend/**/__pycache__/
+backend/*.egg-info/
 *.pyc
 
 # Desktop (Node/Electron)
@@ -10,6 +11,7 @@ desktop/node_modules/
 desktop/dist/
 desktop/dist-electron/
 desktop/release/
+desktop/*.tsbuildinfo
 
 # Editors / OS
 .vscode/

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.class_schema import get_class_schema
 from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.db.models.project import Project
@@ -42,3 +43,9 @@ def list_projects(db: Session = Depends(get_db)) -> list[Project]:
 @router.get("/{project_id}", response_model=ProjectRead)
 def get_project(project_id: str, db: Session = Depends(get_db)) -> Project:
     return get_project_or_404(db, project_id)
+
+
+@router.get("/{project_id}/class-schema", response_model=list[dict])
+def get_project_class_schema(project_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    project = get_project_or_404(db, project_id)
+    return get_class_schema(project.class_schema_version)

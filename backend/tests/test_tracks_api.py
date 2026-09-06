@@ -29,7 +29,7 @@ def test_process_source_creates_tracks_and_timeline_is_browsable(tmp_path):
         assert body["run"]["detector_version"] == "stub-detector-v1"
         assert len(body["tracks"]) == 1
         track = body["tracks"][0]
-        assert track["bucket"] is None
+        assert track["bucket"] in {"BEST_DETECTION", "HARD", "FAILED"}
         assert track["review_status"] == "unreviewed"
 
         listed = client.get(f"/projects/{project['id']}/tracks").json()

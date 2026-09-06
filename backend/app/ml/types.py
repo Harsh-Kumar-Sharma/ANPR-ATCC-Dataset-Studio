@@ -20,3 +20,14 @@ class TrackedDetection:
     bbox_xyxy: tuple[float, float, float, float]
     class_id: int
     confidence: float
+
+
+@dataclass(frozen=True)
+class PlateOcrCandidate:
+    """A located-and-read plate candidate within a vehicle crop.
+    ``bbox_xyxy`` is relative to the vehicle crop image, not the
+    source frame - see docs/07_ML_CV_PIPELINE.md OCR steps 2-3."""
+
+    bbox_xyxy: tuple[float, float, float, float]
+    text: str
+    confidence: float

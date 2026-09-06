@@ -26,3 +26,5 @@ class SourceRead(BaseModel):
     duration_ms: int
     frame_count: int
     created_at: datetime
+    is_frozen: bool
+    ground_truth_vehicle_count: int | None

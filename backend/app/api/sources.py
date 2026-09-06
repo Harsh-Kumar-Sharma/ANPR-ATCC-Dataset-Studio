@@ -15,6 +15,7 @@ from app.db.models.track import Track
 from app.db.session import get_db
 from app.ml.detector import Detector
 from app.ml.factory import create_tracker, get_default_detector
+from app.schemas.evaluation import FreezeSourceRequest
 from app.schemas.processing_run import (
     ProcessingRunCreate,
     ProcessingRunRead,
@@ -84,6 +85,25 @@ def _get_source_or_404(db: Session, project_id: str, source_id: str) -> Source:
 def get_source(project_id: str, source_id: str, db: Session = Depends(get_db)) -> Source:
     get_project_or_404(db, project_id)
     return _get_source_or_404(db, project_id, source_id)
+
+
+@router.put("/{source_id}/freeze", response_model=SourceRead)
+def freeze_source(
+    project_id: str, source_id: str, payload: FreezeSourceRequest, db: Session = Depends(get_db)
+) -> Source:
+    """Mark a source as a frozen validation clip with a manually-
+    counted ground truth vehicle total, so detection recall can be
+    measured for real (docs/02_IMPLEMENTATION_PLAN.md Phase 7:
+    "frozen validation clips" + "detection recall"). The count is a
+    one-time human judgment made by watching the raw video - it is
+    not derived from anything the pipeline itself produced."""
+    get_project_or_404(db, project_id)
+    source = _get_source_or_404(db, project_id, source_id)
+    source.is_frozen = True
+    source.ground_truth_vehicle_count = payload.ground_truth_vehicle_count
+    db.commit()
+    db.refresh(source)
+    return source
 
 
 @router.post("/{source_id}/sample", response_model=ProcessingRunResult, status_code=201)

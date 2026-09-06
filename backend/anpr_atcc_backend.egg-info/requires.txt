@@ -7,6 +7,8 @@ pydantic-settings>=2.5
 opencv-python-headless>=4.10
 ultralytics>=8.4
 trackers>=2.6
+rapidocr>=3.9
+onnxruntime>=1.29
 
 [dev]
 pytest>=8.3

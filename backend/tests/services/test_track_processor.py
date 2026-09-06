@@ -60,7 +60,7 @@ def test_process_source_persists_track_with_frame_candidates(tmp_path):
         track = tracks[0]
         assert track.start_ts < track.end_ts
         assert track.review_status == "unreviewed"
-        assert track.bucket is None  # set in Phase 3, not here
+        assert track.bucket in {"BEST_DETECTION", "HARD", "FAILED"}
 
         frames = (
             db.query(FrameCandidate)
@@ -82,10 +82,20 @@ def test_process_source_persists_track_with_frame_candidates(tmp_path):
         assert Path(first.image_path).is_file()
         assert str(track.id) in first.image_path
 
-        # Quality signals are Phase 3's job - untouched here.
-        assert first.blur_score is None
-        assert first.sharpness_score is None
-        assert first.area_ratio is None
+        # Phase 3 quality signals are populated for every frame.
+        for frame in frames:
+            assert frame.blur_score is not None and 0.0 < frame.blur_score <= 1.0
+            assert frame.sharpness_score is not None and frame.sharpness_score >= 0.0
+            assert frame.area_ratio is not None and 0.0 < frame.area_ratio <= 1.0
+            assert frame.flags_json is not None
+            assert set(frame.flags_json.keys()) == {"truncated", "quality_score", "roles"}
+
+        # Exactly one frame is the BEST_DETECTION representative; a
+        # bounded shortlist is flagged as OCR candidates.
+        best_detection_frames = [f for f in frames if "best_detection" in f.flags_json["roles"]]
+        ocr_candidate_frames = [f for f in frames if "ocr_candidate" in f.flags_json["roles"]]
+        assert len(best_detection_frames) == 1
+        assert 1 <= len(ocr_candidate_frames) <= 3
 
 
 def test_process_source_with_no_detections_produces_no_tracks(tmp_path):

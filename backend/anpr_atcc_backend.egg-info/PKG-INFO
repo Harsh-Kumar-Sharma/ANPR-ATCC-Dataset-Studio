@@ -12,6 +12,8 @@ Requires-Dist: pydantic-settings>=2.5
 Requires-Dist: opencv-python-headless>=4.10
 Requires-Dist: ultralytics>=8.4
 Requires-Dist: trackers>=2.6
+Requires-Dist: rapidocr>=3.9
+Requires-Dist: onnxruntime>=1.29
 Provides-Extra: dev
 Requires-Dist: pytest>=8.3; extra == "dev"
 Requires-Dist: httpx>=0.27; extra == "dev"

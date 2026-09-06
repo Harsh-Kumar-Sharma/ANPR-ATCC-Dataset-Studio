@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -30,3 +30,10 @@ class Source(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     frame_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)
+
+    #: A "frozen validation clip" (docs/02_IMPLEMENTATION_PLAN.md Phase 7):
+    #: a fixed benchmark source with a manually-counted ground truth,
+    #: so detection recall can be measured against a real number
+    #: instead of only against the pipeline's own output.
+    is_frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ground_truth_vehicle_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
