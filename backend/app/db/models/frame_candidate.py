@@ -28,6 +28,10 @@ class FrameCandidate(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     track_id: Mapped[str] = mapped_column(ForeignKey("tracks.id"), nullable=False, index=True)
+    # The full frame this crop was taken from (Phase 10). Nullable
+    # because rows created before frames existed have no parent row -
+    # they can still be matched by (source, frame_index) if needed.
+    frame_id: Mapped[str | None] = mapped_column(ForeignKey("frames.id"), nullable=True, index=True)
     frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
     timestamp_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     image_path: Mapped[str] = mapped_column(String(1024), nullable=False)

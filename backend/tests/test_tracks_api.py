@@ -75,3 +75,34 @@ def test_process_unknown_source_returns_404():
         json={"sampling_config": {"target_fps": 5.0}},
     )
     assert response.status_code == 404
+
+
+def test_process_source_conflicts_when_a_run_is_already_in_progress(tmp_path):
+    """A detect+track run on real footage can take 1-3 minutes. Without
+    this guard, a second click (or a reload + re-click) during that
+    window used to reach the DB layer and crash with a raw
+    ``sqlite3.OperationalError: database is locked`` instead of a clear
+    "already running" message - see docs/HANDOFF.md."""
+    from app.db.models.processing_run import ProcessingRun
+    from app.db.session import SessionLocal
+
+    project = _create_project("Conflict Project")
+    video = create_synthetic_video(tmp_path / "clip.mp4", frame_count=10, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+
+    db = SessionLocal()
+    try:
+        db.add(ProcessingRun(source_id=source["id"], sampling_config={"target_fps": 5.0}, status="running"))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/projects/{project['id']}/sources/{source['id']}/process",
+        json={"sampling_config": {"target_fps": 5.0}},
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "processing_already_running"
+
+    sources = client.get(f"/projects/{project['id']}/sources").json()
+    assert next(s for s in sources if s["id"] == source["id"])["is_processing"] is True

@@ -11,6 +11,7 @@ function DatasetPanel({ project }: Props) {
   const [versions, setVersions] = useState<DatasetVersion[]>([]);
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [handoffVersionId, setHandoffVersionId] = useState<string | null>(null);
   const [handoffContent, setHandoffContent] = useState<string | null>(null);
@@ -25,12 +26,16 @@ function DatasetPanel({ project }: Props) {
     setExporting(true);
     setError(null);
     setMessage(null);
+    setWarnings([]);
     try {
       const result = await api.exportDataset(project.id);
+      const warnings = result.validation.warnings ?? [];
       setMessage(
-        `v${result.dataset_version.version}: ${result.counts.total} item(s), ` +
-          `validation ${result.validation.valid ? "passed" : "FAILED"}.`,
+        `v${result.dataset_version.version}: ${result.counts.total} full frame(s), ` +
+          `validation ${result.validation.valid ? "passed" : "FAILED"}.` +
+          (warnings.length ? ` ${warnings.length} warning(s).` : ""),
       );
+      setWarnings(warnings);
       refresh();
     } catch (e) {
       setError(String(e));
@@ -70,6 +75,11 @@ function DatasetPanel({ project }: Props) {
           <IconCheck /> {message}
         </p>
       )}
+      {warnings.map((w) => (
+        <p key={w} className="warning" style={{ marginTop: "0.4rem" }}>
+          <IconAlert /> {w}
+        </p>
+      ))}
 
       <ul className="dataset-version-list">
         {versions.map((v) => (

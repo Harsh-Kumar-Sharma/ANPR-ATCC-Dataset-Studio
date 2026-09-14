@@ -19,6 +19,7 @@ export interface Source {
   created_at: string;
   is_frozen: boolean;
   ground_truth_vehicle_count: number | null;
+  is_processing: boolean;
 }
 
 export interface ProcessingRun {
@@ -108,7 +109,7 @@ export interface DatasetVersion {
 export interface DatasetExportResult {
   dataset_version: DatasetVersion;
   counts: Record<string, number>;
-  validation: { valid: boolean; errors: string[] };
+  validation: { valid: boolean; errors: string[]; warnings: string[] };
 }
 
 export interface RetrainingHandoffResult {

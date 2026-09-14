@@ -31,6 +31,7 @@ class DatasetVersionRead(BaseModel):
 class ValidationResultRead(BaseModel):
     valid: bool
     errors: list[str]
+    warnings: list[str] = []
 
 
 class DatasetExportResult(BaseModel):

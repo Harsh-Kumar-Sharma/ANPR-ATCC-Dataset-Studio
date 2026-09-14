@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.models.track import Track
@@ -69,9 +69,14 @@ def import_source(project_id: str, payload: SourceImportRequest, db: Session = D
 
 
 @router.get("", response_model=list[SourceRead])
-def list_sources(project_id: str, db: Session = Depends(get_db)) -> list[Source]:
+def list_sources(project_id: str, db: Session = Depends(get_db)) -> list[SourceRead]:
     get_project_or_404(db, project_id)
-    return list(db.scalars(select(Source).where(Source.project_id == project_id).order_by(Source.created_at.desc())))
+    sources = list(db.scalars(select(Source).where(Source.project_id == project_id).order_by(Source.created_at.desc())))
+    running_source_ids = set(db.scalars(select(ProcessingRun.source_id).where(ProcessingRun.status == "running")))
+    return [
+        SourceRead.model_validate(source).model_copy(update={"is_processing": source.id in running_source_ids})
+        for source in sources
+    ]
 
 
 def _get_source_or_404(db: Session, project_id: str, source_id: str) -> Source:
@@ -173,6 +178,16 @@ def process_source_endpoint(
     """
     project = get_project_or_404(db, project_id)
     source = _get_source_or_404(db, project_id, source_id)
+
+    already_running = db.scalar(
+        select(ProcessingRun).where(ProcessingRun.source_id == source.id, ProcessingRun.status == "running")
+    )
+    if already_running is not None:
+        raise ConflictError(
+            "A processing run is already in progress for this source. "
+            "Wait for it to finish before starting another.",
+            code="processing_already_running",
+        )
 
     tracker_config = {"frame_rate": payload.sampling_config.target_fps}
     tracker = create_tracker(frame_rate=payload.sampling_config.target_fps)

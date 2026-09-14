@@ -65,10 +65,12 @@ def test_export_creates_a_validated_yolo_dataset(tmp_path):
 
     manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["counts"]["total"] == 1
+    assert manifest["object_counts"]["total"] == 1
     item = manifest["items"][0]
-    assert item["class_id"] == 4
-    assert item["class_name"] == "Car/Jeep/Van"
-    assert item["track_id"] == ctx["track"]["id"]
+    obj = item["objects"][0]
+    assert obj["class_id"] == 4
+    assert obj["class_name"] == "Car/Jeep/Van"
+    assert obj["track_id"] == ctx["track"]["id"]
 
     image_path = export_dir / item["image_path"]
     label_path = export_dir / item["label_path"]
@@ -81,6 +83,218 @@ def test_export_creates_a_validated_yolo_dataset(tmp_path):
     assert parts[0] == "3"  # class_id 4 -> 0-indexed class 3
     coords = [float(p) for p in parts[1:]]
     assert all(0.0 <= c <= 1.0 for c in coords)
+
+
+def test_export_writes_full_frames_not_crops(tmp_path):
+    """Phase 10 DoD: exported images are full source frames and the boxes
+    on them cover a realistic fraction of the image, rather than the old
+    crop-per-track export whose single box filled the whole picture."""
+    import cv2
+
+    ctx = _create_and_accept_track(tmp_path, "Full Frame Export Project")
+    project = ctx["project"]
+
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
+    assert created["validation"]["valid"] is True
+
+    workspace = Path(project["workspace_path"])
+    export_dir = workspace / "exports" / "v1"
+    manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest["items"][0]
+
+    source = client.get(f"/projects/{project['id']}/sources").json()[0]
+    image = cv2.imread(str(export_dir / item["image_path"]))
+    height, width = image.shape[:2]
+    assert (width, height) == (source["width"], source["height"])
+
+    _, _, box_width, box_height = [float(p) for p in item["objects"][0]["bbox_yolo"]]
+    assert box_width * box_height < 0.98, "box fills the image - this is a crop, not a full frame"
+
+    assert not any("looks like a cropped image" in w for w in created["validation"]["warnings"])
+
+
+class _TwoVehicleDetector:
+    """Two well-separated vehicles in every frame, so the tracker yields
+    two distinct tracks that share the same frames."""
+
+    def __init__(self) -> None:
+        self.model_version = "stub-two-vehicle-v1"
+        self.class_names = {0: "car"}
+
+    def detect(self, frame):
+        from app.ml.types import Detection
+
+        return [
+            Detection(bbox_xyxy=(2.0, 2.0, 20.0, 20.0), class_id=0, confidence=0.9),
+            Detection(bbox_xyxy=(40.0, 26.0, 60.0, 44.0), class_id=0, confidence=0.9),
+        ]
+
+
+def test_two_vehicles_in_one_frame_export_as_one_image_with_two_boxes(tmp_path):
+    """The core Phase 10 behaviour: a frame is the unit of export. Two
+    vehicles in one frame must share a single image with both boxes in
+    one label file - not two images, and never split across train/val,
+    which would put the same pixels in two splits each missing a box."""
+    app.dependency_overrides[get_default_detector] = _TwoVehicleDetector
+    try:
+        project = client.post("/projects", json={"name": "Two Vehicle Project"}).json()
+        video = create_synthetic_video(tmp_path / "two.mp4", frame_count=20, fps=10.0)
+        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+        result = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        ).json()
+        assert len(result["tracks"]) == 2
+
+        # Accept both tracks on the same frame index, so both annotations
+        # land on one shared frame.
+        for track, class_id in zip(result["tracks"], (4, 7)):
+            timeline = client.get(f"/tracks/{track['id']}").json()
+            client.put(
+                f"/tracks/{track['id']}/review",
+                json={
+                    "frame_candidate_id": timeline["frames"][0]["id"],
+                    "decision": "accepted",
+                    "class_id": class_id,
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_default_detector, None)
+
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
+    assert created["validation"]["valid"] is True
+
+    export_dir = Path(project["workspace_path"]) / "exports" / "v1"
+    manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["counts"]["total"] == 1, "two vehicles in one frame should export one image"
+    assert manifest["object_counts"]["total"] == 2
+
+    item = manifest["items"][0]
+    assert len(item["objects"]) == 2
+    assert {o["class_id"] for o in item["objects"]} == {4, 7}
+
+    label_lines = (export_dir / item["label_path"]).read_text(encoding="utf-8").strip().splitlines()
+    assert len(label_lines) == 2
+    assert {line.split()[0] for line in label_lines} == {"3", "6"}  # class ids 4/7 -> 0-indexed
+
+
+def test_export_warns_when_a_frame_has_unlabeled_vehicles(tmp_path):
+    """Exporting a frame where one vehicle is accepted and another was
+    detected but never reviewed ships the second vehicle as background,
+    which teaches the model to ignore it. That has to be surfaced, not
+    silently shipped."""
+    app.dependency_overrides[get_default_detector] = _TwoVehicleDetector
+    try:
+        project = client.post("/projects", json={"name": "Partial Label Project"}).json()
+        video = create_synthetic_video(tmp_path / "partial.mp4", frame_count=20, fps=10.0)
+        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+        result = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        ).json()
+        assert len(result["tracks"]) == 2
+
+        # Accept only the first vehicle; the second stays unreviewed.
+        track = result["tracks"][0]
+        timeline = client.get(f"/tracks/{track['id']}").json()
+        client.put(
+            f"/tracks/{track['id']}/review",
+            json={"frame_candidate_id": timeline["frames"][0]["id"], "decision": "accepted", "class_id": 4},
+        )
+    finally:
+        app.dependency_overrides.pop(get_default_detector, None)
+
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
+
+    assert created["validation"]["valid"] is True, "a partially labeled frame is a warning, not an error"
+    assert any("no accepted annotation" in w for w in created["validation"]["warnings"]), (
+        f"expected a partial-label warning, got {created['validation']['warnings']}"
+    )
+
+    export_dir = Path(project["workspace_path"]) / "exports" / "v1"
+    manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["partially_labeled_frames"] == 1
+    assert manifest["items"][0]["unlabeled_detection_count"] == 1
+
+
+def test_export_spanning_two_sources_keeps_frames_separate(tmp_path):
+    """Export decodes one source at a time; two sources in one project
+    must both be materialized and must not collide on filenames (frame
+    indices restart at 0 for every video)."""
+    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
+    try:
+        project = client.post("/projects", json={"name": "Two Source Project"}).json()
+        source_ids = []
+        for name in ("clip_a", "clip_b"):
+            video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=20, fps=10.0)
+            source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+            source_ids.append(source["id"])
+            result = client.post(
+                f"/projects/{project['id']}/sources/{source['id']}/process",
+                json={"sampling_config": {"target_fps": 5.0}},
+            ).json()
+            track = result["tracks"][0]
+            timeline = client.get(f"/tracks/{track['id']}").json()
+            client.put(
+                f"/tracks/{track['id']}/review",
+                json={
+                    "frame_candidate_id": timeline["frames"][0]["id"],
+                    "decision": "accepted",
+                    "class_id": 4,
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_default_detector, None)
+
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
+    assert created["validation"]["valid"] is True
+    assert created["validation"]["errors"] == []
+
+    export_dir = Path(project["workspace_path"]) / "exports" / "v1"
+    manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["counts"]["total"] == 2
+    assert {item["source_id"] for item in manifest["items"]} == set(source_ids)
+    # Both clips have a frame 0; the export filename must disambiguate them.
+    assert len({item["image_path"] for item in manifest["items"]}) == 2
+    for item in manifest["items"]:
+        assert (export_dir / item["image_path"]).is_file()
+
+
+def test_reprocessing_a_source_reuses_frame_rows(tmp_path):
+    """A second processing run over the same source must reuse the
+    existing frame rows rather than creating a parallel set - frames are
+    a property of the source, not of a run."""
+    from app.db.models.frame import Frame
+    from app.db.session import SessionLocal
+
+    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
+    try:
+        project = client.post("/projects", json={"name": "Reprocess Project"}).json()
+        video = create_synthetic_video(tmp_path / "reprocess.mp4", frame_count=20, fps=10.0)
+        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+        body = {"sampling_config": {"target_fps": 5.0}}
+        client.post(f"/projects/{project['id']}/sources/{source['id']}/process", json=body)
+
+        db = SessionLocal()
+        try:
+            after_first = db.query(Frame).filter(Frame.source_id == source["id"]).count()
+        finally:
+            db.close()
+
+        client.post(f"/projects/{project['id']}/sources/{source['id']}/process", json=body)
+
+        db = SessionLocal()
+        try:
+            after_second = db.query(Frame).filter(Frame.source_id == source["id"]).count()
+        finally:
+            db.close()
+    finally:
+        app.dependency_overrides.pop(get_default_detector, None)
+
+    assert after_first > 0
+    assert after_second == after_first, "reprocessing duplicated frame rows"
 
 
 def test_two_exports_from_the_same_project_get_incrementing_versions(tmp_path):

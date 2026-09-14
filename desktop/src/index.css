@@ -250,6 +250,18 @@ label {
   gap: 0.4rem;
 }
 
+.warning {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8em;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
 .empty {
   color: var(--text-muted);
   font-size: 0.85em;

@@ -3,6 +3,166 @@
 This file is updated by Codex after every meaningful implementation
 session.
 
+## Phase 10 --- Full-Frame Foundation (2026-09-11)
+
+First phase of `docs/13_LABELING_AND_TRAINING_PLAN.md`, the plan for
+closing the label -> train -> deploy -> correct -> retrain loop in-app.
+Phase 10 is the unblocker: until training data is full frames, nothing
+downstream is worth building.
+
+### The problem it fixes
+
+The export produced **one cropped image per track, with a single box
+covering ~100% of it**. A detector trained on that learns a vehicle
+always fills the frame, and fails on real gantry footage where a vehicle
+covers a few percent of the pixels. Crops were the only pixels ever
+saved (`track_processor._persist_track`); full frames were decoded, used
+for detection, and discarded.
+
+### What changed
+
+-   **`frames` table** (`db/models/frame.py`): identity of a sampled
+    full frame - `source_id`, `frame_index`, `timestamp_ms`, size, and a
+    **nullable** `image_path`. `frame_candidates.frame_id` links a crop
+    to its parent frame.
+-   **`services/frame_materializer.py`**: full frames are decoded from
+    the retained source video **on demand** and cached, rather than
+    written eagerly (~160-310 MB per clip, mostly for frames never
+    used). One ordered `VideoCapture` pass per source, never one open
+    per frame.
+-   **`services/dataset_export.py`** rewritten to be frame-shaped: one
+    image per frame, every accepted box for that frame in one label
+    file, and **the split unit is now the frame, not the track** - two
+    vehicles sharing a frame must not land in different splits, which
+    would put the same pixels in train and val each missing a box.
+-   **Backfill**: pre-Phase-10 `frame_candidates` have no `frame_id`,
+    but they record `frame_index` against a source still in the
+    workspace, so `_resolve_frame` creates the row on the fly. Old
+    projects export correctly with no re-import.
+-   **`services/dataset_validator.py`**: manifest items are frames with
+    N objects; added a warning when a box covers >=98% of the image (the
+    signature of the old crop export) and when a frame contains detected
+    vehicles nobody accepted.
+-   Migration `2eb8c1baa797`. Autogenerate emitted a bare
+    `op.create_foreign_key`, which SQLite cannot execute - rewritten
+    with `batch_alter_table`. Verified existing rows survived the
+    table rebuild.
+
+### Verified
+
+-   `pytest`: 160 passing, including a new test that two vehicles in one
+    frame export as **one image with two label lines in one split**, and
+    one asserting exported images match the source dimensions with box
+    area < 98%.
+-   `tsc -b` + `vitest`: clean.
+-   **On the real 3gp gantry clip**: exported images are 1920x1080 with
+    box areas of 5.0% / 13.9% / 15.5%. Rendering a label back onto its
+    frame put the box correctly on the car - position, not just size.
+-   Live in the UI: export reports "v3: 3 full frame(s), validation
+    passed."
+
+### Concurrency: the write lock is still held for a whole run
+
+Observed live while testing, not theorised. During a detect+track run
+(a worker burning ~2100s of CPU), `GET /health` and every read kept
+working, but **every write was blocked for the entire run** - both
+`POST /projects` through the API and a direct `sqlite3` write. Both
+recovered by themselves the moment the run finished.
+
+So the earlier "database is locked" work is only partly done:
+
+-   Fixed: duplicate `/process` calls now get a 409 instead of a crash.
+-   Fixed: WAL keeps **reads** working during a run.
+-   **Still open:** an unrelated **write** (create a project, save a
+    review) blocks for the run's full duration, and the 30s
+    `busy_timeout` is far shorter than a 2-6 minute run, so those
+    callers still eventually see "database is locked".
+
+The real fix is to stop holding one transaction across the whole
+pipeline - commit incrementally, or move the run to a background
+process. Phase 12 (training) must not repeat the pattern, since a
+training run is 30-100x longer again.
+
+### Known gaps (deliberate, feed later phases)
+
+-   **RTSP frames are not covered.** Live capture has no re-decodable
+    source, so those frames stay crop-only until they are persisted
+    eagerly (recorded in D-008).
+-   **Partial labeling is only partly detectable.** The warning counts
+    vehicles the *detector* found and a human never accepted; a vehicle
+    the detector missed entirely is invisible and still exported as
+    background. Visual check on the real clip confirmed this happening -
+    an unlabeled car and motorcycle in an exported frame. Only Phase 11
+    full-frame labeling closes it.
+
+## Post-Redesign Session: Real-Footage Test + Concurrent-Process Bug Fix
+
+Direct user request to test with a real phone-camera clip
+(`27_2026-08-31_212943.3gp`, 1920x1080 @ 8fps, ~156s), run through the
+real pipeline end to end - actual YOLO26n detection, ByteTrack, and
+RapidOCR, not the stub used for UI work. The pipeline worked correctly
+(3 tracks found, correct bucketing, OCR ran and honestly reported the
+camera's on-screen watermark text since this overhead gantry angle
+doesn't show plates). While testing, a real bug surfaced.
+
+### Bug: "database is locked" crash on a second Detect+Track click
+
+`POST /sources/{id}/process` (`backend/app/api/sources.py`) runs the
+entire detect+track pipeline synchronously inside one open SQLite
+write transaction - on real footage this can hold the write lock for
+1-3 minutes (166s and 104s observed on this clip on CPU). Any other
+write that lands during that window - a second click, a reload
++ re-click, or a second project/tab - crashed instantly with a raw
+`sqlite3.OperationalError: database is locked` (uncaught 500) instead
+of a useful message, because `backend/app/db/session.py`'s SQLite
+engine had no busy timeout and used the default rollback-journal mode.
+Confirmed via the DB directly (`processing_runs` table): the original
+request always completed successfully in the background - only the
+impatient retry crashed - so no data was ever lost, but the error was
+alarming and unexplained.
+
+### Fix
+
+-   **`backend/app/db/session.py`**: SQLite connections now open with
+    `PRAGMA journal_mode=WAL` and a 30s `busy_timeout` (both via
+    `connect_args={"timeout": 30}` and an explicit `PRAGMA`). WAL lets
+    reads proceed while a write is in flight and makes a second writer
+    queue instead of failing immediately - general defense-in-depth
+    for every endpoint, not just `/process`.
+-   **`backend/app/api/sources.py`**: `process_source_endpoint` now
+    checks for an existing `ProcessingRun` with `status="running"` on
+    the same source before starting, and raises a new `ConflictError`
+    (409, `core/errors.py`) with a clear message instead of reaching
+    the DB layer at all. `GET /sources` now also returns a computed
+    `is_processing` flag per source (true while any run for it is
+    `status="running"`).
+-   **`desktop/src/components/SourcePanel.tsx`**: the Detect+Track
+    button now reflects `is_processing` from the server (not just this
+    tab's own click state), and polls every 3s while any source is
+    processing so the button stays accurate across a reload or a
+    second window - closing the exact gap that caused the crash.
+
+### Verified
+
+-   `pytest` (158 tests, all passing) - added
+    `test_process_source_conflicts_when_a_run_is_already_in_progress`,
+    which inserts a `running` `ProcessingRun` row directly and asserts
+    the endpoint now returns 409 `processing_already_running` and
+    `GET /sources` reports `is_processing: true`.
+-   `tsc -b` and `vitest run` - clean.
+-   Live-verified in the browser: simulated an in-progress run by
+    inserting a `running` row directly into `data/app.db`, confirmed
+    the Sources panel shows a disabled "Processing..." button purely
+    from server state on a fresh page load (no local click state
+    involved), confirmed the disabled button blocks the click
+    entirely, then deleted the row and confirmed the button
+    re-enabled itself within one 3s poll cycle with no reload needed.
+-   Not covered: an automated test that drives two real concurrent
+    HTTP requests against the synchronous endpoint (the unit test
+    simulates the "already running" state directly instead, which
+    exercises the same guard without needing a slow real detector run
+    in CI).
+
 ## Post-Build Session: UI/UX Redesign
 
 Direct user request ("make ui and ux better"). A live design review

@@ -31,6 +31,11 @@ class NotFoundError(AppError):
     code = "not_found"
 
 
+class ConflictError(AppError):
+    status_code = status.HTTP_409_CONFLICT
+    code = "conflict"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

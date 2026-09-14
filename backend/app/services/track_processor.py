@@ -5,12 +5,14 @@ import cv2
 import numpy as np
 from sqlalchemy.orm import Session
 
+from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.models.track import Track
 from app.ml.detector import Detector
 from app.ml.tracker import Tracker
+from app.services.frame_materializer import get_or_create_frame
 from app.services.frame_ranking import (
     DEFAULT_RANKING_CONFIG,
     RankingConfig,
@@ -35,6 +37,10 @@ class _Observation:
     blur_score: float
     area_ratio: float
     truncated: bool
+    # Required, not defaulted: these become the frame row's dimensions,
+    # which YOLO normalization divides by at export time.
+    frame_width: int
+    frame_height: int
 
 
 ObservationsByTrack = dict[int, list[_Observation]]
@@ -77,6 +83,8 @@ def observe_frame(
                 blur_score=sharpness_to_blur_score(sharpness),
                 area_ratio=compute_area_ratio(tracked.bbox_xyxy, frame_width, frame_height),
                 truncated=is_truncated(tracked.bbox_xyxy, frame_width, frame_height),
+                frame_width=frame_width,
+                frame_height=frame_height,
             )
         )
 
@@ -93,9 +101,16 @@ def persist_observations(
     logic regardless of whether the observations came from a finite
     offline pass or a live capture session."""
     tracks = []
+    # Frames are shared across tracks (two vehicles in one frame are one
+    # frame), so resolve each one once per call rather than per track.
+    frames_by_index: dict[int, Frame] = {}
     for tracker_track_id, observations in observations_by_track.items():
         observations.sort(key=lambda o: o.frame_index)
-        tracks.append(_persist_track(db, run, tracker_track_id, observations, tracks_root, class_names, ranking_config))
+        tracks.append(
+            _persist_track(
+                db, run, tracker_track_id, observations, tracks_root, class_names, ranking_config, frames_by_index
+            )
+        )
     return tracks
 
 
@@ -142,6 +157,7 @@ def _persist_track(
     tracks_root: Path,
     class_names: dict[int, str],
     ranking_config: RankingConfig,
+    frames_by_index: dict[int, Frame],
 ) -> Track:
     confidences = [o.confidence for o in observations]
     composite_scores = [
@@ -174,9 +190,23 @@ def _persist_track(
     for obs, score, roles in zip(observations, composite_scores, roles_by_frame):
         image_path = track_dir / f"frame_{obs.frame_index:06d}.jpg"
         cv2.imwrite(str(image_path), obs.crop)
+
+        frame = frames_by_index.get(obs.frame_index)
+        if frame is None:
+            frame = get_or_create_frame(
+                db,
+                source_id=run.source_id,
+                frame_index=obs.frame_index,
+                timestamp_ms=obs.timestamp_ms,
+                width=obs.frame_width,
+                height=obs.frame_height,
+            )
+            frames_by_index[obs.frame_index] = frame
+
         db.add(
             FrameCandidate(
                 track_id=track.id,
+                frame_id=frame.id,
                 frame_index=obs.frame_index,
                 timestamp_ms=obs.timestamp_ms,
                 image_path=str(image_path),

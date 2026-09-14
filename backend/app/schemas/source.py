@@ -28,3 +28,4 @@ class SourceRead(BaseModel):
     created_at: datetime
     is_frozen: bool
     ground_truth_vehicle_count: int | None
+    is_processing: bool = False

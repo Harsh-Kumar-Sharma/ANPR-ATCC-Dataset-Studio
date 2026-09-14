@@ -26,6 +26,17 @@ function SourcePanel({ project, onProcessed }: Props) {
 
   useEffect(refresh, [project.id]);
 
+  // A real detect+track run can take 1-3 minutes on real footage (see
+  // docs/HANDOFF.md). Poll while any source is still processing so the
+  // "Processing..." state stays accurate even after a reload or from a
+  // second window, instead of relying only on this tab's own click state.
+  useEffect(() => {
+    if (!sources.some((s) => s.is_processing)) return;
+    const timer = setTimeout(refresh, 3000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources]);
+
   async function handleImport(e: React.FormEvent) {
     e.preventDefault();
     if (!path.trim()) return;
@@ -107,9 +118,9 @@ function SourcePanel({ project, onProcessed }: Props) {
               {s.width}x{s.height} @ {s.fps}fps · {s.frame_count} frames
             </span>
             <div className="source-actions">
-              <button disabled={busySourceId === s.id} onClick={() => handleProcess(s)}>
+              <button disabled={busySourceId === s.id || s.is_processing} onClick={() => handleProcess(s)}>
                 <IconPlay />
-                {busySourceId === s.id ? "Processing…" : "Detect + Track"}
+                {busySourceId === s.id || s.is_processing ? "Processing…" : "Detect + Track"}
               </button>
             </div>
             {s.is_frozen ? (

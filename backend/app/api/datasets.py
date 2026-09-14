@@ -64,7 +64,7 @@ def create_dataset_version(
     return DatasetExportResult(
         dataset_version=DatasetVersionRead.model_validate(dataset_version),
         counts=_counts_for_version(db, dataset_version.id),
-        validation=ValidationResultRead(valid=validation.valid, errors=validation.errors),
+        validation=ValidationResultRead(valid=validation.valid, errors=validation.errors, warnings=validation.warnings),
     )
 
 
@@ -106,7 +106,7 @@ def revalidate_dataset_version(dataset_version_id: str, db: Session = Depends(ge
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     num_classes = len(get_class_schema(manifest["config"]["class_schema_version"]))
     result = validate_export(manifest_path.parent, manifest, num_classes=num_classes)
-    return ValidationResultRead(valid=result.valid, errors=result.errors)
+    return ValidationResultRead(valid=result.valid, errors=result.errors, warnings=result.warnings)
 
 
 @datasets_router.post("/{dataset_version_id}/retraining-handoff", response_model=RetrainingHandoffResult)
