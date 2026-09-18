@@ -11,6 +11,21 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "opencv-python-headless>=4.10",
+    # Pinned, and deliberately not floating. Ultralytics pulls torch in
+    # transitively and pip will happily satisfy that with a "+cpu" wheel,
+    # which is how this project ended up running detection on the CPU
+    # without anyone choosing to. The CUDA build is NOT on PyPI - install
+    # it explicitly from the CUDA 13.2 index, uninstalling first, because
+    # pip treats an installed "2.14.0+cpu" as already satisfying "==2.14.0":
+    #
+    #   pip uninstall -y torch torchvision
+    #   pip install torch==2.14.0 torchvision==0.29.0 \
+    #       --index-url https://download.pytorch.org/whl/cu132
+    #
+    # Verify with app.ml.device, or torch.__version__ (a "+cpu" suffix
+    # means the CUDA build did not take).
+    "torch==2.14.0",
+    "torchvision==0.29.0",
     "ultralytics>=8.4",
     "trackers>=2.6",
     "rapidocr>=3.9",

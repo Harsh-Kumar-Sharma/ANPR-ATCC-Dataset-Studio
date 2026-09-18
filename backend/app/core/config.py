@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     workspace_root: Path = Path("data") / "workspace"
     model_weights_dir: Path = Path("data") / "models"
 
+    #: Torch device for detection and training. ``auto`` takes the GPU
+    #: when there is one; ``cpu`` forces CPU; ``cuda:<index>`` picks a
+    #: specific GPU. See ``app.ml.device.resolve_device``.
+    device: str = "auto"
+
     def resolved_model_weights_dir(self) -> Path:
         self.model_weights_dir.mkdir(parents=True, exist_ok=True)
         return self.model_weights_dir

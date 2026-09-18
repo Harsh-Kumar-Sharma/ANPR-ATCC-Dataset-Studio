@@ -15,7 +15,7 @@ def get_default_detector() -> Detector:
     requests. Safe to share: detect() holds no per-call mutable state."""
     settings = get_settings()
     weights_path = settings.resolved_model_weights_dir() / DEFAULT_MODEL_WEIGHTS
-    return YoloDetector(weights=str(weights_path))
+    return YoloDetector(weights=str(weights_path), device=settings.device)
 
 
 def create_tracker(frame_rate: float) -> Tracker:

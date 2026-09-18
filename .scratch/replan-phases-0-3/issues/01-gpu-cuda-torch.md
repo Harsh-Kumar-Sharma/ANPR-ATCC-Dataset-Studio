@@ -6,10 +6,13 @@ The installed torch is a `+cpu` build, so nothing is using the GPU today. Every 
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `torch.cuda.is_available()` is True inside the app's own virtualenv, not just a shell
-- [ ] torch and torchvision are pinned in the backend project config (both are currently unpinned)
-- [ ] The YOLO detector selects its device explicitly instead of relying on a library default, and logs which device it chose
-- [ ] A detect+track run over `atcc1.mp4` is timed against the CPU baseline and the improvement is written down
-- [ ] If no CUDA device is present, the app falls back to CPU with a visible warning rather than crashing
+- [x] `torch.cuda.is_available()` is True inside the app's own virtualenv, not just a shell
+- [x] torch and torchvision are pinned in the backend project config (both are currently unpinned)
+- [x] The YOLO detector selects its device explicitly instead of relying on a library default, and logs which device it chose
+- [x] A detect+track run over `atcc1.mp4` is timed against the CPU baseline and the improvement is written down
+- [x] If no CUDA device is present, the app falls back to CPU with a visible warning rather than crashing
+
+**Result:** 2.02x faster on `cuda:0` (63.9 fps vs 31.6 fps) with an identical
+detection count. Numbers and caveats in `docs/benchmarks.md`.
