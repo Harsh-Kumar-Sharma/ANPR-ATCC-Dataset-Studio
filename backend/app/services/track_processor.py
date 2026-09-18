@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,19 @@ from app.services.frame_ranking import (
 )
 from app.services.frame_sampler import decode_sampled_frames, sample_frame_timestamps
 from app.services.quality_signals import compute_area_ratio, compute_sharpness, is_truncated, sharpness_to_blur_score
+
+
+#: Called with (fraction, message). Reporting is best-effort telemetry:
+#: it must never change what gets persisted.
+ProgressReporter = Callable[[float, str], None]
+
+#: Detection dominates the wall clock, so it owns most of the bar. The
+#: remainder covers persisting tracks and their crops.
+DETECTION_SHARE_OF_PROGRESS = 0.9
+
+#: Frequent enough to look live, rare enough not to make the progress
+#: file the bottleneck on a fast GPU.
+PROGRESS_REPORT_EVERY_FRAMES = 10
 
 
 @dataclass
@@ -129,6 +143,7 @@ def process_source(
     detector: Detector,
     tracker: Tracker,
     ranking_config: RankingConfig = DEFAULT_RANKING_CONFIG,
+    on_progress: ProgressReporter | None = None,
 ) -> ProcessingRun:
     """Sample, detect and track vehicles across an offline source
     video, then persist the resulting tracks, their frame candidates,
@@ -138,12 +153,24 @@ def process_source(
     Never drops an observation because of low quality - every tracked
     detection becomes a frame_candidates row regardless of how it
     ranks; HARD/FAILED tracks are labeled, not discarded.
+
+    ``on_progress`` is optional and reports decode/detect progress as a
+    0.0-1.0 fraction. Persisting is deliberately reported as a single
+    step near the end rather than interleaved: it is fast relative to
+    detection, and a bar that stalls at 90% for a second is more honest
+    than one that claims finer resolution than it has.
     """
     sampled = sample_frame_timestamps(frame_count=source.frame_count, native_fps=source.fps, target_fps=target_fps)
 
     observations_by_track: ObservationsByTrack = {}
-    for sampled_frame, image in decode_sampled_frames(Path(source.path_or_uri), sampled):
+    total = len(sampled)
+    for processed, (sampled_frame, image) in enumerate(decode_sampled_frames(Path(source.path_or_uri), sampled), start=1):
         observe_frame(observations_by_track, image, sampled_frame.frame_index, sampled_frame.timestamp_ms, detector, tracker)
+        if on_progress is not None and total and (processed % PROGRESS_REPORT_EVERY_FRAMES == 0 or processed == total):
+            on_progress(DETECTION_SHARE_OF_PROGRESS * processed / total, f"Frame {processed} of {total}")
+
+    if on_progress is not None:
+        on_progress(DETECTION_SHARE_OF_PROGRESS, "Saving tracks")
 
     tracks_root = workspace_path / "derived" / "tracks"
     persist_observations(db, run, observations_by_track, tracks_root, detector.class_names, ranking_config)

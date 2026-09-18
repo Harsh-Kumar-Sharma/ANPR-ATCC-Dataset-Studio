@@ -2,8 +2,8 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.ml.factory import get_default_detector
 from app.ml.types import Detection
+from tests.job_execution import process_source_sync, tracks_for_run
 from tests.video_factory import create_synthetic_video
 
 client = TestClient(app)
@@ -25,56 +25,32 @@ class _ConfidenceDetector:
 
 
 def _create_track(tmp_path, name: str, confidence: float = 0.9) -> dict:
-    app.dependency_overrides[get_default_detector] = lambda: _ConfidenceDetector(confidence)
-    try:
-        project = client.post("/projects", json={"name": name}).json()
-        video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=30, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        result = client.post(
-            f"/projects/{project['id']}/sources/{source['id']}/process",
-            json={"sampling_config": {"target_fps": 5.0}},
-        ).json()
-        return {"project": project, "track": result["tracks"][0]}
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    project = client.post("/projects", json={"name": name}).json()
+    video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=30, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], _ConfidenceDetector(confidence))
+    tracks = tracks_for_run(client, project["id"], submitted["run_id"])
+    return {"project": project, "track": tracks[0]}
 
 
 def test_low_confidence_queue_only_includes_unreviewed_sorted_ascending(tmp_path):
     project = client.post("/projects", json={"name": "Low Confidence Queue Project"}).json()
 
-    app.dependency_overrides[get_default_detector] = lambda: _ConfidenceDetector(0.9)
-    try:
-        video_a = create_synthetic_video(tmp_path / "a.mp4", frame_count=30, fps=10.0)
-        source_a = client.post(f"/projects/{project['id']}/sources", json={"path": str(video_a)}).json()
-        client.post(
-            f"/projects/{project['id']}/sources/{source_a['id']}/process", json={"sampling_config": {"target_fps": 5.0}}
-        )
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    video_a = create_synthetic_video(tmp_path / "a.mp4", frame_count=30, fps=10.0)
+    source_a = client.post(f"/projects/{project['id']}/sources", json={"path": str(video_a)}).json()
+    process_source_sync(client, project["id"], source_a["id"], _ConfidenceDetector(0.9))
 
     # ByteTrack requires roughly >=0.7 confidence to activate a track at
     # all, so "low confidence" here still has to clear that floor.
-    app.dependency_overrides[get_default_detector] = lambda: _ConfidenceDetector(0.75)
-    try:
-        video_b = create_synthetic_video(tmp_path / "b.mp4", frame_count=30, fps=10.0)
-        source_b = client.post(f"/projects/{project['id']}/sources", json={"path": str(video_b)}).json()
-        result_b = client.post(
-            f"/projects/{project['id']}/sources/{source_b['id']}/process", json={"sampling_config": {"target_fps": 5.0}}
-        ).json()
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    video_b = create_synthetic_video(tmp_path / "b.mp4", frame_count=30, fps=10.0)
+    source_b = client.post(f"/projects/{project['id']}/sources", json={"path": str(video_b)}).json()
+    submitted_b = process_source_sync(client, project["id"], source_b["id"], _ConfidenceDetector(0.75))
 
     # Review a third, distinctly-confident track away - it should drop out of the queue.
-    app.dependency_overrides[get_default_detector] = lambda: _ConfidenceDetector(0.8)
-    try:
-        video_c = create_synthetic_video(tmp_path / "c.mp4", frame_count=30, fps=10.0)
-        source_c = client.post(f"/projects/{project['id']}/sources", json={"path": str(video_c)}).json()
-        result_c = client.post(
-            f"/projects/{project['id']}/sources/{source_c['id']}/process", json={"sampling_config": {"target_fps": 5.0}}
-        ).json()
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
-    track_c = result_c["tracks"][0]
+    video_c = create_synthetic_video(tmp_path / "c.mp4", frame_count=30, fps=10.0)
+    source_c = client.post(f"/projects/{project['id']}/sources", json={"path": str(video_c)}).json()
+    submitted_c = process_source_sync(client, project["id"], source_c["id"], _ConfidenceDetector(0.8))
+    track_c = tracks_for_run(client, project["id"], submitted_c["run_id"])[0]
     frame_id = client.get(f"/tracks/{track_c['id']}").json()["frames"][0]["id"]
     client.put(f"/tracks/{track_c['id']}/review", json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": 4})
 
@@ -82,7 +58,8 @@ def test_low_confidence_queue_only_includes_unreviewed_sorted_ascending(tmp_path
 
     track_ids = [item["track_id"] for item in queue]
     assert track_c["id"] not in track_ids  # reviewed, excluded
-    assert track_ids[0] == result_b["tracks"][0]["id"]  # 0.3 confidence comes before 0.9
+    track_b = tracks_for_run(client, project["id"], submitted_b["run_id"])[0]
+    assert track_ids[0] == track_b["id"]  # 0.3 confidence comes before 0.9
     confidences = [item["confidence"] for item in queue]
     assert confidences == sorted(confidences)
 

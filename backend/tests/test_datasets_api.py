@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.ml.factory import get_default_detector
+from tests.job_execution import process_source_sync, tracks_for_run
 from tests.stub_detector import StubDetector
 from tests.video_factory import create_synthetic_video
 
@@ -13,26 +13,19 @@ client = TestClient(app)
 
 def _create_and_accept_track(tmp_path, name: str, class_id: int = 4) -> dict:
     """A project with exactly one track, reviewed and accepted."""
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
-    try:
-        project = client.post("/projects", json={"name": name}).json()
-        video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=30, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        result = client.post(
-            f"/projects/{project['id']}/sources/{source['id']}/process",
-            json={"sampling_config": {"target_fps": 5.0}},
-        ).json()
-        track = result["tracks"][0]
-        timeline = client.get(f"/tracks/{track['id']}").json()
-        frame_id = timeline["frames"][0]["id"]
+    project = client.post("/projects", json={"name": name}).json()
+    video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=30, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+    track = tracks_for_run(client, project["id"], submitted["run_id"])[0]
+    timeline = client.get(f"/tracks/{track['id']}").json()
+    frame_id = timeline["frames"][0]["id"]
 
-        review = client.put(
-            f"/tracks/{track['id']}/review",
-            json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": class_id},
-        ).json()
-        return {"project": project, "track": review["track"], "annotation": review["annotation"]}
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    review = client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": class_id},
+    ).json()
+    return {"project": project, "track": review["track"], "annotation": review["annotation"]}
 
 
 def test_export_with_no_accepted_annotations_fails(tmp_path):
@@ -135,31 +128,25 @@ def test_two_vehicles_in_one_frame_export_as_one_image_with_two_boxes(tmp_path):
     vehicles in one frame must share a single image with both boxes in
     one label file - not two images, and never split across train/val,
     which would put the same pixels in two splits each missing a box."""
-    app.dependency_overrides[get_default_detector] = _TwoVehicleDetector
-    try:
-        project = client.post("/projects", json={"name": "Two Vehicle Project"}).json()
-        video = create_synthetic_video(tmp_path / "two.mp4", frame_count=20, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        result = client.post(
-            f"/projects/{project['id']}/sources/{source['id']}/process",
-            json={"sampling_config": {"target_fps": 5.0}},
-        ).json()
-        assert len(result["tracks"]) == 2
+    project = client.post("/projects", json={"name": "Two Vehicle Project"}).json()
+    video = create_synthetic_video(tmp_path / "two.mp4", frame_count=20, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], _TwoVehicleDetector())
+    result = {"tracks": tracks_for_run(client, project["id"], submitted["run_id"])}
+    assert len(result["tracks"]) == 2
 
-        # Accept both tracks on the same frame index, so both annotations
-        # land on one shared frame.
-        for track, class_id in zip(result["tracks"], (4, 7)):
-            timeline = client.get(f"/tracks/{track['id']}").json()
-            client.put(
-                f"/tracks/{track['id']}/review",
-                json={
-                    "frame_candidate_id": timeline["frames"][0]["id"],
-                    "decision": "accepted",
-                    "class_id": class_id,
-                },
-            )
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    # Accept both tracks on the same frame index, so both annotations
+    # land on one shared frame.
+    for track, class_id in zip(result["tracks"], (4, 7)):
+        timeline = client.get(f"/tracks/{track['id']}").json()
+        client.put(
+            f"/tracks/{track['id']}/review",
+            json={
+                "frame_candidate_id": timeline["frames"][0]["id"],
+                "decision": "accepted",
+                "class_id": class_id,
+            },
+        )
 
     created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
     assert created["validation"]["valid"] is True
@@ -184,26 +171,20 @@ def test_export_warns_when_a_frame_has_unlabeled_vehicles(tmp_path):
     detected but never reviewed ships the second vehicle as background,
     which teaches the model to ignore it. That has to be surfaced, not
     silently shipped."""
-    app.dependency_overrides[get_default_detector] = _TwoVehicleDetector
-    try:
-        project = client.post("/projects", json={"name": "Partial Label Project"}).json()
-        video = create_synthetic_video(tmp_path / "partial.mp4", frame_count=20, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        result = client.post(
-            f"/projects/{project['id']}/sources/{source['id']}/process",
-            json={"sampling_config": {"target_fps": 5.0}},
-        ).json()
-        assert len(result["tracks"]) == 2
+    project = client.post("/projects", json={"name": "Partial Label Project"}).json()
+    video = create_synthetic_video(tmp_path / "partial.mp4", frame_count=20, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], _TwoVehicleDetector())
+    result = {"tracks": tracks_for_run(client, project["id"], submitted["run_id"])}
+    assert len(result["tracks"]) == 2
 
-        # Accept only the first vehicle; the second stays unreviewed.
-        track = result["tracks"][0]
-        timeline = client.get(f"/tracks/{track['id']}").json()
-        client.put(
-            f"/tracks/{track['id']}/review",
-            json={"frame_candidate_id": timeline["frames"][0]["id"], "decision": "accepted", "class_id": 4},
-        )
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    # Accept only the first vehicle; the second stays unreviewed.
+    track = result["tracks"][0]
+    timeline = client.get(f"/tracks/{track['id']}").json()
+    client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": timeline["frames"][0]["id"], "decision": "accepted", "class_id": 4},
+    )
 
     created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
 
@@ -222,30 +203,23 @@ def test_export_spanning_two_sources_keeps_frames_separate(tmp_path):
     """Export decodes one source at a time; two sources in one project
     must both be materialized and must not collide on filenames (frame
     indices restart at 0 for every video)."""
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
-    try:
-        project = client.post("/projects", json={"name": "Two Source Project"}).json()
-        source_ids = []
-        for name in ("clip_a", "clip_b"):
-            video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=20, fps=10.0)
-            source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-            source_ids.append(source["id"])
-            result = client.post(
-                f"/projects/{project['id']}/sources/{source['id']}/process",
-                json={"sampling_config": {"target_fps": 5.0}},
-            ).json()
-            track = result["tracks"][0]
-            timeline = client.get(f"/tracks/{track['id']}").json()
-            client.put(
-                f"/tracks/{track['id']}/review",
-                json={
-                    "frame_candidate_id": timeline["frames"][0]["id"],
-                    "decision": "accepted",
-                    "class_id": 4,
-                },
-            )
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    project = client.post("/projects", json={"name": "Two Source Project"}).json()
+    source_ids = []
+    for name in ("clip_a", "clip_b"):
+        video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=20, fps=10.0)
+        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+        source_ids.append(source["id"])
+        submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+        track = tracks_for_run(client, project["id"], submitted["run_id"])[0]
+        timeline = client.get(f"/tracks/{track['id']}").json()
+        client.put(
+            f"/tracks/{track['id']}/review",
+            json={
+                "frame_candidate_id": timeline["frames"][0]["id"],
+                "decision": "accepted",
+                "class_id": 4,
+            },
+        )
 
     created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
     assert created["validation"]["valid"] is True
@@ -269,29 +243,25 @@ def test_reprocessing_a_source_reuses_frame_rows(tmp_path):
     from app.db.models.frame import Frame
     from app.db.session import SessionLocal
 
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
+    project = client.post("/projects", json={"name": "Reprocess Project"}).json()
+    video = create_synthetic_video(tmp_path / "reprocess.mp4", frame_count=20, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    body = {"sampling_config": {"target_fps": 5.0}}
+    process_source_sync(client, project["id"], source["id"], StubDetector())
+
+    db = SessionLocal()
     try:
-        project = client.post("/projects", json={"name": "Reprocess Project"}).json()
-        video = create_synthetic_video(tmp_path / "reprocess.mp4", frame_count=20, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        body = {"sampling_config": {"target_fps": 5.0}}
-        client.post(f"/projects/{project['id']}/sources/{source['id']}/process", json=body)
-
-        db = SessionLocal()
-        try:
-            after_first = db.query(Frame).filter(Frame.source_id == source["id"]).count()
-        finally:
-            db.close()
-
-        client.post(f"/projects/{project['id']}/sources/{source['id']}/process", json=body)
-
-        db = SessionLocal()
-        try:
-            after_second = db.query(Frame).filter(Frame.source_id == source["id"]).count()
-        finally:
-            db.close()
+        after_first = db.query(Frame).filter(Frame.source_id == source["id"]).count()
     finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+        db.close()
+
+    process_source_sync(client, project["id"], source["id"], StubDetector())
+
+    db = SessionLocal()
+    try:
+        after_second = db.query(Frame).filter(Frame.source_id == source["id"]).count()
+    finally:
+        db.close()
 
     assert after_first > 0
     assert after_second == after_first, "reprocessing duplicated frame rows"
@@ -309,25 +279,19 @@ def test_two_exports_from_the_same_project_get_incrementing_versions(tmp_path):
 
 
 def test_export_excludes_hard_and_failed_tracks(tmp_path):
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
-    try:
-        project = client.post("/projects", json={"name": "Mixed Status Project"}).json()
-        video = create_synthetic_video(tmp_path / "mixed.mp4", frame_count=30, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        result = client.post(
-            f"/projects/{project['id']}/sources/{source['id']}/process",
-            json={"sampling_config": {"target_fps": 5.0}},
-        ).json()
-        track = result["tracks"][0]
-        timeline = client.get(f"/tracks/{track['id']}").json()
-        frame_id = timeline["frames"][0]["id"]
+    project = client.post("/projects", json={"name": "Mixed Status Project"}).json()
+    video = create_synthetic_video(tmp_path / "mixed.mp4", frame_count=30, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+    result = {"tracks": tracks_for_run(client, project["id"], submitted["run_id"])}
+    track = result["tracks"][0]
+    timeline = client.get(f"/tracks/{track['id']}").json()
+    frame_id = timeline["frames"][0]["id"]
 
-        client.put(
-            f"/tracks/{track['id']}/review",
-            json={"frame_candidate_id": frame_id, "decision": "failed"},
-        )
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": frame_id, "decision": "failed"},
+    )
 
     response = client.post(f"/projects/{project['id']}/dataset-versions", json={})
     assert response.status_code == 400

@@ -11,11 +11,9 @@ from app.api.projects import get_project_or_404
 from app.core.errors import ConflictError, NotFoundError
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
-from app.db.models.track import Track
 from app.db.session import get_db
-from app.ml.detector import Detector
-from app.ml.factory import create_tracker, get_default_detector
 from app.schemas.evaluation import FreezeSourceRequest
+from app.schemas.job import JobRead, JobSubmitted
 from app.schemas.processing_run import (
     ProcessingRunCreate,
     ProcessingRunRead,
@@ -23,12 +21,14 @@ from app.schemas.processing_run import (
     SampledFrameRead,
 )
 from app.schemas.source import SourceImportRequest, SourceRead
-from app.schemas.track import ProcessingRunTracksResult, TrackRead
 from app.services.frame_sampler import FrameDecodeError, decode_sampled_frames, sample_frame_timestamps
-from app.services.track_processor import process_source
+from app.services.jobs.runner import Launcher, get_launcher, submit_job
 from app.services.video_probe import VideoProbeError, probe_video
 
 router = APIRouter(prefix="/projects/{project_id}/sources", tags=["sources"])
+#: Runs are addressable on their own now that processing is a background
+#: job - the submitting request no longer carries the outcome.
+runs_router = APIRouter(prefix="/processing-runs", tags=["sources"])
 
 
 def _copy_into_workspace(source_path: Path, workspace_path: Path) -> Path:
@@ -161,71 +161,68 @@ def sample_source(
     )
 
 
-@router.post("/{source_id}/process", response_model=ProcessingRunTracksResult, status_code=201)
+@router.post("/{source_id}/process", response_model=JobSubmitted, status_code=202)
 def process_source_endpoint(
     project_id: str,
     source_id: str,
     payload: ProcessingRunCreate,
     db: Session = Depends(get_db),
-    detector: Detector = Depends(get_default_detector),
-) -> ProcessingRunTracksResult:
-    """Detect and track vehicles across a source video (Phase 2 scope).
+    launcher: Launcher = Depends(get_launcher),
+) -> JobSubmitted:
+    """Submit a detect-and-track run over a source video.
 
-    Produces persistent tracks with candidate frames
-    (docs/02_IMPLEMENTATION_PLAN.md Phase 2 DoD). Runs synchronously
-    for now - see docs/HANDOFF.md for the plan to move this to a
-    background job once processing time on real footage is known.
+    Returns as soon as the work is queued. This used to run inline and
+    block the request for one to three minutes on real footage, with no
+    progress and no way to cancel; poll ``GET /jobs/{id}`` or subscribe
+    to ``GET /jobs/{id}/progress`` to follow it.
+
+    The processing run row is created here rather than in the worker so
+    the caller gets a run id immediately, instead of having to wait for
+    a process to start before it can link to anything.
     """
     project = get_project_or_404(db, project_id)
     source = _get_source_or_404(db, project_id, source_id)
 
     already_running = db.scalar(
-        select(ProcessingRun).where(ProcessingRun.source_id == source.id, ProcessingRun.status == "running")
+        select(ProcessingRun).where(ProcessingRun.source_id == source.id, ProcessingRun.status.in_(("pending", "running")))
     )
     if already_running is not None:
         raise ConflictError(
             "A processing run is already in progress for this source. "
-            "Wait for it to finish before starting another.",
+            "Wait for it to finish or cancel it before starting another.",
             code="processing_already_running",
         )
-
-    tracker_config = {"frame_rate": payload.sampling_config.target_fps}
-    tracker = create_tracker(frame_rate=payload.sampling_config.target_fps)
 
     run = ProcessingRun(
         source_id=source.id,
         sampling_config=payload.sampling_config.model_dump(),
-        detector_version=detector.model_version,
-        tracker_config=tracker_config,
-        status="running",
+        tracker_config={"frame_rate": payload.sampling_config.target_fps},
+        status="pending",
     )
     db.add(run)
-    db.flush()
-
-    try:
-        process_source(
-            db=db,
-            source=source,
-            workspace_path=Path(project.workspace_path),
-            run=run,
-            target_fps=payload.sampling_config.target_fps,
-            detector=detector,
-            tracker=tracker,
-        )
-    except FrameDecodeError as exc:
-        run.status = "failed"
-        run.error_message = exc.message
-        run.completed_at = datetime.now(timezone.utc)
-        db.commit()
-        raise
-
-    run.completed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(run)
 
-    tracks = list(db.scalars(select(Track).where(Track.run_id == run.id).order_by(Track.start_ts)))
-
-    return ProcessingRunTracksResult(
-        run=ProcessingRunRead.model_validate(run),
-        tracks=[TrackRead.model_validate(t) for t in tracks],
+    job = submit_job(
+        db,
+        type="detect",
+        project_id=project.id,
+        params={"run_id": run.id},
+        launcher=launcher,
     )
+
+    return JobSubmitted(job=JobRead.model_validate(job), run_id=run.id)
+
+
+@runs_router.get("/{run_id}", response_model=ProcessingRunRead)
+def get_processing_run(run_id: str, db: Session = Depends(get_db)) -> ProcessingRun:
+    """Read a processing run's current state.
+
+    Needed once processing became a background job: ``/process`` returns
+    before the run has done anything, so the run's status, frame count
+    and error have to be readable afterwards.
+    """
+    run = db.get(ProcessingRun, run_id)
+    if run is None:
+        raise NotFoundError(f"Processing run not found: {run_id}")
+    return run

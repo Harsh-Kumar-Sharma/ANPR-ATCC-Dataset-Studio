@@ -3,6 +3,8 @@ import { api } from "./api";
 import ActiveLearningPanel from "./components/ActiveLearningPanel";
 import DatasetPanel from "./components/DatasetPanel";
 import EvaluationPanel from "./components/EvaluationPanel";
+import JobIndicator from "./components/JobIndicator";
+import JobsPanel from "./components/JobsPanel";
 import LivePreview from "./components/LivePreview";
 import ProjectPicker from "./components/ProjectPicker";
 import RtspPanel from "./components/RtspPanel";
@@ -11,6 +13,7 @@ import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
 import VideoPlayer from "./components/VideoPlayer";
 import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconFilm, IconInbox } from "./Icons";
+import { useJobs } from "./useJobs";
 import type { Project, Source, Track } from "./types";
 
 type Tab = "workflow" | "live" | "dataset" | "insights";
@@ -31,6 +34,7 @@ function App() {
   const [mainView, setMainView] = useState<MainView>("review");
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
+  const { jobs, activeJobs, error: jobsError, refresh: refreshJobs } = useJobs(project?.id ?? null);
 
   const refreshTracks = useCallback(() => {
     if (!project) return;
@@ -38,6 +42,12 @@ function App() {
   }, [project]);
 
   useEffect(refreshTracks, [refreshTracks]);
+
+  // A detect job finishes long after the click that started it, so the
+  // track list has to react to the job going terminal rather than to
+  // the request returning.
+  const finishedDetectCount = jobs.filter((j) => j.type === "detect" && j.status === "succeeded").length;
+  useEffect(refreshTracks, [finishedDetectCount, refreshTracks]);
 
   function handleSelectProject(p: Project | null) {
     setProject(p);
@@ -139,7 +149,8 @@ function App() {
         <div className="sidebar-content">
           {tab === "workflow" && (
             <>
-              <SourcePanel project={project} onProcessed={refreshTracks} onWatch={watchSource} />
+              <SourcePanel project={project} onProcessed={refreshJobs} onWatch={watchSource} />
+              <JobsPanel jobs={jobs} error={jobsError} />
               <TrackBrowser tracks={tracks} selectedTrackId={selectedTrackId} onSelect={selectTrack} />
             </>
           )}
@@ -155,7 +166,10 @@ function App() {
           )}
         </div>
       </aside>
-      <main className="main-panel">{main}</main>
+      <main className="main-panel">
+        <JobIndicator activeJobs={activeJobs} />
+        {main}
+      </main>
     </div>
   );
 }

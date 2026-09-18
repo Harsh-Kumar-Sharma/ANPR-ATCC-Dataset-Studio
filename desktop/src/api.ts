@@ -5,6 +5,8 @@ import type {
   DatasetVersion,
   DisagreementItem,
   EvaluationReport,
+  Job,
+  JobSubmitted,
   OcrCandidate,
   Project,
   ProcessingRun,
@@ -53,11 +55,25 @@ export const api = {
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>
     request<Source>(`/projects/${projectId}/sources`, { method: "POST", body: JSON.stringify({ path }) }),
+  /** Queues a detect+track run and returns immediately. Follow it with
+   *  getJob or listJobs - the work is not done when this
+   *  resolves. */
   processSource: (projectId: string, sourceId: string, targetFps: number) =>
-    request<{ run: ProcessingRun; tracks: Track[] }>(`/projects/${projectId}/sources/${sourceId}/process`, {
+    request<JobSubmitted>(`/projects/${projectId}/sources/${sourceId}/process`, {
       method: "POST",
       body: JSON.stringify({ sampling_config: { target_fps: targetFps } }),
     }),
+  getProcessingRun: (runId: string) => request<ProcessingRun>(`/processing-runs/${runId}`),
+
+  listJobs: (params: { projectId?: string; status?: string; type?: string } = {}) => {
+    const query = new URLSearchParams();
+    if (params.projectId) query.set("project_id", params.projectId);
+    if (params.status) query.set("status", params.status);
+    if (params.type) query.set("type", params.type);
+    const suffix = query.toString();
+    return request<Job[]>(`/jobs${suffix ? `?${suffix}` : ""}`);
+  },
+  getJob: (jobId: string) => request<Job>(`/jobs/${jobId}`),
   sourceVideoUrl: (projectId: string, sourceId: string) => `${API_BASE}/projects/${projectId}/sources/${sourceId}/video`,
   getSourceDetections: (projectId: string, sourceId: string, runId?: string) =>
     request<SourceDetections>(

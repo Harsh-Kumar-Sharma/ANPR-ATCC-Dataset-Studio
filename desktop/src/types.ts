@@ -218,3 +218,31 @@ export interface OcrCandidate {
   selected: boolean;
   created_at: string;
 }
+
+export type JobType = "detect" | "train" | "export" | "preannotate";
+export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
+
+/** A unit of work running outside the request that asked for it.
+ *  `progress` is 0-1 and is merged server-side from the worker's live
+ *  report while running, and from the job row once it has finished. */
+export interface Job {
+  id: string;
+  project_id: string | null;
+  type: JobType;
+  status: JobStatus;
+  progress: number;
+  progress_message: string | null;
+  result_json: Record<string, unknown> | null;
+  error_message: string | null;
+  pid: number | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+/** Processing now returns as soon as the work is queued; `run_id` is
+ *  usable immediately, but the run has not necessarily started. */
+export interface JobSubmitted {
+  job: Job;
+  run_id: string;
+}

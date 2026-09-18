@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.ml.factory import get_default_detector
+from tests.job_execution import process_source_sync, tracks_for_run
 from tests.stub_detector import StubDetector
 from tests.video_factory import create_synthetic_video
 
@@ -9,18 +9,12 @@ client = TestClient(app)
 
 
 def _create_track(tmp_path, name: str = "Review API Project") -> dict:
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
-    try:
-        project = client.post("/projects", json={"name": name}).json()
-        video = create_synthetic_video(tmp_path / "clip.mp4", frame_count=30, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        result = client.post(
-            f"/projects/{project['id']}/sources/{source['id']}/process",
-            json={"sampling_config": {"target_fps": 5.0}},
-        ).json()
-        return {"project": project, "track": result["tracks"][0]}
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    project = client.post("/projects", json={"name": name}).json()
+    video = create_synthetic_video(tmp_path / "clip.mp4", frame_count=30, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+    tracks = tracks_for_run(client, project["id"], submitted["run_id"])
+    return {"project": project, "track": tracks[0]}
 
 
 def _first_frame_id(track_id: str) -> str:

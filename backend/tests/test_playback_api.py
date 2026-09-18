@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.ml.factory import get_default_detector
+from tests.job_execution import process_source_sync, tracks_for_run
 from tests.stub_detector import StubDetector
 from tests.video_factory import create_synthetic_video
 
@@ -11,21 +11,14 @@ client = TestClient(app)
 
 
 def _processed_source(tmp_path, name: str, runs: int = 1) -> tuple[dict, dict, list[str]]:
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
-    try:
-        project = client.post("/projects", json={"name": name}).json()
-        video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=20, fps=10.0)
-        source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
-        run_ids = []
-        for _ in range(runs):
-            result = client.post(
-                f"/projects/{project['id']}/sources/{source['id']}/process",
-                json={"sampling_config": {"target_fps": 5.0}},
-            ).json()
-            run_ids.append(result["run"]["id"])
-        return project, source, run_ids
-    finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+    project = client.post("/projects", json={"name": name}).json()
+    video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=20, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    run_ids = []
+    for _ in range(runs):
+        submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+        run_ids.append(submitted["run_id"])
+    return project, source, run_ids
 
 
 def test_video_is_streamed_with_range_support(tmp_path):

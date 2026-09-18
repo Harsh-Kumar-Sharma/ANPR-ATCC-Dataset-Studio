@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     #: specific GPU. See ``app.ml.device.resolve_device``.
     device: str = "auto"
 
+    #: Progress files and worker logs for background jobs. Lives on
+    #: disk rather than in the DB so a worker can report progress
+    #: without contending with the app for the SQLite write lock.
+    jobs_dir: Path = Path("data") / "jobs"
+
     def resolved_model_weights_dir(self) -> Path:
         self.model_weights_dir.mkdir(parents=True, exist_ok=True)
         return self.model_weights_dir

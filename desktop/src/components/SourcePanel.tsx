@@ -56,8 +56,12 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
     setStatus(null);
     setError(null);
     try {
-      const result = await api.processSource(project.id, source.id, targetFps);
-      setStatus(`${source.path_or_uri.split(/[\\/]/).pop()}: ${result.tracks.length} track(s) found.`);
+      // Returns as soon as the run is queued - there are no tracks to
+      // count yet. Progress is followed in the jobs panel and the
+      // global indicator; this tab just confirms the hand-off.
+      await api.processSource(project.id, source.id, targetFps);
+      setStatus(`${source.path_or_uri.split(/[\\/]/).pop()}: queued. Follow it under Jobs.`);
+      refresh();
       onProcessed();
     } catch (e) {
       setError(String(e));

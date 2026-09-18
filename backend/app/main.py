@@ -5,12 +5,14 @@ from app.api.active_learning import router as active_learning_router
 from app.api.datasets import datasets_router, project_datasets_router
 from app.api.evaluation import router as evaluation_router
 from app.api.health import router as health_router
+from app.api.jobs import router as jobs_router
 from app.api.playback import router as playback_router
 from app.api.processing_profiles import router as processing_profiles_router
 from app.api.projects import router as projects_router
 from app.api.rtsp import router as rtsp_router
 from app.api.rtsp import run_router as rtsp_run_router
 from app.api.sources import router as sources_router
+from app.api.sources import runs_router as processing_runs_router
 from app.api.tracks import project_tracks_router, tracks_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
@@ -38,7 +40,9 @@ app.add_middleware(
 register_exception_handlers(app)
 app.include_router(health_router)
 app.include_router(projects_router)
+app.include_router(jobs_router)
 app.include_router(sources_router)
+app.include_router(processing_runs_router)
 app.include_router(playback_router)
 app.include_router(processing_profiles_router)
 app.include_router(project_tracks_router)
