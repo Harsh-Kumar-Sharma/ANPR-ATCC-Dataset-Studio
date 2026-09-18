@@ -6,6 +6,8 @@ import ClassSchemaEditor from "./components/ClassSchemaEditor";
 import EvaluationPanel from "./components/EvaluationPanel";
 import JobIndicator from "./components/JobIndicator";
 import JobsPanel from "./components/JobsPanel";
+import LabelCanvas from "./components/LabelCanvas";
+import LabelQueue from "./components/LabelQueue";
 import LivePreview from "./components/LivePreview";
 import ProjectPicker from "./components/ProjectPicker";
 import RtspPanel from "./components/RtspPanel";
@@ -13,15 +15,16 @@ import SourcePanel from "./components/SourcePanel";
 import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
 import VideoPlayer from "./components/VideoPlayer";
-import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconFilm, IconInbox } from "./Icons";
+import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconCheck, IconFilm, IconInbox } from "./Icons";
 import { useJobs } from "./useJobs";
-import type { Project, Source, Track } from "./types";
+import type { Frame, Project, Source, Track } from "./types";
 
-type Tab = "workflow" | "live" | "dataset" | "insights";
-type MainView = "review" | "player" | "live";
+type Tab = "workflow" | "label" | "live" | "dataset" | "insights";
+type MainView = "review" | "player" | "live" | "label";
 
 const TABS: { id: Tab; label: string; icon: JSX.Element }[] = [
   { id: "workflow", label: "Sources", icon: <IconFilm /> },
+  { id: "label", label: "Label", icon: <IconCheck /> },
   { id: "live", label: "Live", icon: <IconBroadcast /> },
   { id: "dataset", label: "Dataset", icon: <IconBox /> },
   { id: "insights", label: "Insights", icon: <IconChart /> },
@@ -35,6 +38,9 @@ function App() {
   const [mainView, setMainView] = useState<MainView>("review");
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
+  const [labelFrame, setLabelFrame] = useState<Frame | null>(null);
+  // Bumped when a frame is saved so the queue's statuses catch up.
+  const [queueVersion, setQueueVersion] = useState(0);
   // Bumped by the class editor so anything showing classes reloads them.
   const [classesVersion, setClassesVersion] = useState(0);
   const { jobs, activeJobs, error: jobsError, refresh: refreshJobs, cancel: cancelJob } = useJobs(project?.id ?? null);
@@ -60,6 +66,7 @@ function App() {
     setMainView("review");
     setPlayerSource(null);
     setLiveRunId(null);
+    setLabelFrame(null);
   }
 
   function handleReviewed(updated: Track) {
@@ -75,6 +82,11 @@ function App() {
   function watchSource(source: Source) {
     setPlayerSource(source);
     setMainView("player");
+  }
+
+  function labelFrameNow(frame: Frame) {
+    setLabelFrame(frame);
+    setMainView("label");
   }
 
   function showLivePreview(runId: string) {
@@ -107,6 +119,16 @@ function App() {
         tracks={tracks}
         onSelectTrack={selectTrack}
         onClose={() => setMainView("review")}
+      />
+    );
+  } else if (mainView === "label" && labelFrame) {
+    main = (
+      <LabelCanvas
+        key={labelFrame.id}
+        project={project}
+        frame={labelFrame}
+        classesVersion={classesVersion}
+        onSaved={() => setQueueVersion((v) => v + 1)}
       />
     );
   } else if (mainView === "live" && liveRunId) {
@@ -157,6 +179,14 @@ function App() {
               <JobsPanel jobs={jobs} error={jobsError} onCancel={cancelJob} />
               <TrackBrowser tracks={tracks} selectedTrackId={selectedTrackId} onSelect={selectTrack} />
             </>
+          )}
+          {tab === "label" && (
+            <LabelQueue
+              project={project}
+              selectedFrameId={labelFrame?.id ?? null}
+              refreshKey={queueVersion}
+              onSelect={labelFrameNow}
+            />
           )}
           {tab === "live" && (
             <RtspPanel project={project} onSessionEnded={refreshTracks} onShowPreview={showLivePreview} />

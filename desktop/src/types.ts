@@ -112,14 +112,39 @@ export const CLASS_PRESETS = [
 
 export type ReviewDecision = "accepted" | "hard" | "failed";
 
+/** One box on one frame. Many per frame is the point. */
 export interface Annotation {
   id: string;
-  frame_candidate_id: string;
+  frame_id: string;
+  /** Present only for labels written through track review. */
+  frame_candidate_id: string | null;
   source: string;
   class_id: number | null;
   bbox_json: [number, number, number, number];
+  attributes: Record<string, unknown>;
   status: string;
   updated_at: string;
+}
+
+export type FrameStatus = "pending" | "labeled" | "rejected";
+
+/** A full frame, and its place in the labelling queue. */
+export interface Frame {
+  id: string;
+  source_id: string;
+  frame_index: number;
+  timestamp_ms: number;
+  width: number;
+  height: number;
+  status: FrameStatus;
+  selection_reason: string | null;
+}
+
+/** One box as the canvas sends it. Coordinates are full-frame pixels. */
+export interface FrameAnnotationWrite {
+  class_id: number | null;
+  bbox_json: [number, number, number, number];
+  attributes: Record<string, unknown>;
 }
 
 export interface TrackReviewResult {

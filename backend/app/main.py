@@ -8,6 +8,7 @@ from app.api.active_learning import router as active_learning_router
 from app.api.classes import router as classes_router
 from app.api.datasets import datasets_router, project_datasets_router
 from app.api.evaluation import router as evaluation_router
+from app.api.frames import frames_router, project_frames_router
 from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
 from app.api.playback import router as playback_router
@@ -76,6 +77,8 @@ app.include_router(health_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
 app.include_router(classes_router)
+app.include_router(project_frames_router)
+app.include_router(frames_router)
 app.include_router(sources_router)
 app.include_router(processing_runs_router)
 app.include_router(playback_router)

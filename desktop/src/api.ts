@@ -4,6 +4,8 @@ import type {
   ClassDeleteOutcome,
   ClassUsage,
   DatasetExportResult,
+  Frame,
+  FrameAnnotationWrite,
   DatasetVersion,
   DisagreementItem,
   EvaluationReport,
@@ -130,6 +132,19 @@ export const api = {
   ) => request<TrackReviewResult>(`/tracks/${trackId}/review`, { method: "PUT", body: JSON.stringify(payload) }),
 
   frameImageUrl: (frameCandidateId: string) => `${API_BASE}/tracks/frames/${frameCandidateId}/image`,
+
+  listFrames: (projectId: string, status?: string) =>
+    request<Frame[]>(`/projects/${projectId}/frames${query({ status })}`),
+  getFrame: (frameId: string) => request<Frame>(`/frames/${frameId}`),
+  /** The full frame, decoded on demand. The canvas's <img> src. */
+  fullFrameImageUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/image`,
+  getFrameAnnotations: (frameId: string) => request<Annotation[]>(`/frames/${frameId}/annotations`),
+  /** Whole-set replacement: whatever is not in the list is gone. */
+  saveFrameAnnotations: (frameId: string, annotations: FrameAnnotationWrite[]) =>
+    request<Annotation[]>(`/frames/${frameId}/annotations`, {
+      method: "PUT",
+      body: JSON.stringify({ annotations }),
+    }),
 
   runOcr: (trackId: string) => request<OcrCandidate[]>(`/tracks/${trackId}/ocr`, { method: "POST" }),
   listOcrCandidates: (trackId: string) => request<OcrCandidate[]>(`/tracks/${trackId}/ocr-candidates`),
