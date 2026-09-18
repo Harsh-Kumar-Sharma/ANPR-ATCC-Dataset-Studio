@@ -99,7 +99,8 @@ def _select_cuda(index: int, device_name: DeviceName) -> str:
     device = f"cuda:{index}"
     try:
         name = device_name(index)
-    except Exception:  # noqa: BLE001 - naming is cosmetic, never worth failing over
+    except Exception:
+        # Naming is cosmetic; never worth failing a run over.
         name = "unknown device"
     logger.info("Using device %s (%s)", device, name)
     return device

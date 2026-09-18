@@ -165,3 +165,38 @@ def test_a_second_run_on_the_same_source_is_rejected_while_one_is_queued(tmp_pat
     assert first.status_code == 202
     assert second.status_code == 409
     assert second.json()["code"] == "processing_already_running"
+
+
+def test_a_finished_run_records_when_it_completed(tmp_path):
+    """The inline endpoint used to stamp completed_at; moving the work into
+    a worker dropped it on the floor, leaving every detect run with a null
+    completion time."""
+    project, source = _project_with_source(tmp_path, "Completed At Project")
+    submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+
+    run = client.get(f"/processing-runs/{submitted['run_id']}").json()
+    assert run["status"] == "completed"
+    assert run["completed_at"] is not None
+
+
+def test_a_failed_run_also_records_when_it_stopped(tmp_path):
+    """A run that dies with a null completed_at looks like it is still
+    going, forever."""
+
+    class _ExplodingDetector:
+        model_version = "exploding-v1"
+        class_names = {0: "car"}
+
+        def detect(self, frame):
+            raise RuntimeError("detector exploded")
+
+    project, source = _project_with_source(tmp_path, "Failed Run Project")
+    submitted = process_source_sync(client, project["id"], source["id"], _ExplodingDetector())
+
+    run = client.get(f"/processing-runs/{submitted['run_id']}").json()
+    assert run["status"] == "failed"
+    assert run["completed_at"] is not None
+    assert "detector exploded" in run["error_message"]
+
+    job = client.get(f"/jobs/{submitted['job']['id']}").json()
+    assert job["status"] == "failed"

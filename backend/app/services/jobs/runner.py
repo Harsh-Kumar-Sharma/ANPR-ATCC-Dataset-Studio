@@ -27,6 +27,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.errors import NotFoundError
 from app.db.models.job import JOB_TYPES, Job
 from app.services.jobs.progress import read_progress
 
@@ -178,7 +179,7 @@ def current_progress(job: Job) -> tuple[float, str | None]:
 def _get(db: Session, job_id: str) -> Job:
     job = db.get(Job, job_id)
     if job is None:
-        raise LookupError(f"No such job: {job_id}")
+        raise NotFoundError(f"Job not found: {job_id}")
     return job
 
 

@@ -1,4 +1,9 @@
 import type { Job } from "../types";
+import ProgressBar from "./ProgressBar";
+
+interface Props {
+  activeJobs: Job[];
+}
 
 /**
  * The always-visible "something is running" indicator.
@@ -8,7 +13,7 @@ import type { Job } from "../types";
  * from the screen that started it, and you still need to know it is
  * going.
  */
-export default function JobIndicator({ activeJobs }: { activeJobs: Job[] }) {
+function JobIndicator({ activeJobs }: Props) {
   if (activeJobs.length === 0) return null;
 
   const [job, ...rest] = activeJobs;
@@ -21,17 +26,10 @@ export default function JobIndicator({ activeJobs }: { activeJobs: Job[] }) {
         {job.progress_message ?? "Working"}
         {rest.length > 0 && ` (+${rest.length} more)`}
       </span>
-      <div
-        className="job-indicator__bar"
-        role="progressbar"
-        aria-valuenow={percent}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label="Background job progress"
-      >
-        <div className="job-indicator__bar-fill" style={{ width: `${percent}%` }} />
-      </div>
+      <ProgressBar fraction={job.progress} label="Background job progress" className="job-indicator__bar" />
       <span className="job-indicator__percent">{percent}%</span>
     </div>
   );
 }
+
+export default JobIndicator;

@@ -13,13 +13,18 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.errors import NotFoundError
-from app.db.models.job import Job
+from app.core.errors import AppError, NotFoundError
+from app.db.models.job import JOB_STATUSES, JOB_TYPES, Job
 from app.db.session import SessionLocal, get_db
 from app.schemas.job import JobRead
 from app.services.jobs import runner
 
 logger = logging.getLogger(__name__)
+
+
+class ValidationError(AppError):
+    code = "invalid_filter"
+
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -32,7 +37,7 @@ _STREAM_POLL_SECONDS = 0.5
 _DEFAULT_JOB_LIMIT = 50
 
 
-def _to_read_model(db: Session, job: Job) -> JobRead:
+def _to_read_model(job: Job) -> JobRead:
     """Merge live progress over the persisted row."""
     fraction, message = runner.current_progress(job)
     model = JobRead.model_validate(job)
@@ -54,6 +59,13 @@ def list_jobs(
     limit: int = Query(_DEFAULT_JOB_LIMIT, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[JobRead]:
+    # Reject unknown filter values rather than silently returning an
+    # empty list, which reads identically to "nothing has run yet".
+    if status is not None and status not in JOB_STATUSES:
+        raise ValidationError(f"Unknown job status: {status!r}. Expected one of {', '.join(JOB_STATUSES)}.")
+    if type is not None and type not in JOB_TYPES:
+        raise ValidationError(f"Unknown job type: {type!r}. Expected one of {', '.join(JOB_TYPES)}.")
+
     stmt = select(Job).order_by(Job.created_at.desc()).limit(limit)
     if project_id is not None:
         stmt = stmt.where(Job.project_id == project_id)
@@ -61,12 +73,12 @@ def list_jobs(
         stmt = stmt.where(Job.status == status)
     if type is not None:
         stmt = stmt.where(Job.type == type)
-    return [_to_read_model(db, job) for job in db.scalars(stmt)]
+    return [_to_read_model(job) for job in db.scalars(stmt)]
 
 
 @router.get("/{job_id}", response_model=JobRead)
 def get_job(job_id: str, db: Session = Depends(get_db)) -> JobRead:
-    return _to_read_model(db, get_job_or_404(db, job_id))
+    return _to_read_model(get_job_or_404(db, job_id))
 
 
 @router.get("/{job_id}/progress")
@@ -87,7 +99,7 @@ def stream_job_progress(job_id: str, db: Session = Depends(get_db)) -> Streaming
                 job = session.get(Job, job_id)
                 if job is None:
                     break
-                payload = _to_read_model(session, job)
+                payload = _to_read_model(job)
                 terminal = job.is_terminal
 
             yield f"data: {payload.model_dump_json()}\n\n"

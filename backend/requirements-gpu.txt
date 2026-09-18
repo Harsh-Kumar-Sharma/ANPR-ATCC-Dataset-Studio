@@ -1,0 +1,24 @@
+# CUDA build of torch. Install this BEFORE `pip install -e .`:
+#
+#     pip install -r requirements-gpu.txt
+#
+# pyproject.toml pins these same versions, but pins alone cannot get you
+# the CUDA build: those wheels are not on PyPI, and a plain install
+# resolves to the "+cpu" wheel instead - which is exactly how this
+# project ended up running detection on the CPU without anyone choosing
+# to. The index below is the part that matters, and it cannot be
+# expressed per-package in pyproject.toml with a setuptools backend.
+#
+# Already have a "+cpu" torch? Uninstall first. pip treats an installed
+# 2.14.0+cpu as satisfying ==2.14.0 and will do nothing:
+#
+#     pip uninstall -y torch torchvision
+#
+# Verify with `python -c "import torch; print(torch.__version__)"` - a
+# "+cpu" suffix means it did not take. CUDA 13.2 supports the GTX 1650
+# (Turing, sm_75); check your driver before changing this index.
+
+--index-url https://download.pytorch.org/whl/cu132
+
+torch==2.14.0
+torchvision==0.29.0

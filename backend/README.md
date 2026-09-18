@@ -8,8 +8,22 @@ FastAPI backend for the ANPR + ATCC Dataset Studio. See
 
 ```bash
 python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -r requirements-gpu.txt
 ./.venv/Scripts/python.exe -m pip install -e ".[dev]"
 ```
+
+`requirements-gpu.txt` goes **first**, and it is not optional on a machine
+with an NVIDIA GPU. The CUDA build of torch is not on PyPI, so installing
+the project alone pulls the `+cpu` wheel and detection silently runs on
+the CPU at roughly half the speed (see
+[`../docs/benchmarks.md`](../docs/benchmarks.md)). Check it took:
+
+```bash
+./.venv/Scripts/python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+A `+cpu` version string means it did not. Without a GPU, skip that file;
+the app falls back to the CPU with a warning rather than failing.
 
 ## Run migrations
 

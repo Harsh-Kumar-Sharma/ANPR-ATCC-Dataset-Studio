@@ -1,5 +1,11 @@
 import type { Job } from "../types";
 import { isActive } from "../useJobs";
+import ProgressBar from "./ProgressBar";
+
+interface Props {
+  jobs: Job[];
+  error?: string | null;
+}
 
 const STATUS_LABEL: Record<Job["status"], string> = {
   pending: "Queued",
@@ -22,8 +28,7 @@ function formatWhen(job: Job): string {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString();
 }
 
-export function JobRow({ job }: { job: Job }) {
-  const percent = Math.round(job.progress * 100);
+function JobRow({ job }: { job: Job }) {
   return (
     <li className={`job-row job-row--${job.status}`} data-testid="job-row">
       <div className="job-row__head">
@@ -33,16 +38,11 @@ export function JobRow({ job }: { job: Job }) {
       </div>
 
       {isActive(job) && (
-        <div
+        <ProgressBar
+          fraction={job.progress}
+          label={`${TYPE_LABEL[job.type] ?? job.type} progress`}
           className="job-row__bar"
-          role="progressbar"
-          aria-valuenow={percent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={`${TYPE_LABEL[job.type] ?? job.type} progress`}
-        >
-          <div className="job-row__bar-fill" style={{ width: `${percent}%` }} />
-        </div>
+        />
       )}
 
       {isActive(job) && <p className="job-row__message">{job.progress_message ?? "Starting..."}</p>}
@@ -54,7 +54,7 @@ export function JobRow({ job }: { job: Job }) {
   );
 }
 
-export default function JobsPanel({ jobs, error }: { jobs: Job[]; error?: string | null }) {
+function JobsPanel({ jobs, error }: Props) {
   return (
     <section className="jobs-panel">
       <h3>Jobs</h3>
@@ -71,3 +71,5 @@ export default function JobsPanel({ jobs, error }: { jobs: Job[]; error?: string
     </section>
   );
 }
+
+export default JobsPanel;

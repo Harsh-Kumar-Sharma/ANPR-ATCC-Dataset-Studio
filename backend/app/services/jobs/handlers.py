@@ -7,10 +7,12 @@ it shares no memory with the app that submitted it.
 """
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.core.errors import NotFoundError
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
 from app.db.models.source import Source
@@ -18,6 +20,10 @@ from app.ml.factory import create_tracker, get_default_detector
 from app.services.track_processor import ProgressReporter, process_source
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
@@ -30,15 +36,15 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
     run_id = params["run_id"]
     run = db.get(ProcessingRun, run_id)
     if run is None:
-        raise LookupError(f"No such processing run: {run_id}")
+        raise NotFoundError(f"Processing run not found: {run_id}")
 
     source = db.get(Source, run.source_id)
     if source is None:
-        raise LookupError(f"No such source: {run.source_id}")
+        raise NotFoundError(f"Source not found: {run.source_id}")
 
     project = db.get(Project, source.project_id)
     if project is None:
-        raise LookupError(f"No such project: {source.project_id}")
+        raise NotFoundError(f"Project not found: {source.project_id}")
 
     target_fps = float(run.sampling_config["target_fps"])
 
@@ -71,8 +77,16 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
         # source against any future run.
         run.status = "failed"
         run.error_message = str(exc)[:2048]
+        run.completed_at = _utcnow()
         db.commit()
         raise
+
+    # process_source marks the run completed but has no opinion on when,
+    # because it is also used by paths that are not jobs. Stamping it
+    # here keeps "when did this run stop" true for both outcomes - a run
+    # with a null completed_at reads as still going, forever.
+    run.completed_at = _utcnow()
+    db.commit()
 
     return {"run_id": run.id, "source_id": source.id, "project_id": project.id}
 
