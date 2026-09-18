@@ -1,7 +1,6 @@
 import type {
   Annotation,
   ClassDefinition,
-  ClassUsage,
   DatasetExportResult,
   DatasetVersion,
   DisagreementItem,
@@ -66,8 +65,6 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ name }),
     }),
-  getClassUsage: (projectId: string, classId: number) =>
-    request<ClassUsage>(`/projects/${projectId}/classes/${classId}/usage`),
   deleteClass: (projectId: string, classId: number) =>
     request<void>(`/projects/${projectId}/classes/${classId}`, { method: "DELETE" }),
 

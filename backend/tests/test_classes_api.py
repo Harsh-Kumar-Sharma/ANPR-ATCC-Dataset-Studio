@@ -79,6 +79,28 @@ def test_a_blank_name_is_rejected_before_it_reaches_the_database():
     assert client.post(f"/projects/{project['id']}/classes", json={"name": ""}).status_code == 422
 
 
+def test_a_whitespace_only_name_is_refused_with_a_reason():
+    """It clears pydantic's min_length but is still not a name. It used
+    to fall through to the catch-all handler as an anonymous 500."""
+    project = _anpr_project("Editor Whitespace Project")
+
+    response = client.post(f"/projects/{project['id']}/classes", json={"name": "   "})
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_class_name"
+
+
+def test_usage_for_a_class_that_does_not_exist_is_a_404():
+    """Otherwise it cheerfully reports zero labels for a class that
+    never existed, which reads as "safe to delete"."""
+    project = _anpr_project("Editor Usage Missing Project")
+
+    response = client.get(f"/projects/{project['id']}/classes/99/usage")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+
+
 def test_renaming_a_class_that_does_not_exist_is_a_404():
     project = _anpr_project("Editor Missing Project")
 
@@ -128,7 +150,7 @@ def test_a_class_in_use_refuses_deletion_rather_than_orphaning_labels(tmp_path):
     response = client.delete(f"/projects/{project['id']}/classes/2")
     assert response.status_code == 409
     assert response.json()["code"] == "class_in_use"
-    assert "1 label" in response.json()["message"]
+    assert "1 annotation" in response.json()["message"]
 
     # The class is still there, and so is the label.
     assert any(c["class_id"] == 2 for c in client.get(f"/projects/{project['id']}/classes").json())

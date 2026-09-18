@@ -1,6 +1,7 @@
 import pytest
 
 from app.core.errors import ConflictError, NotFoundError
+from app.services.class_definitions import InvalidClassNameError
 from app.db.models import Annotation, ClassDefinition, FrameCandidate, Frame, ProcessingRun, Project, Source, Track
 from app.db.session import SessionLocal
 from app.services import class_definitions
@@ -17,7 +18,7 @@ def _project(name: str) -> Project:
         return project
 
 
-def _label_with(project: Project, class_id: int) -> str:
+def _label_with(project: Project, class_id: int, status: str = "accepted") -> str:
     """Put one human annotation on this project using ``class_id``."""
     with SessionLocal() as db:
         source = Source(
@@ -58,7 +59,7 @@ def _label_with(project: Project, class_id: int) -> str:
             source="human",
             class_id=class_id,
             bbox_json=[0, 0, 10, 10],
-            status="accepted",
+            status=status,
         )
         db.add(annotation)
         db.commit()
@@ -160,7 +161,7 @@ def test_a_blank_name_is_refused():
     project = _project("Blank Name")
 
     with SessionLocal() as db:
-        with pytest.raises(ValueError):
+        with pytest.raises(InvalidClassNameError):
             class_definitions.create_class(db, project.id, "   ")
 
 
@@ -233,3 +234,59 @@ def test_labels_in_another_project_do_not_protect_this_ones_class():
 
     with SessionLocal() as db:
         assert class_definitions.is_valid_class_id(db, first.id, 2) is True
+
+
+def test_duplicate_detection_is_not_fooled_by_non_ascii_case():
+    """SQLite's lower() only touches A-Z, so comparing in SQL let an
+    accented case-variant through - and the table's own uniqueness
+    constraint is case-sensitive, so nothing caught it either."""
+    project = _project("Unicode Names")
+
+    with SessionLocal() as db:
+        class_definitions.create_class(db, project.id, "véhicule")
+        db.commit()
+
+    with SessionLocal() as db:
+        with pytest.raises(ConflictError):
+            class_definitions.create_class(db, project.id, "VÉHICULE")
+
+
+def test_duplicate_detection_handles_other_unicode_casing_rules():
+    project = _project("Unicode Casing")
+
+    with SessionLocal() as db:
+        class_definitions.create_class(db, project.id, "Straße")
+        db.commit()
+
+    with SessionLocal() as db:
+        with pytest.raises(ConflictError):
+            class_definitions.create_class(db, project.id, "STRASSE")
+
+
+def test_a_rejected_review_is_reported_as_what_it_is():
+    """A rejected review still carries a class_id, so it still blocks the
+    delete - but telling the user "1 label uses this" when they cannot
+    find that label anywhere is not an honest answer."""
+    project = _project("Rejected Blocks Delete")
+    _label_with(project, class_id=2, status="failed")
+
+    with SessionLocal() as db:
+        assert class_definitions.count_labels_using(db, project.id, 2) == 1
+        with pytest.raises(ConflictError) as raised:
+            class_definitions.delete_class(db, project.id, 2)
+
+    assert "reject" in str(raised.value).lower()
+
+
+def test_duplicate_detection_when_the_stored_name_is_the_uppercase_one():
+    """The order matters: SQLite's lower() leaves an accented capital
+    alone, so a stored 'VÉHICULE' never matched an incoming 'véhicule'."""
+    project = _project("Unicode Stored Upper")
+
+    with SessionLocal() as db:
+        class_definitions.create_class(db, project.id, "VÉHICULE")
+        db.commit()
+
+    with SessionLocal() as db:
+        with pytest.raises(ConflictError):
+            class_definitions.create_class(db, project.id, "véhicule")

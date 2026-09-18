@@ -8,14 +8,19 @@ to "what can this project label with", and it is the project's own rows.
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import AppError, ConflictError, NotFoundError
 from app.core.presets import get_preset
 from app.db.models.annotation import Annotation
 from app.db.models.class_definition import ClassDefinition
-from app.db.models.frame_candidate import FrameCandidate
-from app.db.models.processing_run import ProcessingRun
-from app.db.models.source import Source
-from app.db.models.track import Track
+from app.services.dataset_query import project_annotations
+
+
+class InvalidClassNameError(AppError):
+    """A name that cannot be stored at all, as opposed to one that
+    clashes. Coded so the editor shows the reason rather than an
+    anonymous failure."""
+
+    code = "invalid_class_name"
 
 
 class DuplicateClassNameError(ConflictError):
@@ -122,20 +127,38 @@ def _normalize(name: str) -> str:
     """
     trimmed = name.strip()
     if not trimmed:
-        raise ValueError("A class name cannot be blank.")
+        raise InvalidClassNameError("A class name cannot be blank.")
     return trimmed
 
 
+def _comparable(name: str) -> str:
+    """The form two names are judged equal by.
+
+    ``casefold`` rather than ``lower``: it is the Unicode-aware one, and
+    it folds cases ``lower`` leaves alone (German "Straße" and "STRASSE"
+    are the same word).
+    """
+    return name.strip().casefold()
+
+
 def _find_by_name(db: Session, project_id: str, name: str) -> ClassDefinition | None:
-    return db.scalar(
-        select(ClassDefinition).where(
-            ClassDefinition.project_id == project_id,
-            func.lower(ClassDefinition.name) == name.lower(),
-        )
-    )
+    """Find a class by name, compared case-insensitively.
+
+    Compared in Python, not SQL, and deliberately. SQLite's ``lower()``
+    only touches A-Z, so an accented capital survived it and a stored
+    "VÉHICULE" never matched an incoming "véhicule" - while the table's
+    own uniqueness constraint is case-sensitive and did not catch it
+    either. A project's class list is tens of rows, so comparing them in
+    Python costs nothing and is simply correct.
+    """
+    wanted = _comparable(name)
+    for existing in list_project_classes(db, project_id):
+        if _comparable(existing.name) == wanted:
+            return existing
+    return None
 
 
-def _get_class(db: Session, project_id: str, class_id: int) -> ClassDefinition:
+def get_class(db: Session, project_id: str, class_id: int) -> ClassDefinition:
     found = db.scalar(
         select(ClassDefinition).where(
             ClassDefinition.project_id == project_id,
@@ -150,9 +173,10 @@ def _get_class(db: Session, project_id: str, class_id: int) -> ClassDefinition:
 def create_class(db: Session, project_id: str, name: str) -> ClassDefinition:
     """Add a class to the end of the project's list.
 
-    The new class_id is one past the highest ever used, never a gap left
-    by a deletion: ids are what labels point at, so reissuing one would
-    silently reinterpret every label still holding it.
+    The new class_id is one past the highest currently in the project.
+    That can reuse the id of a deleted class, which is safe precisely
+    because deletion is refused while anything still points at one - by
+    the time an id is free, nothing means it.
     """
     name = _normalize(name)
     if _find_by_name(db, project_id, name) is not None:
@@ -180,7 +204,7 @@ def rename_class(db: Session, project_id: str, class_id: int, name: str) -> Clas
     """Rename a class. Never touches a label - that is what makes renaming
     the one class edit that is always safe."""
     name = _normalize(name)
-    target = _get_class(db, project_id, class_id)
+    target = get_class(db, project_id, class_id)
 
     clash = _find_by_name(db, project_id, name)
     if clash is not None and clash.id != target.id:
@@ -194,21 +218,18 @@ def rename_class(db: Session, project_id: str, class_id: int, name: str) -> Clas
 def count_labels_using(db: Session, project_id: str, class_id: int) -> int:
     """How many of this project's annotations point at this class.
 
+    Counts *every* annotation holding the id, not just accepted ones. A
+    rejected review still carries a class_id, and deleting the class out
+    from under it would orphan it just the same. The message says so, so
+    a count the user cannot see in their accepted work is at least
+    explained.
+
     Scoped to the project: another project's labels must not make a class
     undeletable here. This is the number ticket 07's "these 47 labels use
     this class" prompt is built from.
     """
-    return (
-        db.scalar(
-            select(func.count(Annotation.id))
-            .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)
-            .join(Track, FrameCandidate.track_id == Track.id)
-            .join(ProcessingRun, Track.run_id == ProcessingRun.id)
-            .join(Source, ProcessingRun.source_id == Source.id)
-            .where(Source.project_id == project_id, Annotation.class_id == class_id)
-        )
-        or 0
-    )
+    annotations = project_annotations(project_id).where(Annotation.class_id == class_id).subquery()
+    return db.scalar(select(func.count()).select_from(annotations)) or 0
 
 
 def delete_class(db: Session, project_id: str, class_id: int) -> None:
@@ -220,12 +241,13 @@ def delete_class(db: Session, project_id: str, class_id: int) -> None:
     leaving annotations pointing at a class that is gone, which is the
     easiest way to silently poison a dataset.
     """
-    target = _get_class(db, project_id, class_id)
+    target = get_class(db, project_id, class_id)
 
     in_use = count_labels_using(db, project_id, class_id)
     if in_use:
         raise ClassInUseError(
-            f"{in_use} label(s) still use {target.name!r}. Move them to another class or delete them first."
+            f"{in_use} annotation(s) still use {target.name!r}, including any rejected reviews. "
+            "Move them to another class or delete them first."
         )
 
     db.delete(target)

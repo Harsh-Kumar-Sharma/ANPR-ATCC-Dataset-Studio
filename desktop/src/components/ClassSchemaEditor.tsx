@@ -18,25 +18,25 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /** Surface the backend's own message. A name clash, or deleting a
+   *  class that is still in use, are ordinary things to do by accident,
+   *  and the server already says exactly which name or how many labels. */
+  function describe(e: unknown): string {
+    return e instanceof ApiError ? e.message : String(e);
+  }
+
   const refresh = useCallback(async () => {
     try {
       setClasses(await api.listClasses(project.id));
       setError(null);
     } catch (e) {
-      setError(String(e));
+      setError(describe(e));
     }
   }, [project.id]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  /** Surface the backend's own message. A name clash is a normal thing to
-   *  do by accident, and "this project already has a class called
-   *  'vehicle'" is far more use than a generic failure. */
-  function describe(e: unknown): string {
-    return e instanceof ApiError ? e.message : String(e);
-  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -75,16 +75,9 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
   async function handleDelete(cls: ClassDefinition) {
     setBusy(true);
     try {
-      // Ask first, so the refusal is explained before it happens rather
-      // than after. Deleting labels, or moving them, is a decision the
-      // user has to make - and that conversation does not exist yet.
-      const usage = await api.getClassUsage(project.id, cls.class_id);
-      if (usage.label_count > 0) {
-        setError(
-          `${usage.label_count} label(s) use "${cls.name}". Deleting a class that is in use is not supported yet.`,
-        );
-        return;
-      }
+      // No pre-check: the server refuses a class that is in use and its
+      // message already carries the count, so asking first would only
+      // duplicate that wording in a second place - and race it.
       await api.deleteClass(project.id, cls.class_id);
       setError(null);
       await refresh();

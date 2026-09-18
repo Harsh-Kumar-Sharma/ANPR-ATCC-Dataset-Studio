@@ -58,6 +58,9 @@ def get_class_usage(project_id: str, class_id: int, db: Session = Depends(get_db
     what is at stake instead of letting them attempt it and fail.
     """
     get_project_or_404(db, project_id)
+    # 404s for an unknown class, like rename and delete - otherwise this
+    # cheerfully reports zero labels for a class that never existed.
+    class_definitions.get_class(db, project_id, class_id)
     return ClassUsage(class_id=class_id, label_count=class_definitions.count_labels_using(db, project_id, class_id))
 
 

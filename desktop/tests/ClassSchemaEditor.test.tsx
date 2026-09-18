@@ -75,20 +75,23 @@ describe("ClassSchemaEditor", () => {
     await waitFor(() => expect(onClassesChanged).toHaveBeenCalled());
   });
 
-  it("explains a refused delete before attempting it", async () => {
-    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 47 });
-    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue(undefined);
+  it("shows why a delete was refused, with the server's own count", async () => {
+    vi.spyOn(api, "deleteClass").mockRejectedValue(
+      new ApiError(
+        409,
+        "class_in_use",
+        "47 annotation(s) still use 'number_plate', including any rejected reviews. Move them to another class or delete them first.",
+      ),
+    );
     render(<ClassSchemaEditor project={project} />);
 
     (await screen.findByRole("button", { name: /delete number_plate/i })).click();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/47 label/i);
-    expect(deleted).not.toHaveBeenCalled();
+    expect(alert).toHaveTextContent(/47 annotation/i);
   });
 
   it("deletes a class nothing is using", async () => {
-    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 0 });
     const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue(undefined);
     render(<ClassSchemaEditor project={project} />);
 
