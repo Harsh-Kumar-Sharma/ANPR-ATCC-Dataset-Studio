@@ -14,10 +14,10 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, NotFoundError
+from app.core.errors import AppError, ConflictError, NotFoundError
 from app.db.models.annotation import Annotation
 from app.db.models.frame import FRAME_STATUSES, Frame
 from app.db.models.project import Project
@@ -34,14 +34,37 @@ class InvalidBoxError(AppError):
     code = "invalid_box"
 
 
+class StaleBoxError(ConflictError):
+    """The canvas echoed an annotation that is no longer on the frame.
+
+    Its view is out of date - something else removed the box - and the
+    honest answer is to reload rather than to guess whether the user
+    meant to keep it."""
+
+    code = "stale_box"
+
+
+class InvalidQueueFilterError(AppError):
+    """An unknown frame status was asked for. Rejected rather than
+    returning an empty queue that reads like "nothing to label"."""
+
+    code = "invalid_filter"
+
+
 @dataclass(frozen=True)
 class BoxInput:
     """One box as the canvas sends it: ``[x1, y1, x2, y2]`` in full-frame
-    pixels, a class (or none yet), and whatever attributes it carries."""
+    pixels, a class (or none yet), and whatever attributes it carries.
+
+    ``id`` is the existing annotation this box is, when it is one the
+    canvas loaded rather than drew. Echoing it lets an unchanged box
+    stay itself - same row, same id, same dataset items indexing it.
+    """
 
     class_id: int | None
     bbox: list[float]
     attributes: dict = field(default_factory=dict)
+    id: str | None = None
 
 
 def list_queue(db: Session, project_id: str, status: str | None = None) -> list[Frame]:
@@ -49,15 +72,23 @@ def list_queue(db: Session, project_id: str, status: str | None = None) -> list[
 
     Source then frame index, so a session walks one video forward before
     starting the next. Which frames *deserve* to be in the queue is a
-    later ticket; today every captured frame is.
+    later ticket; today every captured frame that can be opened is.
+
+    "Can be opened" matters: a frame from a live RTSP session has no
+    video file to decode it from, so unless its image was written at
+    capture time there is nothing to show. Offering it would be a queue
+    entry that errors on click.
     """
     if status is not None and status not in FRAME_STATUSES:
-        raise NotFoundError(f"Unknown frame status: {status!r}. Expected one of {', '.join(FRAME_STATUSES)}.")
+        raise InvalidQueueFilterError(
+            f"Unknown frame status: {status!r}. Expected one of {', '.join(FRAME_STATUSES)}."
+        )
 
     stmt = (
         select(Frame)
         .join(Source, Frame.source_id == Source.id)
         .where(Source.project_id == project_id)
+        .where(or_(Source.type == "video", Frame.image_path.is_not(None)))
         .order_by(Frame.source_id, Frame.frame_index)
     )
     if status is not None:
@@ -112,6 +143,13 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     track review - the canvas is the truth for its frame. Whatever
     depended on a removed box is settled by ``delete_annotations``.
 
+    But "replacement" is of the *set*, not of the rows. A box the canvas
+    loaded comes back with its id and is updated in place, so an
+    unchanged box keeps its identity, the dataset items indexing it, and
+    its candidate link. Deleting and re-inserting everything would have
+    silently dropped an exported box's dataset item and un-reviewed its
+    track on every save.
+
     Zero boxes is a real label. An empty frame teaches "nothing here",
     and the frame reads as labelled, not as still waiting.
 
@@ -121,22 +159,41 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     for index, box in enumerate(boxes):
         _validate(db, project_id, frame, index, box)
 
-    existing_human = [a.id for a in list_annotations(db, frame.id) if a.source == "human"]
-    delete_annotations(db, existing_human)
+    existing = {a.id: a for a in list_annotations(db, frame.id) if a.source == "human"}
 
-    db.add_all(
-        Annotation(
-            frame_id=frame.id,
-            frame_candidate_id=None,
-            source="human",
-            class_id=box.class_id,
-            bbox_json=[float(v) for v in box.bbox],
-            attributes=dict(box.attributes),
-            # A box a human drew is the human's truth for that frame.
-            status="accepted",
+    echoed = [box.id for box in boxes if box.id is not None]
+    if len(echoed) != len(set(echoed)):
+        raise InvalidBoxError("The same annotation was sent more than once.")
+    unknown = [annotation_id for annotation_id in echoed if annotation_id not in existing]
+    if unknown:
+        raise StaleBoxError(
+            f"{len(unknown)} box(es) refer to annotations no longer on this frame. Reload it and try again."
         )
-        for box in boxes
-    )
+
+    for box in boxes:
+        if box.id is not None:
+            annotation = existing[box.id]
+            annotation.class_id = box.class_id
+            annotation.bbox_json = [float(v) for v in box.bbox]
+            annotation.attributes = dict(box.attributes)
+            annotation.status = "accepted"
+        else:
+            db.add(
+                Annotation(
+                    frame_id=frame.id,
+                    frame_candidate_id=None,
+                    source="human",
+                    class_id=box.class_id,
+                    bbox_json=[float(v) for v in box.bbox],
+                    attributes=dict(box.attributes),
+                    # A box a human drew is the human's truth for that frame.
+                    status="accepted",
+                )
+            )
+
+    kept = set(echoed)
+    delete_annotations(db, [annotation_id for annotation_id in existing if annotation_id not in kept])
+
     frame.status = "labeled"
     db.flush()
     return list_annotations(db, frame.id)

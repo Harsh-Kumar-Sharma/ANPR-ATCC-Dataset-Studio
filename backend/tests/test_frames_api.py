@@ -211,3 +211,45 @@ def test_remapping_a_class_reaches_canvas_boxes_too(tmp_path):
     client.delete(f"/projects/{project['id']}/classes/2", params={"remap_to": 1})
 
     assert client.get(f"/frames/{frame['id']}/annotations").json()[0]["class_id"] == 1
+
+
+# --- ids survive a save ------------------------------------------------------------
+
+
+def test_a_box_sent_back_with_its_id_keeps_that_id(tmp_path):
+    _, queue = _project_with_frames(tmp_path, "Echo Id Project")
+    frame = queue[0]
+    first = client.put(f"/frames/{frame['id']}/annotations", json={"annotations": [_box(1, 0, 0, 10, 10)]}).json()
+    box_id = first[0]["id"]
+
+    again = client.put(
+        f"/frames/{frame['id']}/annotations",
+        json={"annotations": [{"id": box_id, "class_id": 2, "bbox_json": [0, 0, 10, 10], "attributes": {}}]},
+    ).json()
+
+    assert [a["id"] for a in again] == [box_id]
+    assert again[0]["class_id"] == 2
+
+
+def test_a_stale_id_is_a_conflict_the_canvas_can_act_on(tmp_path):
+    _, queue = _project_with_frames(tmp_path, "Stale Id Project")
+    frame = queue[0]
+    first = client.put(f"/frames/{frame['id']}/annotations", json={"annotations": [_box(1, 0, 0, 10, 10)]}).json()
+    client.put(f"/frames/{frame['id']}/annotations", json={"annotations": []})
+
+    response = client.put(
+        f"/frames/{frame['id']}/annotations",
+        json={"annotations": [{"id": first[0]["id"], "class_id": 1, "bbox_json": [0, 0, 10, 10], "attributes": {}}]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "stale_box"
+
+
+def test_an_unknown_status_filter_is_a_400_not_an_empty_list(tmp_path):
+    project, _ = _project_with_frames(tmp_path, "Status Filter 400 Project")
+
+    response = client.get(f"/projects/{project['id']}/frames", params={"status": "done"})
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_filter"

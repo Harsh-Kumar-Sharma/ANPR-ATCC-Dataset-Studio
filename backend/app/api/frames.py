@@ -64,7 +64,8 @@ def replace_frame_annotations(
     frame = frames.get_frame(db, frame_id)
     project = frames.project_of(db, frame)
     boxes = [
-        frames.BoxInput(class_id=a.class_id, bbox=a.bbox_json, attributes=a.attributes) for a in payload.annotations
+        frames.BoxInput(id=a.id, class_id=a.class_id, bbox=a.bbox_json, attributes=a.attributes)
+        for a in payload.annotations
     ]
     saved = frames.replace_annotations(db, project.id, frame, boxes)
     db.commit()

@@ -26,3 +26,23 @@ the canvas shows - and a track whose label is thereby removed goes back to
 
 **Verified on the real database:** a 1920x1080 frame decoded on demand, one
 box saved with class and attributes, reopened at identical coordinates.
+
+**From review (fixed in `HEAD`):** a save deleted and re-inserted every box, which
+cascaded away an exported box's dataset item and un-reviewed its track on every
+save. The canvas now echoes the ids of boxes it loaded, and those are updated in
+place; only a box it no longer sends is removed. The migration's orphan delete
+did not cascade either; it does now, and there is an alembic test on a
+throwaway database for both directions. The queue excludes frames from live
+RTSP sessions that have no stored image, since they cannot be opened.
+
+**Named limitation, not fixed here:** `query_approved_items`, evaluation's class
+distribution and the active-learning queue still join through the frame
+candidate, so boxes drawn on the canvas are invisible to export until ticket 12
+rewrites it onto frames. Draw fifty boxes today and export produces the legacy
+track labels only. Evaluation and active-learning belong to no ticket yet.
+
+**Incident:** the pre-fix smoke test on the real database deleted one legacy label
+(frame 234 of '3gp Real Video Test') through the bug above. It was restored
+exactly - original id, class, bbox to 0.0000 px, both dataset items, track back
+to accepted - from the v2/v3 export manifests on disk, which is precisely the
+record those manifests exist to be.

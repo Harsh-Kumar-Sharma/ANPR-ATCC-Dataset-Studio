@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { IconAlert } from "../Icons";
-import type { Frame, FrameAnnotationWrite, Project, ProjectClass } from "../types";
+import type { Annotation, Frame, FrameAnnotationWrite } from "../types";
 
 interface Props {
-  project: Project;
   frame: Frame;
-  /** Bumped by the class editor; the canvas reloads its class list. */
-  classesVersion?: number;
   onSaved?: (frame: Frame) => void;
 }
 
@@ -30,28 +27,44 @@ function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));
 }
 
+function normalise(d: Draft): [number, number, number, number] {
+  return [Math.min(d.x1, d.x2), Math.min(d.y1, d.y2), Math.max(d.x1, d.x2), Math.max(d.y1, d.y2)];
+}
+
+/** A loaded annotation, carried with its id so saving it back keeps it
+ *  the same row rather than a fresh one. */
+function fromAnnotation(a: Annotation): Box {
+  return { id: a.id, class_id: a.class_id, bbox_json: a.bbox_json, attributes: a.attributes };
+}
+
 /**
  * Draw boxes on a full frame, and save them as the frame's complete set.
  *
  * Every coordinate this component stores is a full-frame pixel. The
- * image on screen is scaled to fit, so mouse positions are mapped through
- * the image's rendered rectangle on every event rather than cached - a
- * resize between mousedown and mouseup then cannot skew a box.
+ * overlay is an SVG whose viewBox *is* the frame, stretched over the
+ * image, so boxes are drawn in frame pixels and the browser does the
+ * scaling - there is no rendered-size to keep in sync. Mouse positions
+ * are mapped through the image's rectangle on every event rather than
+ * cached, so a resize mid-drag cannot skew a box.
  *
- * This is the thinnest slice: draw, save, reload. Moving, resizing,
- * deleting and choosing a class per box come next; a new box takes the
- * project's first class so it exports as something rather than nothing.
+ * A drag is tracked on the window once it starts, so leaving the image
+ * does not cancel it - the box just clamps to the edge.
+ *
+ * This is the thinnest slice: draw, save, reload. A new box has no class
+ * yet; choosing one, and moving, resizing and deleting boxes, come next.
+ * Saving null rather than guessing a class means nothing is recorded as
+ * something it is not.
  */
-function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
+function LabelCanvas({ frame, onSaved }: Props) {
   const [boxes, setBoxes] = useState<Box[]>([]);
-  const [classes, setClasses] = useState<ProjectClass[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The image's on-screen size, for placing the overlay's rectangles.
-  const [rendered, setRendered] = useState({ width: 0, height: 0 });
   const imgRef = useRef<HTMLImageElement>(null);
+  // The window listeners read the draft from here so they never see a
+  // stale closure between one mouse event and the next.
+  const draftRef = useRef<Draft | null>(null);
 
   function describe(e: unknown): string {
     return e instanceof ApiError ? e.message : String(e);
@@ -63,9 +76,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
       .getFrameAnnotations(frame.id)
       .then((annotations) => {
         if (cancelled) return;
-        setBoxes(
-          annotations.map((a) => ({ class_id: a.class_id, bbox_json: a.bbox_json, attributes: a.attributes })),
-        );
+        setBoxes(annotations.map(fromAnnotation));
         setDirty(false);
         setError(null);
       })
@@ -75,61 +86,66 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
     };
   }, [frame.id]);
 
-  useEffect(() => {
-    api.getClassSchema(project.id).then(setClasses).catch((e) => setError(describe(e)));
-  }, [project.id, classesVersion]);
-
-  const measure = useCallback(() => {
-    const el = imgRef.current;
-    if (el) setRendered({ width: el.clientWidth, height: el.clientHeight });
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [measure]);
-
   /** Mouse position -> full-frame pixels, clamped to the frame. */
-  function toFrame(e: React.MouseEvent): { x: number; y: number } {
-    const el = imgRef.current;
-    if (!el) return { x: 0, y: 0 };
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
+  function toFrame(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = imgRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
     return {
-      x: clamp(((e.clientX - rect.left) / rect.width) * frame.width, 0, frame.width),
-      y: clamp(((e.clientY - rect.top) / rect.height) * frame.height, 0, frame.height),
+      x: clamp(((clientX - rect.left) / rect.width) * frame.width, 0, frame.width),
+      y: clamp(((clientY - rect.top) / rect.height) * frame.height, 0, frame.height),
     };
+  }
+
+  function updateDraft(next: Draft | null) {
+    draftRef.current = next;
+    setDraft(next);
   }
 
   function handleMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
-    const p = toFrame(e);
-    setDraft({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+    e.preventDefault();
+    const p = toFrame(e.clientX, e.clientY);
+    updateDraft({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
   }
 
-  function handleMouseMove(e: React.MouseEvent) {
-    if (!draft) return;
-    const p = toFrame(e);
-    setDraft({ ...draft, x2: p.x, y2: p.y });
-  }
-
-  function handleMouseUp() {
-    if (!draft) return;
-    const x1 = Math.min(draft.x1, draft.x2);
-    const y1 = Math.min(draft.y1, draft.y2);
-    const x2 = Math.max(draft.x1, draft.x2);
-    const y2 = Math.max(draft.y1, draft.y2);
-    setDraft(null);
+  function finish(d: Draft) {
+    updateDraft(null);
+    const [x1, y1, x2, y2] = normalise(d);
     if (x2 - x1 < MIN_BOX_SIDE || y2 - y1 < MIN_BOX_SIDE) return;
-    setBoxes((prev) => [...prev, { class_id: classes[0]?.id ?? null, bbox_json: [x1, y1, x2, y2], attributes: {} }]);
+    setBoxes((prev) => [...prev, { id: null, class_id: null, bbox_json: [x1, y1, x2, y2], attributes: {} }]);
     setDirty(true);
   }
+
+  const drawing = draft !== null;
+  useEffect(() => {
+    if (!drawing) return;
+    const move = (e: MouseEvent) => {
+      const d = draftRef.current;
+      if (!d) return;
+      const p = toFrame(e.clientX, e.clientY);
+      updateDraft({ ...d, x2: p.x, y2: p.y });
+    };
+    const up = (e: MouseEvent) => {
+      const d = draftRef.current;
+      if (!d) return;
+      const p = toFrame(e.clientX, e.clientY);
+      finish({ ...d, x2: p.x, y2: p.y });
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    // frame and the setters are stable for the life of this instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawing]);
 
   async function save() {
     setSaving(true);
     try {
       const saved = await api.saveFrameAnnotations(frame.id, boxes);
-      setBoxes(saved.map((a) => ({ class_id: a.class_id, bbox_json: a.bbox_json, attributes: a.attributes })));
+      setBoxes(saved.map(fromAnnotation));
       setDirty(false);
       setError(null);
       onSaved?.({ ...frame, status: "labeled" });
@@ -140,41 +156,41 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
     }
   }
 
-  // Full-frame pixels -> on-screen pixels for the overlay.
-  const sx = frame.width ? rendered.width / frame.width : 0;
-  const sy = frame.height ? rendered.height / frame.height : 0;
-  const toScreen = (b: [number, number, number, number]) => ({
-    x: b[0] * sx,
-    y: b[1] * sy,
-    width: (b[2] - b[0]) * sx,
-    height: (b[3] - b[1]) * sy,
-  });
-  const draftBox: [number, number, number, number] | null = draft
-    ? [Math.min(draft.x1, draft.x2), Math.min(draft.y1, draft.y2), Math.max(draft.x1, draft.x2), Math.max(draft.y1, draft.y2)]
-    : null;
+  const draftBox = draft ? normalise(draft) : null;
+  const unclassified = boxes.filter((b) => b.class_id === null).length;
 
   return (
     <div className="label-canvas">
-      <div
-        className="label-canvas__stage"
-        data-testid="label-stage"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={() => setDraft(null)}
-      >
-        <img
-          ref={imgRef}
-          src={api.fullFrameImageUrl(frame.id)}
-          alt={`Frame ${frame.frame_index}`}
-          draggable={false}
-          onLoad={measure}
-        />
-        <svg className="label-canvas__overlay" aria-hidden="true">
+      <div className="label-canvas__stage" data-testid="label-stage" onMouseDown={handleMouseDown}>
+        <img ref={imgRef} src={api.fullFrameImageUrl(frame.id)} alt={`Frame ${frame.frame_index}`} draggable={false} />
+        <svg
+          className="label-canvas__overlay"
+          viewBox={`0 0 ${frame.width} ${frame.height}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
           {boxes.map((box, index) => (
-            <rect key={index} data-testid="label-box" {...toScreen(box.bbox_json)} />
+            <rect
+              key={box.id ?? `new-${index}`}
+              data-testid="label-box"
+              x={box.bbox_json[0]}
+              y={box.bbox_json[1]}
+              width={box.bbox_json[2] - box.bbox_json[0]}
+              height={box.bbox_json[3] - box.bbox_json[1]}
+              vectorEffect="non-scaling-stroke"
+            />
           ))}
-          {draftBox && <rect className="label-canvas__draft" data-testid="label-draft" {...toScreen(draftBox)} />}
+          {draftBox && (
+            <rect
+              className="label-canvas__draft"
+              data-testid="label-draft"
+              x={draftBox[0]}
+              y={draftBox[1]}
+              width={draftBox[2] - draftBox[0]}
+              height={draftBox[3] - draftBox[1]}
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
         </svg>
       </div>
 
@@ -183,6 +199,11 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
           frame {frame.frame_index} &middot; {boxes.length} box{boxes.length === 1 ? "" : "es"}
           {dirty && " (unsaved)"}
         </span>
+        {unclassified > 0 && (
+          <span className="label-canvas__hint">
+            {unclassified} without a class yet
+          </span>
+        )}
         <span className="label-canvas__hint">Drag on the image to draw a box.</span>
         <button className="btn-primary" onClick={save} disabled={saving || !dirty}>
           {saving ? "Saving…" : "Save"}

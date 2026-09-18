@@ -338,3 +338,162 @@ def test_a_missing_source_video_is_a_clear_error_not_a_crash():
     with SessionLocal() as db:
         with pytest.raises(FrameMaterializationError):
             frames.frame_image_path(db, db.get(Frame, frame.id))
+
+
+# --- a box the canvas loaded stays itself ---------------------------------------
+
+
+def test_resaving_unchanged_boxes_keeps_their_ids():
+    """Delete-and-reinsert would churn every id on every save."""
+    project, _, frame = _project_with_frame("Stable Ids")
+    with SessionLocal() as db:
+        first = frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[0, 0, 10, 10])])
+        db.commit()
+        original_id = first[0].id
+
+    with SessionLocal() as db:
+        again = frames.replace_annotations(
+            db, project.id, db.get(Frame, frame.id), [BoxInput(id=original_id, class_id=1, bbox=[0, 0, 10, 10])]
+        )
+        ids_after = [a.id for a in again]
+        db.commit()
+
+    assert ids_after == [original_id]
+
+
+def test_an_echoed_box_is_updated_in_place():
+    project, _, frame = _project_with_frame("Update In Place")
+    with SessionLocal() as db:
+        saved = frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[0, 0, 10, 10])])
+        db.commit()
+        box_id = saved[0].id
+
+    with SessionLocal() as db:
+        frames.replace_annotations(
+            db, project.id, db.get(Frame, frame.id), [BoxInput(id=box_id, class_id=2, bbox=[5, 5, 20, 20], attributes={"moved": True})]
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        updated = db.get(Annotation, box_id)
+        assert updated.class_id == 2
+        assert updated.bbox_json == [5, 5, 20, 20]
+        assert updated.attributes == {"moved": True}
+
+
+def test_resaving_an_exported_box_keeps_its_dataset_item():
+    """The bug the review found: every save deleted and re-inserted, and
+    deleting cascades dataset items - so re-saving a frame with an
+    exported box silently dropped that box from the version's index."""
+    from app.db.models import DatasetItem, DatasetVersion
+
+    project, _, frame = _project_with_frame("Exported Box Survives")
+    with SessionLocal() as db:
+        saved = frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[0, 0, 10, 10])])
+        db.commit()
+        box_id = saved[0].id
+        version = DatasetVersion(project_id=project.id, version=1, split_seed=1, config_snapshot_json={})
+        db.add(version)
+        db.flush()
+        db.add(DatasetItem(dataset_version_id=version.id, annotation_id=box_id, split="train", export_path="x.jpg"))
+        db.commit()
+
+    with SessionLocal() as db:
+        frames.replace_annotations(
+            db, project.id, db.get(Frame, frame.id), [BoxInput(id=box_id, class_id=1, bbox=[0, 0, 10, 10])]
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        assert db.query(DatasetItem).filter(DatasetItem.annotation_id == box_id).count() == 1
+
+
+def test_an_echoed_legacy_box_keeps_its_candidate_and_its_tracks_review():
+    """Echoing a track-review box back means "keep it" - nothing about it
+    should change, least of all the track's review state."""
+    project, source, frame = _project_with_frame("Legacy Kept")
+    annotation_id, track_id = _legacy_label(source, frame, class_id=2)
+
+    with SessionLocal() as db:
+        frames.replace_annotations(
+            db,
+            project.id,
+            db.get(Frame, frame.id),
+            [BoxInput(id=annotation_id, class_id=2, bbox=[1, 1, 11, 11]), BoxInput(class_id=1, bbox=[30, 30, 40, 40])],
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        kept = db.get(Annotation, annotation_id)
+        assert kept is not None
+        assert kept.frame_candidate_id is not None
+        assert db.get(Track, track_id).review_status == "accepted"
+
+
+def test_echoing_a_box_that_is_no_longer_there_is_refused():
+    """The canvas's view is stale. Guessing whether the user meant to keep
+    it is worse than asking them to reload."""
+    project, _, frame = _project_with_frame("Stale Box")
+    with SessionLocal() as db:
+        saved = frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[0, 0, 10, 10])])
+        db.commit()
+        box_id = saved[0].id
+    with SessionLocal() as db:
+        frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [])
+        db.commit()
+
+    with SessionLocal() as db:
+        with pytest.raises(frames.StaleBoxError):
+            frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(id=box_id, class_id=1, bbox=[0, 0, 10, 10])])
+
+
+def test_sending_the_same_box_twice_is_refused():
+    project, _, frame = _project_with_frame("Duplicate Echo")
+    with SessionLocal() as db:
+        saved = frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[0, 0, 10, 10])])
+        db.commit()
+        box_id = saved[0].id
+
+    with SessionLocal() as db:
+        with pytest.raises(InvalidBoxError):
+            frames.replace_annotations(
+                db,
+                project.id,
+                db.get(Frame, frame.id),
+                [BoxInput(id=box_id, class_id=1, bbox=[0, 0, 10, 10]), BoxInput(id=box_id, class_id=2, bbox=[20, 20, 30, 30])],
+            )
+
+
+# --- the queue only offers frames that can be opened -----------------------------
+
+
+def test_a_live_session_frame_with_no_image_is_kept_out_of_the_queue():
+    """An RTSP source has no video file to decode from. Without a stored
+    image there is nothing to show, and the queue entry would error on
+    click."""
+    project, source, _ = _project_with_frame("RTSP Queue")
+    with SessionLocal() as db:
+        db.get(Source, source.id).type = "rtsp"
+        db.commit()
+
+    with SessionLocal() as db:
+        assert frames.list_queue(db, project.id) == []
+
+
+def test_a_live_session_frame_whose_image_was_stored_is_offered():
+    project, source, frame = _project_with_frame("RTSP Stored Image")
+    with SessionLocal() as db:
+        db.get(Source, source.id).type = "rtsp"
+        db.get(Frame, frame.id).image_path = "/somewhere/frame.jpg"
+        db.commit()
+
+    with SessionLocal() as db:
+        assert [f.id for f in frames.list_queue(db, project.id)] == [frame.id]
+
+
+def test_an_unknown_status_filter_is_refused_not_an_empty_queue():
+    project, _, _ = _project_with_frame("Bad Status Filter")
+
+    with SessionLocal() as db:
+        with pytest.raises(frames.InvalidQueueFilterError):
+            frames.list_queue(db, project.id, status="done")

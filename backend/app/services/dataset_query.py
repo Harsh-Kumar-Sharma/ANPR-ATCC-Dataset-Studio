@@ -44,10 +44,11 @@ def query_approved_items(db: Session, project_id: str) -> list[ApprovedItem]:
     remain available for Phase 8 active learning, just not shipped in
     a training dataset yet.
 
-    A track has at most one human annotation (see docs/HANDOFF.md
-    Phase 4 note), so this is automatically deduplicated at the
-    vehicle-track level - the "duplicate frames from one vehicle are
-    not exported by default" acceptance criterion in docs/01_PRD.md.
+    Still track-keyed: it joins through the frame candidate, so it sees
+    only labels written through track review. Boxes drawn on the canvas
+    have no candidate and are invisible here until export is rewritten
+    onto frames (ticket 12). Evaluation's class distribution and the
+    active-learning queue share the same limitation.
     """
     stmt = (
         select(Annotation, FrameCandidate, Track, Source)

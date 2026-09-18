@@ -22,13 +22,18 @@ function LabelQueue({ project, selectedFrameId, refreshKey = 0, onSelect }: Prop
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     api
       .listFrames(project.id)
       .then((list) => {
+        if (cancelled) return;
         setFrames(list);
         setError(null);
       })
-      .catch((e) => setError(e instanceof ApiError ? e.message : String(e)));
+      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.message : String(e)));
+    return () => {
+      cancelled = true;
+    };
   }, [project.id, refreshKey]);
 
   const labeled = frames.filter((f) => f.status === "labeled").length;

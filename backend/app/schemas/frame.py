@@ -20,6 +20,11 @@ class FrameAnnotationWrite(BaseModel):
     """One box as the canvas sends it. Geometry is checked against the
     frame server-side; this only rejects the structurally impossible."""
 
+    #: The annotation this box already is, when the canvas loaded it
+    #: rather than drew it. An echoed id is updated in place, so an
+    #: unchanged box keeps its identity and everything that refers to
+    #: it; a box without one is new.
+    id: str | None = None
     class_id: int | None = None
     bbox_json: list[float] = Field(min_length=4, max_length=4)
     attributes: dict = Field(default_factory=dict)
