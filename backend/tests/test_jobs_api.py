@@ -1,5 +1,8 @@
 import json
+import subprocess
+import sys
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.db.models import Job
@@ -11,6 +14,25 @@ from tests.stub_detector import StubDetector
 from tests.video_factory import create_synthetic_video
 
 client = TestClient(app)
+
+
+@pytest.fixture
+def live_process():
+    """A real, freshly-started process to stand in for a running worker.
+
+    Not this test process: it started long before these jobs, so the
+    pid-reuse guard would (correctly) judge it an impostor.
+    """
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        yield child.pid
+    finally:
+        child.kill()
+        child.wait(timeout=10)
 
 
 def _project_with_source(tmp_path, name: str):
@@ -290,4 +312,66 @@ def test_starting_the_app_reconciles_a_job_whose_process_is_gone(tmp_path):
         assert "no longer running" in reconciled.error_message
 
     run = client.get(f"/processing-runs/{submitted['run_id']}").json()
-    assert run["status"] == "cancelled", "the run must not stay 'pending' and block the source"
+    assert run["status"] == "failed", "the run must match the job's outcome, not claim it was cancelled"
+
+
+def test_a_still_running_job_resumes_showing_progress_after_a_restart(tmp_path, live_process):
+    """The other half of reattaching. Reconciliation must leave a live job
+    alone, and its progress must still be readable afterwards - the
+    progress file outlives the app precisely so this works."""
+    from app.services.jobs.progress import write_progress
+
+    project, source = _project_with_source(tmp_path, "Resume Progress Project")
+
+    with deferred_jobs():
+        submitted = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        ).json()
+
+    job_id = submitted["job"]["id"]
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        job.status = "running"
+        job.pid = live_process
+        db.commit()
+    write_progress(runner.progress_path(job_id), fraction=0.6, message="Frame 60 of 100")
+
+    # Restart the app.
+    with TestClient(app):
+        pass
+
+    after = client.get(f"/jobs/{job_id}").json()
+    assert after["status"] == "running", "a live job must survive the restart untouched"
+    assert after["progress"] == 0.6, "its progress must still be readable after the restart"
+    assert after["progress_message"] == "Frame 60 of 100"
+
+
+def test_cancel_still_works_on_a_job_that_survived_a_restart(tmp_path, live_process):
+    """Cancel reads the pid from the row, so it must not depend on any
+    state the app was holding in memory before it closed."""
+    project, source = _project_with_source(tmp_path, "Cancel After Restart Project")
+
+    with deferred_jobs():
+        submitted = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        ).json()
+
+    job_id = submitted["job"]["id"]
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        job.status = "running"
+        job.pid = live_process
+        db.commit()
+
+    with TestClient(app):
+        pass
+
+    # terminate is stubbed so the fixture keeps ownership of the child;
+    # the point is that cancel drives the lifecycle off the persisted row.
+    with SessionLocal() as db:
+        runner.cancel_job(db, job_id, terminate=lambda pid: None)
+
+    assert client.get(f"/jobs/{job_id}").json()["status"] == "cancelled"
+    assert client.get(f"/processing-runs/{submitted['run_id']}").json()["status"] == "cancelled"

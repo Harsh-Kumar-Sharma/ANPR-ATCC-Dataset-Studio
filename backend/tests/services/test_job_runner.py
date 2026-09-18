@@ -206,7 +206,7 @@ def test_reconcile_fails_a_job_whose_process_died_while_the_app_was_closed(proje
     with SessionLocal() as db:
         reconciled = runner.reconcile_jobs(db, is_running=lambda pid, started_after=None: False)
 
-    assert job.id in [j.id for j in reconciled]
+    assert job.id in reconciled
     with SessionLocal() as db:
         dead = db.get(Job, job.id)
         assert dead.status == "failed"
@@ -237,7 +237,7 @@ def test_reconcile_ignores_jobs_that_already_finished(project):
     with SessionLocal() as db:
         reconciled = runner.reconcile_jobs(db, is_running=lambda pid, started_after=None: False)
 
-    assert job.id not in [j.id for j in reconciled]
+    assert job.id not in reconciled
     with SessionLocal() as db:
         assert db.get(Job, job.id).status == "succeeded"
 
@@ -259,3 +259,72 @@ def test_reconcile_checks_the_pid_against_when_the_job_started(project):
         runner.reconcile_jobs(db, is_running=is_running)
 
     assert seen and seen[0][1] is not None
+
+
+def test_a_cancelled_job_cannot_be_reopened_by_its_dying_worker(project):
+    """terminate() is asynchronous: taskkill and SIGTERM both return before
+    the process is gone. So a worker can still be inside its own error
+    handling and call mark_failed *after* the cancel has committed, which
+    would relabel a deliberate cancellation as a crash."""
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+        runner.cancel_job(db, job.id, terminate=lambda pid: None)
+
+    # The worker, not yet dead, reports the interruption it just suffered.
+    with SessionLocal() as db:
+        runner.mark_failed(db, job.id, error="KeyboardInterrupt")
+
+    with SessionLocal() as db:
+        assert db.get(Job, job.id).status == "cancelled"
+
+
+def test_a_cancelled_job_cannot_be_completed_by_its_dying_worker(project):
+    """The same race in the other direction: a worker that finished just as
+    the cancel landed must not resurrect the job as succeeded."""
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+        runner.cancel_job(db, job.id, terminate=lambda pid: None)
+
+    with SessionLocal() as db:
+        runner.mark_succeeded(db, job.id, result={"run_id": "r1"})
+
+    with SessionLocal() as db:
+        assert db.get(Job, job.id).status == "cancelled"
+
+
+def test_a_reconciled_job_and_its_run_tell_the_same_story(project):
+    """A job marked failed whose run says 'cancelled' misreports what
+    happened. Both must land on the same outcome."""
+    from app.db.models.processing_run import ProcessingRun
+    from app.db.models.source import Source
+
+    with SessionLocal() as db:
+        source = Source(
+            project_id=project.id,
+            type="video",
+            path_or_uri="/nowhere.mp4",
+            fps=10.0,
+            width=64,
+            height=48,
+            frame_count=10,
+            duration_ms=1000,
+        )
+        db.add(source)
+        db.flush()
+        run = ProcessingRun(source_id=source.id, sampling_config={"target_fps": 5.0}, status="running")
+        db.add(run)
+        db.flush()
+        job = runner.submit_job(
+            db, type="detect", project_id=project.id, params={"run_id": run.id}, launcher=RecordingLauncher()
+        )
+        runner.mark_running(db, job.id)
+        run_id = run.id
+
+    with SessionLocal() as db:
+        runner.reconcile_jobs(db, is_running=lambda pid, started_after=None: False)
+
+    with SessionLocal() as db:
+        assert db.get(Job, job.id).status == "failed"
+        assert db.get(ProcessingRun, run_id).status == "failed", "the run must not claim it was cancelled"

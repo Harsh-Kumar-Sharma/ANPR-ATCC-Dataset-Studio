@@ -98,4 +98,16 @@ describe("JobsPanel cancel", () => {
 
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
   });
+
+  it("styles a cancelled job distinctly from a failed one", () => {
+    // A cancelled job is a deliberate act; it must not wear the same
+    // error styling as something that broke.
+    const { rerender } = render(<JobsPanel jobs={[job({ status: "cancelled" })]} />);
+    const cancelled = screen.getByTestId("job-row").className;
+
+    rerender(<JobsPanel jobs={[job({ status: "failed" })]} />);
+    const failed = screen.getByTestId("job-row").className;
+
+    expect(cancelled).not.toEqual(failed);
+  });
 });

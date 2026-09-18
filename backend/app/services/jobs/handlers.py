@@ -7,6 +7,8 @@ it shares no memory with the app that submitted it.
 """
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +22,9 @@ from app.ml.factory import create_tracker, get_default_detector
 from app.services.track_processor import ProgressReporter, process_source
 
 logger = logging.getLogger(__name__)
+
+#: A run that already settled must not be relabelled by late cleanup.
+TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
 def _utcnow() -> datetime:
@@ -91,30 +96,45 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
     return {"run_id": run.id, "source_id": source.id, "project_id": project.id}
 
 
-HANDLERS = {
-    "detect": run_detect_job,
-}
 
 
-def cancel_detect_job(db: Session, params: dict) -> None:
-    """Leave a cancelled detect run in an honest state.
+def settle_detect_job(db: Session, params: dict, outcome: str) -> None:
+    """Leave an abandoned detect run in an honest state.
 
     Without this the run stays "running" forever, which both misreports
     what happened and blocks the source against any future run. Partial
     tracks already written are kept - they are real observations - but
     the run they belong to never claims to have completed.
+
+    ``outcome`` mirrors the job's own terminal status, so the two never
+    tell the user different stories.
     """
     run_id = params.get("run_id")
     if run_id is None:
         return
     run = db.get(ProcessingRun, run_id)
-    if run is None or run.status in {"completed", "failed", "cancelled"}:
+    if run is None or run.status in TERMINAL_RUN_STATUSES:
         return
-    run.status = "cancelled"
+    run.status = outcome
     run.completed_at = _utcnow()
     db.commit()
 
 
-CANCEL_HANDLERS = {
-    "detect": cancel_detect_job,
+@dataclass(frozen=True)
+class JobHandler:
+    """Everything the job system needs to know about one job type.
+
+    One registry rather than a parallel map per lifecycle event, so
+    adding a job type is a single edit in one place.
+    """
+
+    run: Callable[[Session, dict, ProgressReporter], dict]
+    #: Called when a job ends without its handler finishing - cancelled,
+    #: or reconciled after its process died. Receives the job's terminal
+    #: status so anything it owns can be left saying the same thing.
+    on_abort: Callable[[Session, dict, str], None] | None = None
+
+
+HANDLERS: dict[str, JobHandler] = {
+    "detect": JobHandler(run=run_detect_job, on_abort=settle_detect_job),
 }

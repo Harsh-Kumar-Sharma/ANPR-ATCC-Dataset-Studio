@@ -54,11 +54,12 @@ def run_job(job_id: str) -> int:
         report(0.0, "Starting")
 
         try:
-            result = handler(db, params, report)
+            result = handler.run(db, params, report)
         except BaseException as exc:
-            # Includes KeyboardInterrupt, which is how a cancel arrives on
-            # Windows - recording it as failed here is harmless, because
-            # cancellation overwrites the status from the app side.
+            # Includes KeyboardInterrupt, which is how a cancel can
+            # arrive here. Recording it as failed is safe because the
+            # runner drops any write to an already-terminal job, so a
+            # cancellation is never relabelled as a crash.
             logger.exception("Job %s failed", job_id)
             runner.mark_failed(db, job_id, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
             return EXIT_FAILED

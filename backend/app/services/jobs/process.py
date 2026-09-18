@@ -36,45 +36,74 @@ if sys.platform == "win32":
     _SYNCHRONIZE = 0x00100000
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     _WAIT_TIMEOUT = 0x00000102
+    _ERROR_ACCESS_DENIED = 5
     #: Windows FILETIME counts 100ns ticks from 1601-01-01.
     _FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
 
-    def _open(pid: int, access: int):
-        handle = ctypes.windll.kernel32.OpenProcess(access, False, pid)
-        return handle or None
+    # Declared explicitly. A HANDLE is pointer-sized, and ctypes defaults
+    # every return value to a 32-bit signed int - which silently truncates
+    # any handle above 0x7FFFFFFF, so the handle that gets closed is not
+    # the handle that was opened.
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    _kernel32.GetProcessTimes.restype = wintypes.BOOL
+    _kernel32.GetProcessTimes.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    )
+
+    def _open(pid: int, access: int) -> tuple[int | None, int]:
+        """Returns (handle, last_error). A null handle with ERROR_ACCESS_DENIED
+        means the process exists but is not ours to inspect."""
+        handle = _kernel32.OpenProcess(access, False, pid)
+        if not handle:
+            return None, ctypes.get_last_error()
+        return handle, 0
 
     def _is_alive(pid: int) -> bool:
-        handle = _open(pid, _SYNCHRONIZE)
+        handle, error = _open(pid, _SYNCHRONIZE)
         if handle is None:
-            return False
+            # Access denied means alive-but-protected, which must read as
+            # running: treating it as dead is how reconciliation ends up
+            # abandoning a job that is still doing real work.
+            return error == _ERROR_ACCESS_DENIED
         try:
-            # Still running means "has not become signalled", which avoids
-            # the classic GetExitCodeProcess trap where a process that
-            # exited with code 259 is indistinguishable from a live one.
-            return ctypes.windll.kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
+            # "Has not become signalled" rather than GetExitCodeProcess,
+            # which cannot distinguish a live process from one that exited
+            # with code 259 (STILL_ACTIVE).
+            return _kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
         finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
+            _kernel32.CloseHandle(handle)
 
     def creation_time(pid: int) -> datetime | None:
         """When this process started, or None if that cannot be determined."""
-        handle = _open(pid, _PROCESS_QUERY_LIMITED_INFORMATION)
+        handle, _ = _open(pid, _PROCESS_QUERY_LIMITED_INFORMATION)
         if handle is None:
             return None
         try:
             created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
-            ok = ctypes.windll.kernel32.GetProcessTimes(
+            if not _kernel32.GetProcessTimes(
                 handle,
                 ctypes.byref(created),
                 ctypes.byref(exited),
                 ctypes.byref(kernel),
                 ctypes.byref(user),
-            )
-            if not ok:
+            ):
                 return None
             ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
-            return _FILETIME_EPOCH + timedelta(microseconds=ticks / 10)
+            # Integer division: a FILETIME is far past the 2^53 where float
+            # arithmetic starts rounding timestamps into the wrong second.
+            return _FILETIME_EPOCH + timedelta(microseconds=ticks // 10)
         finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
+            _kernel32.CloseHandle(handle)
 
     def _kill(pid: int) -> None:
         # /T because the worker may have spawned children of its own (a
@@ -94,15 +123,20 @@ else:
         except ProcessLookupError:
             return False
         except PermissionError:
-            # Exists, but belongs to someone else - which the reuse guard
-            # is there to catch.
+            # Exists, but belongs to someone else - same reasoning as the
+            # access-denied case on Windows.
             return True
         return True
 
     def creation_time(pid: int) -> datetime | None:
+        """When this process started, or None where the platform cannot say.
+
+        Linux only: /proc does not exist on macOS or the BSDs, where this
+        returns None and the pid-reuse guard is skipped. Adding psutil
+        would cover them, at the cost of a substantial dependency for one
+        call.
+        """
         try:
-            # Good enough to tell "started before the job" from "after";
-            # not a precise boot-relative start time.
             return datetime.fromtimestamp(os.stat(f"/proc/{pid}").st_ctime, tz=timezone.utc)
         except (OSError, ValueError):
             return None

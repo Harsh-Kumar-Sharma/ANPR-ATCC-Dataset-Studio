@@ -3,6 +3,7 @@ import pytest
 from app.db.models import Job, Project
 from app.db.session import SessionLocal
 from app.services.jobs import runner, worker
+from app.services.jobs.handlers import JobHandler
 from app.services.jobs.progress import read_progress
 
 
@@ -24,7 +25,7 @@ def _submit(project, params=None):
 
 
 def test_a_worker_runs_its_handler_and_records_the_result(project, monkeypatch):
-    monkeypatch.setitem(worker.HANDLERS, "detect", lambda db, params, report: {"run_id": "r-7"})
+    monkeypatch.setitem(worker.HANDLERS, "detect", JobHandler(run=lambda db, params, report: {"run_id": "r-7"}))
     job = _submit(project)
 
     assert worker.run_job(job.id) == worker.EXIT_OK
@@ -40,7 +41,7 @@ def test_a_worker_reports_progress_where_the_app_can_read_it(project, monkeypatc
         report(0.5, "halfway")
         return {}
 
-    monkeypatch.setitem(worker.HANDLERS, "detect", handler)
+    monkeypatch.setitem(worker.HANDLERS, "detect", JobHandler(run=handler))
     job = _submit(project)
     worker.run_job(job.id)
 
@@ -55,7 +56,7 @@ def test_a_handler_that_raises_fails_the_job_with_its_error(project, monkeypatch
     def handler(db, params, report):
         raise ValueError("could not decode frame 12")
 
-    monkeypatch.setitem(worker.HANDLERS, "detect", handler)
+    monkeypatch.setitem(worker.HANDLERS, "detect", JobHandler(run=handler))
     job = _submit(project)
 
     assert worker.run_job(job.id) == worker.EXIT_FAILED
@@ -76,7 +77,7 @@ def test_the_handler_receives_the_params_the_job_was_submitted_with(project, mon
         seen.update(params)
         return {}
 
-    monkeypatch.setitem(worker.HANDLERS, "detect", handler)
+    monkeypatch.setitem(worker.HANDLERS, "detect", JobHandler(run=handler))
     job = _submit(project, params={"run_id": "r-1", "target_fps": 5})
     worker.run_job(job.id)
 
@@ -87,7 +88,7 @@ def test_a_job_that_was_already_cancelled_is_not_run(project, monkeypatch):
     """A cancel can land between launching the process and the process
     getting as far as looking at its row."""
     ran = []
-    monkeypatch.setitem(worker.HANDLERS, "detect", lambda db, params, report: ran.append(1) or {})
+    monkeypatch.setitem(worker.HANDLERS, "detect", JobHandler(run=lambda db, params, report: ran.append(1) or {}))
     job = _submit(project)
 
     with SessionLocal() as db:

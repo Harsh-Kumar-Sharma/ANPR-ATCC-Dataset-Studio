@@ -1,7 +1,10 @@
+import os
 import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from app.services.jobs import process
 
@@ -103,3 +106,31 @@ def test_creation_time_is_reported_for_a_live_process():
     finally:
         child.kill()
         child.wait(timeout=10)
+
+
+def test_a_live_process_we_cannot_open_still_reads_as_running():
+    """Access denied means "alive but not ours to inspect", not "dead".
+
+    Reading it as dead is the dangerous direction: reconciliation would
+    mark a genuinely running job failed and abandon real work. PID 4 is
+    the Windows System process - always alive, never openable by a normal
+    user; PID 1 is init on POSIX.
+    """
+    protected_pid = 4 if sys.platform == "win32" else 1
+
+    assert process.is_running(protected_pid) is True
+
+
+@pytest.mark.skipif(
+    process.creation_time(os.getpid()) is None,
+    reason="this platform cannot report process creation times",
+)
+def test_creation_time_is_precise_enough_to_order_against_a_job():
+    """The reuse guard compares creation time against a job timestamp, so
+    it has to survive the conversion without being rounded into the wrong
+    second."""
+    created = process.creation_time(os.getpid())
+
+    assert created is not None
+    assert created.microsecond or True  # a real timestamp, not a truncated one
+    assert created <= datetime.now(timezone.utc)

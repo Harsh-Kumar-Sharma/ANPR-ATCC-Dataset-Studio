@@ -31,6 +31,7 @@ from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.db.models.job import JOB_TYPES, Job
 from app.services.jobs import process
+from app.services.jobs.handlers import HANDLERS
 from app.services.jobs.progress import read_progress
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,10 @@ logger = logging.getLogger(__name__)
 #: Given a job id, start a worker for it and return its pid. Injected so
 #: the lifecycle can be tested without spawning real processes.
 Launcher = Callable[[str], int]
+
+#: Is this pid still the live worker for a job created at this time?
+#: Injected so reconciliation is testable without real processes.
+LivenessProbe = Callable[[int | None, datetime | None], bool]
 
 _ERROR_COLUMN_LIMIT = 2048
 
@@ -143,6 +148,8 @@ def mark_running(db: Session, job_id: str) -> Job:
 
 def mark_succeeded(db: Session, job_id: str, result: dict | None = None) -> Job:
     job = _get(db, job_id)
+    if _already_settled(job, "succeeded"):
+        return job
     job.status = "succeeded"
     job.result_json = result or {}
     job.progress = 1.0
@@ -154,6 +161,8 @@ def mark_succeeded(db: Session, job_id: str, result: dict | None = None) -> Job:
 
 def mark_failed(db: Session, job_id: str, error: str) -> Job:
     job = _get(db, job_id)
+    if _already_settled(job, "failed"):
+        return job
     job.status = "failed"
     job.error_message = _truncate(error)
     job.completed_at = _utcnow()
@@ -184,31 +193,32 @@ def cancel_job(db: Session, job_id: str, terminate: Callable[[int | None], None]
     db.commit()
     db.refresh(job)
 
-    _cancel_side_effects(db, job)
+    _abort_side_effects(db, job, "cancelled")
     return job
 
 
-def _cancel_side_effects(db: Session, job: Job) -> None:
-    """Let the job's own type clean up after a cancellation.
+def _abort_side_effects(db: Session, job: Job, outcome: str) -> None:
+    """Let the job's own type settle whatever it left behind.
 
-    Kept out of ``cancel_job`` so adding a job type does not mean
-    editing a switch in here. Imported lazily because handlers import
-    this module.
+    ``outcome`` is the job's terminal status, and whatever the handler
+    owns must end on the same one: a job that failed owning a run that
+    claims it was cancelled misreports what happened to the user.
+
+    Dispatched through a registry so adding a job type does not mean
+    editing a switch in here.
     """
-    from app.services.jobs.handlers import CANCEL_HANDLERS
-
-    handler = CANCEL_HANDLERS.get(job.type)
-    if handler is None:
+    handler = HANDLERS.get(job.type)
+    if handler is None or handler.on_abort is None:
         return
     try:
-        handler(db, dict(job.params_json or {}))
+        handler.on_abort(db, dict(job.params_json or {}), outcome)
     except Exception:
-        # The job is already cancelled as far as the user is concerned;
-        # failing to tidy up must not undo that.
-        logger.exception("Cancel cleanup failed for job %s", job.id)
+        # The job has already reached its terminal state as far as the
+        # user is concerned; failing to tidy up must not undo that.
+        logger.exception("Abort cleanup failed for job %s", job.id)
 
 
-def reconcile_jobs(db: Session, is_running: Callable[..., bool] = process.is_running) -> list[Job]:
+def reconcile_jobs(db: Session, is_running: LivenessProbe = process.is_running) -> list[str]:
     """Reconcile jobs whose processes may have died while the app was shut.
 
     Because workers are detached, a job that was running when the app
@@ -217,10 +227,13 @@ def reconcile_jobs(db: Session, is_running: Callable[..., bool] = process.is_run
     the machine leaves a row claiming to be in progress forever, and
     that row will also block its source against any future run.
 
-    Returns the jobs that were marked failed.
+    Returns the ids of the jobs that were marked failed. Ids rather
+    than ORM objects: this commits once per job, which expires the
+    instances it already handled, and a caller reading them after the
+    session closes would get a DetachedInstanceError.
     """
     stale = db.scalars(select(Job).where(Job.status.in_(("pending", "running")))).all()
-    reconciled: list[Job] = []
+    reconciled: list[str] = []
 
     for job in stale:
         # created_at guards against pid reuse: a process older than the
@@ -234,13 +247,14 @@ def reconcile_jobs(db: Session, is_running: Callable[..., bool] = process.is_run
             "computer or the app shut down. Start it again."
         )
         job.completed_at = _utcnow()
-        reconciled.append(job)
-
-    if reconciled:
+        # Committed per job together with its own cleanup: a crash
+        # halfway through must not leave a failed job owning a run that
+        # still claims to be in progress, which is the exact ghost state
+        # this function exists to remove.
         db.commit()
-        for job in reconciled:
-            db.refresh(job)
-            _cancel_side_effects(db, job)
+        db.refresh(job)
+        _abort_side_effects(db, job, "failed")
+        reconciled.append(job.id)
 
     return reconciled
 
@@ -259,6 +273,23 @@ def current_progress(job: Job) -> tuple[float, str | None]:
     if reported is None:
         return job.progress, job.progress_message
     return reported.fraction, reported.message
+
+
+def _already_settled(job: Job, attempted: str) -> bool:
+    """Has this job already reached a terminal state somebody else wrote?
+
+    The app and the worker write this row from different processes, and
+    ``terminate`` returns before the worker has actually died - so a
+    cancelled job can still receive a "failed" (from the worker noticing
+    it was interrupted) or even a "succeeded" (from a worker that
+    finished just as the cancel landed). First terminal state wins;
+    later ones are dropped, because a deliberate cancellation must not
+    be relabelled as a crash.
+    """
+    if not job.is_terminal:
+        return False
+    logger.info("Job %s is already %s - ignoring attempt to mark it %s", job.id, job.status, attempted)
+    return True
 
 
 def _get(db: Session, job_id: str) -> Job:

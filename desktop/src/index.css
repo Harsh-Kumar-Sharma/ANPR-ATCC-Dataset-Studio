@@ -1415,6 +1415,13 @@ label.toggle {
   border-color: var(--success-border);
 }
 
+/* A cancelled job is a deliberate act, not a failure - it must not
+   read as an error the user has to investigate. */
+.job-row--cancelled {
+  border-color: var(--border-strong);
+  opacity: 0.72;
+}
+
 .job-row__head {
   display: flex;
   align-items: baseline;

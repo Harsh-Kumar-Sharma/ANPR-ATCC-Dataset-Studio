@@ -20,6 +20,8 @@ from app.api.tracks import project_tracks_router, tracks_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.db.session import SessionLocal
+from app.services.jobs.runner import reconcile_jobs
 
 configure_logging()
 
@@ -36,9 +38,6 @@ async def lifespan(_app: FastAPI):
     gone, which would otherwise claim to be in progress forever and
     block their source against any future run.
     """
-    from app.db.session import SessionLocal
-    from app.services.jobs.runner import reconcile_jobs
-
     try:
         with SessionLocal() as db:
             reconciled = reconcile_jobs(db)
