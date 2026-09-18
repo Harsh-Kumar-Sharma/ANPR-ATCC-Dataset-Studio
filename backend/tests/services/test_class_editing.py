@@ -56,6 +56,7 @@ def _label_with(project: Project, class_id: int, status: str = "accepted") -> st
         db.add(candidate)
         db.flush()
         annotation = Annotation(
+            frame_id=frame.id,
             frame_candidate_id=candidate.id,
             source="human",
             class_id=class_id,

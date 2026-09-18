@@ -41,6 +41,13 @@ def submit_review(db: Session, track: Track, payload: TrackReviewRequest) -> Ann
     frame_candidate = db.get(FrameCandidate, payload.frame_candidate_id)
     if frame_candidate is None or frame_candidate.track_id != track.id:
         raise NotFoundError(f"Frame candidate not found on this track: {payload.frame_candidate_id}")
+    if frame_candidate.frame_id is None:
+        # Candidates from before full frames were captured have no frame
+        # to hang a label on. The replan's answer is to re-run detection
+        # rather than migrate them, so say that rather than guess.
+        raise InvalidReviewError(
+            "This track predates full-frame capture and cannot be labelled. Re-run detection on its source."
+        )
 
     if payload.class_id is not None:
         project = get_project_for_track(db, track.id)
@@ -56,6 +63,7 @@ def submit_review(db: Session, track: Track, payload: TrackReviewRequest) -> Ann
     )
 
     if existing is not None:
+        existing.frame_id = frame_candidate.frame_id
         existing.frame_candidate_id = frame_candidate.id
         existing.class_id = payload.class_id
         existing.bbox_json = bbox_json
@@ -64,6 +72,7 @@ def submit_review(db: Session, track: Track, payload: TrackReviewRequest) -> Ann
         annotation = existing
     else:
         annotation = Annotation(
+            frame_id=frame_candidate.frame_id,
             frame_candidate_id=frame_candidate.id,
             source="human",
             class_id=payload.class_id,

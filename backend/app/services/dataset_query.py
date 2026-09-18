@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models.annotation import Annotation
+from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
@@ -21,17 +22,16 @@ class ApprovedItem:
 def project_annotations(project_id: str):
     """A select over every annotation belonging to a project.
 
-    Annotations reach their project the long way round - through the
-    frame candidate, its track, that track's run, and the run's source.
-    Written once here so a schema change touches one join rather than
-    every service that needs to ask "whose annotation is this".
+    Through the frame, not the candidate: a box drawn on the canvas has
+    no candidate, and a join through one would make those labels
+    invisible to anything asking "whose annotation is this" - including
+    the check that stops a class being deleted while labels still use
+    it. Written once here so that answer cannot drift between callers.
     """
     return (
         select(Annotation)
-        .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)
-        .join(Track, FrameCandidate.track_id == Track.id)
-        .join(ProcessingRun, Track.run_id == ProcessingRun.id)
-        .join(Source, ProcessingRun.source_id == Source.id)
+        .join(Frame, Annotation.frame_id == Frame.id)
+        .join(Source, Frame.source_id == Source.id)
         .where(Source.project_id == project_id)
     )
 

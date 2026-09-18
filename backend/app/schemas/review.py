@@ -27,10 +27,13 @@ class AnnotationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    frame_candidate_id: str
+    frame_id: str
+    #: Present only for labels written through track review.
+    frame_candidate_id: str | None
     source: str
     class_id: int | None
     bbox_json: list[float]
+    attributes: dict
     status: str
     updated_at: datetime
 

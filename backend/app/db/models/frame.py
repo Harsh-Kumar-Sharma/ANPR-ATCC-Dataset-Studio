@@ -15,6 +15,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+#: A frame's place in the labelling queue. Terminal states are the last two.
+FRAME_STATUSES = ("pending", "labeled", "rejected")
+
+
 class Frame(Base):
     """A full, uncropped frame sampled from a source.
 
@@ -23,6 +27,9 @@ class Frame(Base):
     unusable for training a detector: a crop-only dataset teaches the
     model that a vehicle always fills the entire image. Training needs
     the whole frame with every object's box on it.
+
+    A frame is also the unit of labelling: its annotations hang off it
+    directly, many per frame. See ``Annotation``.
 
     ``image_path`` is deliberately nullable. For a video source, the
     source file is copied into the project workspace at import and never
@@ -44,4 +51,11 @@ class Frame(Base):
     width: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    #: Where this frame is in the labelling queue. ``pending`` until a
+    #: human has either saved its boxes (``labeled``, which includes
+    #: "there is nothing here") or thrown it out (``rejected``).
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    #: Why this frame entered the queue. Debuggability: a queue full of
+    #: near-duplicates is only fixable if each row can say how it got in.
+    selection_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)
