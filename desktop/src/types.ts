@@ -82,6 +82,20 @@ export interface ProjectClass {
   name: string;
 }
 
+/** A class as the editor sees it: the row, plus the id labels point at. */
+export interface ClassDefinition {
+  id: string;
+  class_id: number;
+  name: string;
+  display_order: number;
+}
+
+/** How many labels a class is holding, asked before offering a delete. */
+export interface ClassUsage {
+  class_id: number;
+  label_count: number;
+}
+
 /** Starting points for a new project's class list. */
 export const CLASS_PRESETS = [
   { id: "atcc-v1", label: "Traffic survey (20 vehicle classes)" },

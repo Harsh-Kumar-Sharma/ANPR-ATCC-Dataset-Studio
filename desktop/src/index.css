@@ -1571,3 +1571,81 @@ label.toggle {
   border-color: var(--danger-border);
   color: var(--danger);
 }
+
+/* ---------- Class schema editor ---------- */
+
+.class-editor {
+  margin-top: 16px;
+}
+
+.class-editor__error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+.class-editor__empty {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.class-editor__list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.class-editor__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.class-editor__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.class-editor__row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.class-editor__row button,
+.class-editor__add button {
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.class-editor__row button:hover,
+.class-editor__add button:hover {
+  background: var(--bg-hover);
+}
+
+.class-editor__add {
+  display: flex;
+  gap: 6px;
+}
+
+.class-editor__add input {
+  flex: 1;
+  min-width: 0;
+}

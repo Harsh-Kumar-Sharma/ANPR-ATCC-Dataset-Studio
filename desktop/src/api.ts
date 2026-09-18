@@ -1,6 +1,7 @@
 import type {
   Annotation,
-  ProjectClass,
+  ClassDefinition,
+  ClassUsage,
   DatasetExportResult,
   DatasetVersion,
   DisagreementItem,
@@ -8,8 +9,9 @@ import type {
   Job,
   JobSubmitted,
   OcrCandidate,
-  Project,
   ProcessingRun,
+  Project,
+  ProjectClass,
   QueueItem,
   RetrainingHandoffResult,
   RtspSessionStatus,
@@ -55,6 +57,19 @@ export const api = {
       body: JSON.stringify({ name, class_preset: classPreset }),
     }),
   getClassSchema: (projectId: string) => request<ProjectClass[]>(`/projects/${projectId}/class-schema`),
+
+  listClasses: (projectId: string) => request<ClassDefinition[]>(`/projects/${projectId}/classes`),
+  createClass: (projectId: string, name: string) =>
+    request<ClassDefinition>(`/projects/${projectId}/classes`, { method: "POST", body: JSON.stringify({ name }) }),
+  renameClass: (projectId: string, classId: number, name: string) =>
+    request<ClassDefinition>(`/projects/${projectId}/classes/${classId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  getClassUsage: (projectId: string, classId: number) =>
+    request<ClassUsage>(`/projects/${projectId}/classes/${classId}/usage`),
+  deleteClass: (projectId: string, classId: number) =>
+    request<void>(`/projects/${projectId}/classes/${classId}`, { method: "DELETE" }),
 
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>

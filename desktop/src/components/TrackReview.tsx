@@ -8,6 +8,10 @@ interface Props {
   track: Track;
   onReviewed: (updatedTrack: Track) => void;
   onNavigateTrack: (direction: 1 | -1) => void;
+  /** Bumped whenever the class editor changes something. Classes are
+   *  editable now, so a rename has to reach this panel while it is
+   *  open rather than on the next remount. */
+  classesVersion?: number;
 }
 
 type Bbox = [number, number, number, number];
@@ -16,7 +20,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
 }
 
-function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
+function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersion = 0 }: Props) {
   const [timeline, setTimeline] = useState<TrackTimeline | null>(null);
   const [classSchema, setClassSchema] = useState<ProjectClass[]>([]);
   const [frameIndex, setFrameIndex] = useState(0);
@@ -33,7 +37,7 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
 
   useEffect(() => {
     api.getClassSchema(project.id).then(setClassSchema).catch((e) => setError(String(e)));
-  }, [project.id]);
+  }, [project.id, classesVersion]);
 
   useEffect(() => {
     let cancelled = false;

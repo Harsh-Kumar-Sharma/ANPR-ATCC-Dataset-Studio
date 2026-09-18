@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import ActiveLearningPanel from "./components/ActiveLearningPanel";
 import DatasetPanel from "./components/DatasetPanel";
+import ClassSchemaEditor from "./components/ClassSchemaEditor";
 import EvaluationPanel from "./components/EvaluationPanel";
 import JobIndicator from "./components/JobIndicator";
 import JobsPanel from "./components/JobsPanel";
@@ -34,6 +35,8 @@ function App() {
   const [mainView, setMainView] = useState<MainView>("review");
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
+  // Bumped by the class editor so anything showing classes reloads them.
+  const [classesVersion, setClassesVersion] = useState(0);
   const { jobs, activeJobs, error: jobsError, refresh: refreshJobs, cancel: cancelJob } = useJobs(project?.id ?? null);
 
   const refreshTracks = useCallback(() => {
@@ -116,6 +119,7 @@ function App() {
         track={selectedTrack}
         onReviewed={handleReviewed}
         onNavigateTrack={handleNavigateTrack}
+        classesVersion={classesVersion}
       />
     );
   } else {
@@ -157,7 +161,12 @@ function App() {
           {tab === "live" && (
             <RtspPanel project={project} onSessionEnded={refreshTracks} onShowPreview={showLivePreview} />
           )}
-          {tab === "dataset" && <DatasetPanel project={project} />}
+          {tab === "dataset" && (
+            <>
+              <DatasetPanel project={project} />
+              <ClassSchemaEditor project={project} onClassesChanged={() => setClassesVersion((v) => v + 1)} />
+            </>
+          )}
           {tab === "insights" && (
             <>
               <EvaluationPanel tracks={tracks} />
