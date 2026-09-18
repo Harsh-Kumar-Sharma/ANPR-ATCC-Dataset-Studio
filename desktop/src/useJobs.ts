@@ -65,5 +65,21 @@ export function useJobs(projectId: string | null) {
     };
   }, [projectId, refresh]);
 
-  return { jobs, activeJobs: jobs.filter(isActive), error, refresh };
+  const cancel = useCallback(
+    async (job: Job) => {
+      try {
+        await api.cancelJob(job.id);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        // Refresh either way: on success to show the new state, on
+        // failure because the job may well have finished on its own,
+        // which is the likeliest reason a cancel did not land.
+        refresh();
+      }
+    },
+    [refresh],
+  );
+
+  return { jobs, activeJobs: jobs.filter(isActive), error, refresh, cancel };
 }

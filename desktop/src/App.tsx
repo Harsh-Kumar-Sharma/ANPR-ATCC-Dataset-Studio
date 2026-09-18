@@ -34,7 +34,7 @@ function App() {
   const [mainView, setMainView] = useState<MainView>("review");
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
-  const { jobs, activeJobs, error: jobsError, refresh: refreshJobs } = useJobs(project?.id ?? null);
+  const { jobs, activeJobs, error: jobsError, refresh: refreshJobs, cancel: cancelJob } = useJobs(project?.id ?? null);
 
   const refreshTracks = useCallback(() => {
     if (!project) return;
@@ -150,7 +150,7 @@ function App() {
           {tab === "workflow" && (
             <>
               <SourcePanel project={project} onProcessed={refreshJobs} onWatch={watchSource} />
-              <JobsPanel jobs={jobs} error={jobsError} />
+              <JobsPanel jobs={jobs} error={jobsError} onCancel={cancelJob} />
               <TrackBrowser tracks={tracks} selectedTrackId={selectedTrackId} onSelect={selectTrack} />
             </>
           )}

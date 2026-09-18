@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import JobIndicator from "../src/components/JobIndicator";
 import JobsPanel from "../src/components/JobsPanel";
 import type { Job } from "../src/types";
@@ -74,5 +74,28 @@ describe("JobIndicator", () => {
     render(<JobIndicator activeJobs={[job({ id: "a" }), job({ id: "b" }), job({ id: "c" })]} />);
 
     expect(screen.getByText(/\+2 more/)).toBeInTheDocument();
+  });
+});
+
+describe("JobsPanel cancel", () => {
+  it("offers cancel on a job that is still going", () => {
+    const onCancel = vi.fn();
+    render(<JobsPanel jobs={[job()]} onCancel={onCancel} />);
+
+    screen.getByRole("button", { name: /cancel/i }).click();
+
+    expect(onCancel).toHaveBeenCalledWith(expect.objectContaining({ id: "job-1" }));
+  });
+
+  it("does not offer cancel on a job that has already finished", () => {
+    render(<JobsPanel jobs={[job({ status: "succeeded" })]} onCancel={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a cancelled job as cancelled rather than failed", () => {
+    render(<JobsPanel jobs={[job({ status: "cancelled" })]} />);
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
   });
 });

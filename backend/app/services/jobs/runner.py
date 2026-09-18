@@ -24,11 +24,13 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.db.models.job import JOB_TYPES, Job
+from app.services.jobs import process
 from app.services.jobs.progress import read_progress
 
 logger = logging.getLogger(__name__)
@@ -69,7 +71,7 @@ def launch_worker_process(job_id: str) -> int:
         start_new_session = True
 
     with open(log_path(job_id), "ab", buffering=0) as log:
-        process = subprocess.Popen(
+        worker = subprocess.Popen(
             [sys.executable, "-m", "app.services.jobs.worker", job_id],
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -80,7 +82,7 @@ def launch_worker_process(job_id: str) -> int:
             start_new_session=start_new_session,
             close_fds=True,
         )
-    return process.pid
+    return worker.pid
 
 
 def get_launcher() -> Launcher:
@@ -158,6 +160,89 @@ def mark_failed(db: Session, job_id: str, error: str) -> Job:
     db.commit()
     db.refresh(job)
     return job
+
+
+def cancel_job(db: Session, job_id: str, terminate: Callable[[int | None], None] = process.terminate) -> Job:
+    """Stop a job and everything it started.
+
+    Cancelling a job that has already finished is a no-op: cancel races
+    the work completing on its own, and losing that race must leave the
+    outcome alone rather than relabelling a finished run as cancelled.
+
+    The process is killed *before* the row is written, so a worker that
+    is mid-write cannot commit a "succeeded" on top of the cancellation.
+    """
+    job = _get(db, job_id)
+    if job.is_terminal:
+        logger.info("Job %s is already %s - nothing to cancel", job_id, job.status)
+        return job
+
+    terminate(job.pid)
+
+    job.status = "cancelled"
+    job.completed_at = _utcnow()
+    db.commit()
+    db.refresh(job)
+
+    _cancel_side_effects(db, job)
+    return job
+
+
+def _cancel_side_effects(db: Session, job: Job) -> None:
+    """Let the job's own type clean up after a cancellation.
+
+    Kept out of ``cancel_job`` so adding a job type does not mean
+    editing a switch in here. Imported lazily because handlers import
+    this module.
+    """
+    from app.services.jobs.handlers import CANCEL_HANDLERS
+
+    handler = CANCEL_HANDLERS.get(job.type)
+    if handler is None:
+        return
+    try:
+        handler(db, dict(job.params_json or {}))
+    except Exception:
+        # The job is already cancelled as far as the user is concerned;
+        # failing to tidy up must not undo that.
+        logger.exception("Cancel cleanup failed for job %s", job.id)
+
+
+def reconcile_jobs(db: Session, is_running: Callable[..., bool] = process.is_running) -> list[Job]:
+    """Reconcile jobs whose processes may have died while the app was shut.
+
+    Because workers are detached, a job that was running when the app
+    closed is usually *still running*, and must be left alone - that is
+    the whole point. But a worker that was killed, crashed, or died with
+    the machine leaves a row claiming to be in progress forever, and
+    that row will also block its source against any future run.
+
+    Returns the jobs that were marked failed.
+    """
+    stale = db.scalars(select(Job).where(Job.status.in_(("pending", "running")))).all()
+    reconciled: list[Job] = []
+
+    for job in stale:
+        # created_at guards against pid reuse: a process older than the
+        # job cannot be its worker, however alive it looks.
+        if is_running(job.pid, started_after=job.created_at):
+            continue
+        logger.warning("Job %s claims to be %s but its process is no longer running", job.id, job.status)
+        job.status = "failed"
+        job.error_message = _truncate(
+            "The process running this job is no longer running. It was most likely stopped when the "
+            "computer or the app shut down. Start it again."
+        )
+        job.completed_at = _utcnow()
+        reconciled.append(job)
+
+    if reconciled:
+        db.commit()
+        for job in reconciled:
+            db.refresh(job)
+            _cancel_side_effects(db, job)
+
+    return reconciled
 
 
 def current_progress(job: Job) -> tuple[float, str | None]:

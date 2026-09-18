@@ -1521,3 +1521,20 @@ label.toggle {
     transition: none;
   }
 }
+
+.job-row__cancel {
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.job-row__cancel:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}

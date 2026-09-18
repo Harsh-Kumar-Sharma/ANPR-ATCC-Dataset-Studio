@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,7 +23,36 @@ from app.core.logging import configure_logging
 
 configure_logging()
 
-app = FastAPI(title=get_settings().app_name)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Reattach to background jobs on startup.
+
+    Workers are detached, so a job that was running when the app closed
+    is usually still running, and is left alone - that is the point of
+    detaching them. This only cleans up jobs whose process is genuinely
+    gone, which would otherwise claim to be in progress forever and
+    block their source against any future run.
+    """
+    from app.db.session import SessionLocal
+    from app.services.jobs.runner import reconcile_jobs
+
+    try:
+        with SessionLocal() as db:
+            reconciled = reconcile_jobs(db)
+        if reconciled:
+            logger.warning("Marked %d job(s) failed whose processes are no longer running", len(reconciled))
+    except Exception:
+        # A failure here must not stop the app opening - the user needs
+        # it far more than they need tidy job rows.
+        logger.exception("Could not reconcile jobs on startup")
+
+    yield
+
+
+app = FastAPI(title=get_settings().app_name, lifespan=lifespan)
 
 # Local-first desktop app only ever talks to this backend on
 # localhost - permissive CORS is fine here (not a multi-tenant
@@ -38,6 +70,8 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
+
+
 app.include_router(health_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)

@@ -81,6 +81,18 @@ def get_job(job_id: str, db: Session = Depends(get_db)) -> JobRead:
     return _to_read_model(get_job_or_404(db, job_id))
 
 
+@router.post("/{job_id}/cancel", response_model=JobRead)
+def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobRead:
+    """Stop a running job and give the machine back.
+
+    Idempotent: cancelling a job that already finished returns it
+    unchanged rather than failing, because cancel genuinely races the
+    work completing on its own.
+    """
+    get_job_or_404(db, job_id)
+    return _to_read_model(runner.cancel_job(db, job_id))
+
+
 @router.get("/{job_id}/progress")
 def stream_job_progress(job_id: str, db: Session = Depends(get_db)) -> StreamingResponse:
     """Server-sent events carrying this job's progress until it finishes.

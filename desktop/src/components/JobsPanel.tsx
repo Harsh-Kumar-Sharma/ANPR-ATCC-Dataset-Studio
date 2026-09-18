@@ -5,6 +5,7 @@ import ProgressBar from "./ProgressBar";
 interface Props {
   jobs: Job[];
   error?: string | null;
+  onCancel?: (job: Job) => void;
 }
 
 const STATUS_LABEL: Record<Job["status"], string> = {
@@ -28,13 +29,18 @@ function formatWhen(job: Job): string {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString();
 }
 
-function JobRow({ job }: { job: Job }) {
+function JobRow({ job, onCancel }: { job: Job; onCancel?: (job: Job) => void }) {
   return (
     <li className={`job-row job-row--${job.status}`} data-testid="job-row">
       <div className="job-row__head">
         <span className="job-row__type">{TYPE_LABEL[job.type] ?? job.type}</span>
         <span className="job-row__status">{STATUS_LABEL[job.status] ?? job.status}</span>
         <span className="job-row__when">{formatWhen(job)}</span>
+        {isActive(job) && onCancel && (
+          <button className="job-row__cancel" onClick={() => onCancel(job)}>
+            Cancel
+          </button>
+        )}
       </div>
 
       {isActive(job) && (
@@ -54,7 +60,7 @@ function JobRow({ job }: { job: Job }) {
   );
 }
 
-function JobsPanel({ jobs, error }: Props) {
+function JobsPanel({ jobs, error, onCancel }: Props) {
   return (
     <section className="jobs-panel">
       <h3>Jobs</h3>
@@ -64,7 +70,7 @@ function JobsPanel({ jobs, error }: Props) {
       ) : (
         <ul className="jobs-panel__list">
           {jobs.map((job) => (
-            <JobRow key={job.id} job={job} />
+            <JobRow key={job.id} job={job} onCancel={onCancel} />
           ))}
         </ul>
       )}

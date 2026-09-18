@@ -1,5 +1,6 @@
 import pytest
 
+from app.core.errors import NotFoundError
 from app.db.models import Job, Project
 from app.db.session import SessionLocal
 from app.services.jobs import runner
@@ -154,3 +155,107 @@ def test_progress_for_a_finished_job_comes_from_the_row_not_the_file(project, tm
         fraction, message = runner.current_progress(db.get(Job, job.id))
 
     assert fraction == 1.0
+
+
+def test_cancelling_a_job_stops_its_process_and_marks_it_cancelled(project):
+    killed: list[int] = []
+    launcher = RecordingLauncher(pid=7777)
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=launcher)
+
+    with SessionLocal() as db:
+        runner.mark_running(db, job.id)
+        runner.cancel_job(db, job.id, terminate=killed.append)
+
+    with SessionLocal() as db:
+        cancelled = db.get(Job, job.id)
+        assert cancelled.status == "cancelled"
+        assert cancelled.completed_at is not None
+    assert killed == [7777], "the worker process must actually be stopped, not just relabelled"
+
+
+def test_cancelling_a_finished_job_does_not_rewrite_its_outcome(project):
+    """Cancel races the job finishing. Losing that race must leave the
+    result alone rather than relabelling a completed run as cancelled."""
+    killed: list[int] = []
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_succeeded(db, job.id, result={"run_id": "r1"})
+
+    with SessionLocal() as db:
+        runner.cancel_job(db, job.id, terminate=killed.append)
+
+    with SessionLocal() as db:
+        assert db.get(Job, job.id).status == "succeeded"
+    assert killed == []
+
+
+def test_cancelling_an_unknown_job_is_a_not_found(project):
+    with SessionLocal() as db:
+        with pytest.raises(NotFoundError):
+            runner.cancel_job(db, "does-not-exist")
+
+
+def test_reconcile_fails_a_job_whose_process_died_while_the_app_was_closed(project):
+    """A job left 'running' by a crash or a kill would otherwise sit there
+    claiming to be in progress forever."""
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+
+    with SessionLocal() as db:
+        reconciled = runner.reconcile_jobs(db, is_running=lambda pid, started_after=None: False)
+
+    assert job.id in [j.id for j in reconciled]
+    with SessionLocal() as db:
+        dead = db.get(Job, job.id)
+        assert dead.status == "failed"
+        assert dead.completed_at is not None
+        assert "no longer running" in dead.error_message
+
+
+def test_reconcile_leaves_a_job_whose_process_is_still_going(project):
+    """The whole point of detaching the worker: closing the app must not
+    cost you the run."""
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+
+    with SessionLocal() as db:
+        reconciled = runner.reconcile_jobs(db, is_running=lambda pid, started_after=None: True)
+
+    assert reconciled == [], "a job whose process is alive must be left alone"
+    with SessionLocal() as db:
+        assert db.get(Job, job.id).status == "running"
+
+
+def test_reconcile_ignores_jobs_that_already_finished(project):
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_succeeded(db, job.id, result={})
+
+    with SessionLocal() as db:
+        reconciled = runner.reconcile_jobs(db, is_running=lambda pid, started_after=None: False)
+
+    assert job.id not in [j.id for j in reconciled]
+    with SessionLocal() as db:
+        assert db.get(Job, job.id).status == "succeeded"
+
+
+def test_reconcile_checks_the_pid_against_when_the_job_started(project):
+    """Guards against pid reuse: the liveness check must be told when the
+    job was created, or a recycled pid reads as a healthy worker."""
+    seen: list = []
+
+    def is_running(pid, started_after=None):
+        seen.append((pid, started_after))
+        return True
+
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+
+    with SessionLocal() as db:
+        runner.reconcile_jobs(db, is_running=is_running)
+
+    assert seen and seen[0][1] is not None

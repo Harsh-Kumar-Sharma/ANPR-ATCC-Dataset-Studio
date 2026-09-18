@@ -74,6 +74,9 @@ export const api = {
     return request<Job[]>(`/jobs${suffix ? `?${suffix}` : ""}`);
   },
   getJob: (jobId: string) => request<Job>(`/jobs/${jobId}`),
+  /** Idempotent: cancelling an already-finished job returns it
+   *  unchanged rather than failing. */
+  cancelJob: (jobId: string) => request<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
   sourceVideoUrl: (projectId: string, sourceId: string) => `${API_BASE}/projects/${projectId}/sources/${sourceId}/video`,
   getSourceDetections: (projectId: string, sourceId: string, runId?: string) =>
     request<SourceDetections>(

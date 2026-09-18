@@ -94,3 +94,27 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
 HANDLERS = {
     "detect": run_detect_job,
 }
+
+
+def cancel_detect_job(db: Session, params: dict) -> None:
+    """Leave a cancelled detect run in an honest state.
+
+    Without this the run stays "running" forever, which both misreports
+    what happened and blocks the source against any future run. Partial
+    tracks already written are kept - they are real observations - but
+    the run they belong to never claims to have completed.
+    """
+    run_id = params.get("run_id")
+    if run_id is None:
+        return
+    run = db.get(ProcessingRun, run_id)
+    if run is None or run.status in {"completed", "failed", "cancelled"}:
+        return
+    run.status = "cancelled"
+    run.completed_at = _utcnow()
+    db.commit()
+
+
+CANCEL_HANDLERS = {
+    "detect": cancel_detect_job,
+}

@@ -4,9 +4,9 @@
 
 **Blocked by:** 02 (Run detection as a background job with live progress)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Closing the app does not kill a running job's subprocess
-- [ ] On startup the app reattaches to still-running jobs and resumes showing their progress
-- [ ] A job whose process died while the app was closed is reconciled to a failed state on startup, not left running forever
-- [ ] Cancel still works on a reattached job
+- [x] Closing the app does not kill a running job's subprocess
+- [x] On startup the app reattaches to still-running jobs and resumes showing their progress
+- [x] A job whose process died while the app was closed is reconciled to a failed state on startup, not left running forever
+- [x] Cancel still works on a reattached job

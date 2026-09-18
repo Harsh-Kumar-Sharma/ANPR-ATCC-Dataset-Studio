@@ -200,3 +200,94 @@ def test_a_failed_run_also_records_when_it_stopped(tmp_path):
 
     job = client.get(f"/jobs/{submitted['job']['id']}").json()
     assert job["status"] == "failed"
+
+
+def test_cancelling_a_queued_job_stops_it_and_frees_the_source(tmp_path):
+    """A cancelled run must not keep the source hostage - before this, the
+    only way out of a mis-clicked run was to wait it out."""
+    project, source = _project_with_source(tmp_path, "Cancel Project")
+
+    with deferred_jobs():
+        submitted = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        ).json()
+
+    cancelled = client.post(f"/jobs/{submitted['job']['id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+    run = client.get(f"/processing-runs/{submitted['run_id']}").json()
+    assert run["status"] == "cancelled"
+    assert run["completed_at"] is not None
+
+    # The source is free again: a new run is accepted rather than 409'd.
+    with deferred_jobs():
+        again = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        )
+    assert again.status_code == 202
+
+
+def test_a_cancelled_run_is_never_presented_as_a_finished_one(tmp_path):
+    project, source = _project_with_source(tmp_path, "Cancelled Not Finished Project")
+
+    with deferred_jobs():
+        submitted = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        ).json()
+    client.post(f"/jobs/{submitted['job']['id']}/cancel")
+
+    run = client.get(f"/processing-runs/{submitted['run_id']}").json()
+    assert run["status"] == "cancelled"
+    assert run["status"] != "completed"
+
+
+def test_cancelling_a_finished_job_is_harmless(tmp_path):
+    project, source = _project_with_source(tmp_path, "Cancel Finished Project")
+    submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+
+    response = client.post(f"/jobs/{submitted['job']['id']}/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded", "a finished job must keep its outcome"
+
+
+def test_cancelling_an_unknown_job_returns_404():
+    response = client.post("/jobs/does-not-exist/cancel")
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+
+
+def test_starting_the_app_reconciles_a_job_whose_process_is_gone(tmp_path):
+    """Reopening the app must not leave a dead run claiming to be in
+    progress forever. The pid here is a no-op launcher's, so nothing is
+    running behind it."""
+    project, source = _project_with_source(tmp_path, "Startup Reconcile Project")
+
+    with deferred_jobs():
+        submitted = client.post(
+            f"/projects/{project['id']}/sources/{source['id']}/process",
+            json={"sampling_config": {"target_fps": 5.0}},
+        ).json()
+
+    job_id = submitted["job"]["id"]
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        job.status = "running"
+        job.pid = None  # the process is definitively not there
+        db.commit()
+
+    # Entering the context manager runs the app's lifespan, i.e. a restart.
+    with TestClient(app):
+        pass
+
+    with SessionLocal() as db:
+        reconciled = db.get(Job, job_id)
+        assert reconciled.status == "failed"
+        assert "no longer running" in reconciled.error_message
+
+    run = client.get(f"/processing-runs/{submitted['run_id']}").json()
+    assert run["status"] == "cancelled", "the run must not stay 'pending' and block the source"
