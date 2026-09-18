@@ -23,5 +23,8 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)
-    class_schema_version: Mapped[str] = mapped_column(String(32), nullable=False, default="v1")
+    #: The class preset this project was seeded from - a record of where
+    #: its classes came from, not the source of truth for them. That is
+    #: the project's own class_definitions rows, which the user can edit.
+    class_schema_version: Mapped[str] = mapped_column(String(32), nullable=False, default="atcc-v1")
     workspace_path: Mapped[str] = mapped_column(String(1024), nullable=False)

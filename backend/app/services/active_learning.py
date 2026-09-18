@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.class_schema import get_class_schema
+from app.services.class_definitions import class_schema_for
 from app.db.models.annotation import Annotation
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.processing_run import ProcessingRun
@@ -100,10 +100,8 @@ COCO_TO_PLAUSIBLE_ATCC_CLASS_IDS: dict[str, set[int]] = {
 }
 
 
-def find_model_human_disagreements(
-    db: Session, project_id: str, class_schema_version: str
-) -> list[DisagreementItem]:
-    class_names = {c["id"]: c["name"] for c in get_class_schema(class_schema_version)}
+def find_model_human_disagreements(db: Session, project_id: str) -> list[DisagreementItem]:
+    class_names = {c["id"]: c["name"] for c in class_schema_for(db, project_id)}
     stmt = (
         select(Annotation, FrameCandidate)
         .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)

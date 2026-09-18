@@ -1,6 +1,6 @@
 import type {
   Annotation,
-  AtccClass,
+  ProjectClass,
   DatasetExportResult,
   DatasetVersion,
   DisagreementItem,
@@ -49,8 +49,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listProjects: () => request<Project[]>("/projects"),
-  createProject: (name: string) => request<Project>("/projects", { method: "POST", body: JSON.stringify({ name }) }),
-  getClassSchema: (projectId: string) => request<AtccClass[]>(`/projects/${projectId}/class-schema`),
+  createProject: (name: string, classPreset?: string) =>
+    request<Project>("/projects", {
+      method: "POST",
+      body: JSON.stringify({ name, class_preset: classPreset }),
+    }),
+  getClassSchema: (projectId: string) => request<ProjectClass[]>(`/projects/${projectId}/class-schema`),
 
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>

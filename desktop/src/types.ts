@@ -75,10 +75,19 @@ export interface TrackTimeline {
   frames: FrameCandidate[];
 }
 
-export interface AtccClass {
+/** One class this project can label with. Owned by the project and
+ *  editable, so never cache it across projects. */
+export interface ProjectClass {
   id: number;
   name: string;
 }
+
+/** Starting points for a new project's class list. */
+export const CLASS_PRESETS = [
+  { id: "atcc-v1", label: "Traffic survey (20 vehicle classes)" },
+  { id: "anpr-v1", label: "Number plates (vehicle + plate)" },
+  { id: "blank", label: "Empty - I will define my own" },
+] as const;
 
 export type ReviewDecision = "accepted" | "hard" | "failed";
 

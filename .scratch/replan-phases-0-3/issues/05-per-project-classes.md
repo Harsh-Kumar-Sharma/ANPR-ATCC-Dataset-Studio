@@ -6,10 +6,18 @@ Classes are currently twenty ATCC entries hardcoded in a core module and shared 
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A class definition table is owned by a project
-- [ ] Presets exist for ATCC (the current twenty), ANPR (vehicle plus plate), and Blank
-- [ ] Creating a project copies the chosen preset in — presets are never shared live
-- [ ] A migration seeds every existing project with the ATCC v1 preset so nothing currently in the database breaks
-- [ ] The existing review UI and its class validation read the project's classes, not the hardcoded module
+- [x] A class definition table is owned by a project
+- [x] Presets exist for ATCC (the current twenty), ANPR (vehicle plus plate), and Blank
+- [x] Creating a project copies the chosen preset in — presets are never shared live
+- [x] A migration seeds every existing project with the ATCC v1 preset so nothing currently in the database breaks
+- [x] The existing review UI and its class validation read the project's classes, not the hardcoded module
+
+**Note:** `projects.class_schema_version` survives, but its meaning changed:
+it now records which preset seeded the project, not what its classes are.
+The classes are the project's own rows. Existing projects were normalised
+from `v1` to `atcc-v1` in the same migration so the vocabulary is consistent.
+
+Export manifests now snapshot the class list, because a preset name can no
+longer answer "what was this dataset built against" once classes are editable.

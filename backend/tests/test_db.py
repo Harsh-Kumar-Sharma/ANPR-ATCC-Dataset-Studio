@@ -10,7 +10,7 @@ def test_db_initializes_and_can_persist_a_project():
         db.refresh(project)
 
         assert project.id is not None
-        assert project.class_schema_version == "v1"
+        assert project.class_schema_version == "atcc-v1"
 
         fetched = db.get(Project, project.id)
         assert fetched is not None

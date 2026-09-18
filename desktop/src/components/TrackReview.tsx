@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { IconAlert, IconCheck, IconX } from "../Icons";
-import type { AtccClass, FrameCandidate, OcrCandidate, Project, Track, TrackTimeline } from "../types";
+import type { ProjectClass, FrameCandidate, OcrCandidate, Project, Track, TrackTimeline } from "../types";
 
 interface Props {
   project: Project;
@@ -18,7 +18,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 function TrackReview({ project, track, onReviewed, onNavigateTrack }: Props) {
   const [timeline, setTimeline] = useState<TrackTimeline | null>(null);
-  const [classSchema, setClassSchema] = useState<AtccClass[]>([]);
+  const [classSchema, setClassSchema] = useState<ProjectClass[]>([]);
   const [frameIndex, setFrameIndex] = useState(0);
   const [classId, setClassId] = useState<number | "">("");
   const [bbox, setBbox] = useState<Bbox>([0, 0, 0, 0]);

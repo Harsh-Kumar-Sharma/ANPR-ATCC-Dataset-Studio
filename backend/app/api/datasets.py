@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
-from app.core.class_schema import get_class_schema
+from app.services.class_definitions import class_schema_for
 from app.core.errors import NotFoundError
 from app.db.models.dataset_item import DatasetItem
 from app.db.models.dataset_version import DatasetVersion
@@ -104,7 +104,10 @@ def revalidate_dataset_version(dataset_version_id: str, db: Session = Depends(ge
     if not manifest_path.is_file():
         raise NotFoundError(f"Manifest not found on disk for dataset version: {dataset_version_id}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    num_classes = len(get_class_schema(manifest["config"]["class_schema_version"]))
+    # From the manifest's own snapshot: the project's classes may have
+    # been edited since this version was exported, and validating against
+    # today's list would fail a dataset that was correct when written.
+    num_classes = len(manifest["config"]["classes"])
     result = validate_export(manifest_path.parent, manifest, num_classes=num_classes)
     return ValidationResultRead(valid=result.valid, errors=result.errors, warnings=result.warnings)
 
@@ -121,7 +124,7 @@ def create_retraining_handoff(dataset_version_id: str, db: Session = Depends(get
     if not export_dir.is_dir():
         raise NotFoundError(f"Export directory not found on disk for dataset version: {dataset_version_id}")
 
-    class_schema = get_class_schema(project.class_schema_version)
+    class_schema = class_schema_for(db, project.id)
     paths = write_retraining_handoff(export_dir, class_schema, base_model=DEFAULT_MODEL_WEIGHTS)
     return RetrainingHandoffResult(
         data_yaml_path=paths["data_yaml_path"],

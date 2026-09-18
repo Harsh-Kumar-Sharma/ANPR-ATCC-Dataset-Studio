@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.class_schema import get_class_schema
+from app.services.class_definitions import class_schema_for
 from app.core.errors import AppError
 from app.db.models.dataset_item import DatasetItem
 from app.db.models.dataset_version import DatasetVersion
@@ -71,7 +71,7 @@ def export_dataset_version(
     if split_seed is None:
         split_seed = random.randint(0, 2**31 - 1)
 
-    class_schema = get_class_schema(project.class_schema_version)
+    class_schema = class_schema_for(db, project.id)
     class_id_to_index = {c["id"]: i for i, c in enumerate(class_schema)}
 
     items_by_frame: dict[str, list[ApprovedItem]] = {}
@@ -105,6 +105,10 @@ def export_dataset_version(
         "val_ratio": val_ratio,
         "test_ratio": test_ratio,
         "class_schema_version": project.class_schema_version,
+        # The classes as they were at export time. Classes are editable
+        # now, so the preset name alone can no longer answer "what was
+        # this dataset trained against" - only a snapshot can.
+        "classes": class_schema,
         "image_mode": "full_frame",
     }
     dataset_version = DatasetVersion(

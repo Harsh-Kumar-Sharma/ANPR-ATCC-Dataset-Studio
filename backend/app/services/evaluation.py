@@ -3,7 +3,7 @@ from collections import defaultdict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.class_schema import get_class_schema
+from app.services.class_definitions import class_schema_for
 from app.db.models.annotation import Annotation
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.ocr_candidate import OcrCandidate
@@ -42,7 +42,7 @@ def _build_track_summaries(db: Session, run_id: str) -> list[TrackSummary]:
     return summaries
 
 
-def _compute_class_distribution(db: Session, run_id: str, class_schema_version: str) -> dict[str, int]:
+def _compute_class_distribution(db: Session, run_id: str, project_id: str) -> dict[str, int]:
     stmt = (
         select(Annotation.class_id, func.count(Annotation.id))
         .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)
@@ -55,7 +55,7 @@ def _compute_class_distribution(db: Session, run_id: str, class_schema_version: 
         )
         .group_by(Annotation.class_id)
     )
-    schema_names = {c["id"]: c["name"] for c in get_class_schema(class_schema_version)}
+    schema_names = {c["id"]: c["name"] for c in class_schema_for(db, project_id)}
     return {schema_names.get(class_id, str(class_id)): count for class_id, count in db.execute(stmt).all()}
 
 
@@ -128,7 +128,7 @@ def evaluate_run(db: Session, run: ProcessingRun, source: Source, project: Proje
         "detection_recall": recall,
         "duplicate_track_pairs": find_duplicate_track_pairs(summaries),
         "fragmented_track_pairs": find_fragmented_track_pairs(summaries),
-        "class_distribution": _compute_class_distribution(db, run.id, project.class_schema_version),
+        "class_distribution": _compute_class_distribution(db, run.id, project.id),
         "ocr_metrics": _compute_ocr_metrics(db, run.id),
         "failure_gallery": _build_failure_gallery(db, run.id),
     }

@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.class_schema import is_valid_class_id
 from app.core.errors import AppError, NotFoundError
 from app.db.models.annotation import Annotation
 from app.db.models.frame_candidate import FrameCandidate
@@ -12,6 +11,7 @@ from app.db.models.project import Project
 from app.db.models.source import Source
 from app.db.models.track import Track
 from app.schemas.review import TrackReviewRequest
+from app.services.class_definitions import is_valid_class_id
 
 
 class InvalidReviewError(AppError):
@@ -44,9 +44,8 @@ def submit_review(db: Session, track: Track, payload: TrackReviewRequest) -> Ann
 
     if payload.class_id is not None:
         project = get_project_for_track(db, track.id)
-        schema_version = project.class_schema_version if project else "v1"
-        if not is_valid_class_id(schema_version, payload.class_id):
-            raise InvalidReviewError(f"class_id {payload.class_id} is not valid for class schema {schema_version}")
+        if project is None or not is_valid_class_id(db, project.id, payload.class_id):
+            raise InvalidReviewError(f"class_id {payload.class_id} is not one of this project's classes")
 
     bbox_json = payload.bbox_json if payload.bbox_json is not None else list(frame_candidate.bbox_json)
 

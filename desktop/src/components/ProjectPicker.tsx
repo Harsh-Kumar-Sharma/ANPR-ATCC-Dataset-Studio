@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { IconAlert, IconFolder } from "../Icons";
+import { CLASS_PRESETS } from "../types";
 import type { Project } from "../types";
 
 interface Props {
@@ -13,6 +14,9 @@ function ProjectPicker({ onSelect }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // Chosen once, at creation: the preset is copied in, and from then on
+  // the project owns its classes.
+  const [preset, setPreset] = useState<string>(CLASS_PRESETS[0].id);
 
   useEffect(() => {
     api
@@ -28,7 +32,7 @@ function ProjectPicker({ onSelect }: Props) {
     setCreating(true);
     setError(null);
     try {
-      const project = await api.createProject(newName.trim());
+      const project = await api.createProject(newName.trim(), preset);
       setNewName("");
       onSelect(project);
     } catch (e) {
@@ -80,6 +84,21 @@ function ProjectPicker({ onSelect }: Props) {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
           />
+          <label className="sr-only" htmlFor="class-preset">
+            Classes
+          </label>
+          <select
+            id="class-preset"
+            value={preset}
+            onChange={(e) => setPreset(e.target.value)}
+            title="Which classes this project starts with. You can edit them later."
+          >
+            {CLASS_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
           <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
             Create
           </button>

@@ -1,4 +1,5 @@
 from app.db.models.annotation import Annotation
+from app.db.models.class_definition import ClassDefinition
 from app.db.models.dataset_item import DatasetItem
 from app.db.models.dataset_version import DatasetVersion
 from app.db.models.frame import Frame
@@ -22,4 +23,5 @@ __all__ = [
     "DatasetVersion",
     "DatasetItem",
     "Job",
+    "ClassDefinition",
 ]

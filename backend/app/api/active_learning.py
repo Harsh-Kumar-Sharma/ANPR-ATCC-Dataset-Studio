@@ -41,5 +41,5 @@ def get_model_human_disagreements(project_id: str, db: Session = Depends(get_db)
     model-ensemble disagreement (only one trained model exists). See
     docs/HANDOFF.md Phase 8 for why."""
     project = get_project_or_404(db, project_id)
-    items = find_model_human_disagreements(db, project_id, project.class_schema_version)
+    items = find_model_human_disagreements(db, project_id)
     return [DisagreementItemRead(**asdict(item)) for item in items]
