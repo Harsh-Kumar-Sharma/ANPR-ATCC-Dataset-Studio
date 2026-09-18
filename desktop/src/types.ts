@@ -96,6 +96,13 @@ export interface ClassUsage {
   label_count: number;
 }
 
+/** What deleting a class did to the labels that were using it. */
+export interface ClassDeleteOutcome {
+  class_id: number;
+  remapped: number;
+  deleted_labels: number;
+}
+
 /** Starting points for a new project's class list. */
 export const CLASS_PRESETS = [
   { id: "atcc-v1", label: "Traffic survey (20 vehicle classes)" },

@@ -17,6 +17,10 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
   const [draftName, setDraftName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The remap prompt: which class is being deleted, how many labels it
+  // holds, and where the user has chosen to send them.
+  const [pendingDelete, setPendingDelete] = useState<{ cls: ClassDefinition; labelCount: number } | null>(null);
+  const [remapTarget, setRemapTarget] = useState<number | null>(null);
 
   /** Surface the backend's own message. A name clash, or deleting a
    *  class that is still in use, are ordinary things to do by accident,
@@ -75,10 +79,34 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
   async function handleDelete(cls: ClassDefinition) {
     setBusy(true);
     try {
-      // No pre-check: the server refuses a class that is in use and its
-      // message already carries the count, so asking first would only
-      // duplicate that wording in a second place - and race it.
-      await api.deleteClass(project.id, cls.class_id);
+      // Ask what is at stake before doing anything. A class nothing uses
+      // just goes; one that labels point at needs the user to say where
+      // those labels go, and that is a real decision, not a confirm box.
+      const usage = await api.getClassUsage(project.id, cls.class_id);
+      if (usage.label_count === 0) {
+        await api.deleteClass(project.id, cls.class_id);
+        setError(null);
+        await refresh();
+        onClassesChanged?.();
+        return;
+      }
+      const others = classes.filter((c) => c.class_id !== cls.class_id);
+      setPendingDelete({ cls, labelCount: usage.label_count });
+      setRemapTarget(others[0]?.class_id ?? null);
+      setError(null);
+    } catch (e) {
+      setError(describe(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function settleDelete(options: { remapTo?: number; deleteLabels?: boolean }) {
+    if (!pendingDelete) return;
+    setBusy(true);
+    try {
+      await api.deleteClass(project.id, pendingDelete.cls.class_id, options);
+      setPendingDelete(null);
       setError(null);
       await refresh();
       onClassesChanged?.();
@@ -89,6 +117,8 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
     }
   }
 
+  const remapChoices = pendingDelete ? classes.filter((c) => c.class_id !== pendingDelete.cls.class_id) : [];
+
   return (
     <section className="class-editor">
       <h3>Classes</h3>
@@ -97,6 +127,47 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
         <p className="class-editor__error" role="alert">
           <IconAlert /> {error}
         </p>
+      )}
+
+      {pendingDelete && (
+        <div className="class-editor__prompt" role="dialog" aria-label={`Delete ${pendingDelete.cls.name}`}>
+          <p>
+            {pendingDelete.labelCount} label(s) use <strong>{pendingDelete.cls.name}</strong>. Move them where, or
+            delete them?
+          </p>
+          {remapChoices.length > 0 ? (
+            <div className="class-editor__prompt-row">
+              <label htmlFor="remap-target">Move to</label>
+              <select
+                id="remap-target"
+                value={remapTarget ?? ""}
+                onChange={(e) => setRemapTarget(Number(e.target.value))}
+              >
+                {remapChoices.map((c) => (
+                  <option key={c.id} value={c.class_id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                disabled={busy || remapTarget === null}
+                onClick={() => remapTarget !== null && settleDelete({ remapTo: remapTarget })}
+              >
+                Move
+              </button>
+            </div>
+          ) : (
+            <p className="class-editor__prompt-note">There is no other class to move them to.</p>
+          )}
+          <div className="class-editor__prompt-row">
+            <button className="class-editor__danger" disabled={busy} onClick={() => settleDelete({ deleteLabels: true })}>
+              Delete the labels too
+            </button>
+            <button disabled={busy} onClick={() => setPendingDelete(null)}>
+              Keep the class
+            </button>
+          </div>
+        </div>
       )}
 
       {classes.length === 0 ? (

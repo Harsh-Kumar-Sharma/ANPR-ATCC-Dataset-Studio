@@ -1649,3 +1649,51 @@ label.toggle {
   flex: 1;
   min-width: 0;
 }
+
+.class-editor__prompt {
+  margin: 0 0 10px;
+  padding: 10px;
+  font-size: 13px;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+}
+
+.class-editor__prompt p {
+  margin: 0 0 8px;
+}
+
+.class-editor__prompt-note {
+  color: var(--text-muted);
+}
+
+.class-editor__prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.class-editor__prompt-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.class-editor__prompt-row button {
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.class-editor__danger {
+  color: var(--danger) !important;
+  border-color: var(--danger-border) !important;
+}
+
+.class-editor__danger:hover {
+  background: var(--danger-bg) !important;
+}

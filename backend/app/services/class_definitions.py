@@ -5,13 +5,18 @@ hardcoded module now comes through here, so there is exactly one answer
 to "what can this project label with", and it is the project's own rows.
 """
 
-from sqlalchemy import func, select
+from dataclasses import dataclass
+
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError, NotFoundError
 from app.core.presets import get_preset
 from app.db.models.annotation import Annotation
 from app.db.models.class_definition import ClassDefinition
+from app.db.models.dataset_item import DatasetItem
+from app.db.models.frame_candidate import FrameCandidate
+from app.db.models.track import Track
 from app.services.dataset_query import project_annotations
 
 
@@ -29,6 +34,13 @@ class DuplicateClassNameError(ConflictError):
     categories that were meant to be one."""
 
     code = "duplicate_class_name"
+
+
+class InvalidRemapError(AppError):
+    """A delete request that cannot be carried out as asked - both
+    options at once, or a class merged into itself."""
+
+    code = "invalid_remap"
 
 
 class ClassInUseError(ConflictError):
@@ -232,23 +244,116 @@ def count_labels_using(db: Session, project_id: str, class_id: int) -> int:
     return db.scalar(select(func.count()).select_from(annotations)) or 0
 
 
-def delete_class(db: Session, project_id: str, class_id: int) -> None:
-    """Remove a class that nothing is using.
+@dataclass(frozen=True)
+class DeleteOutcome:
+    """What deleting a class did to the labels that were using it."""
 
-    Refuses while labels still point at it. Deleting those labels, or
-    moving them somewhere else, is a decision only the user can make -
-    that conversation is ticket 07. Until it exists, refusing beats
-    leaving annotations pointing at a class that is gone, which is the
-    easiest way to silently poison a dataset.
+    remapped: int
+    deleted_labels: int
+
+
+def delete_class(
+    db: Session,
+    project_id: str,
+    class_id: int,
+    *,
+    remap_to: int | None = None,
+    delete_labels: bool = False,
+) -> DeleteOutcome:
+    """Remove a class, and settle every label that was using it.
+
+    A class nothing points at is simply removed. One that labels still
+    use needs the user to say what happens to them, and there are
+    exactly two answers:
+
+    ``remap_to`` moves every label onto another class. "Merge B into A"
+    is this same call - there is deliberately no second path for it.
+
+    ``delete_labels`` removes the labels along with the class. Their
+    tracks stop claiming a review that no longer exists, and any dataset
+    item indexing them goes too: SQLite is not enforcing foreign keys
+    here, so it would otherwise sit there silently pointing at nothing.
+    The export on disk is the durable record of what a version
+    contained; the item row is only an index into it.
+
+    With neither, a class in use is refused. Leaving labels pointing at a
+    class that is gone is the easiest way to silently poison a dataset,
+    and this function never does it - which is the invariant everything
+    else here is in service of.
     """
+    if remap_to is not None and delete_labels:
+        raise InvalidRemapError("Choose one: move the labels to another class, or delete them.")
+
     target = get_class(db, project_id, class_id)
 
     in_use = count_labels_using(db, project_id, class_id)
-    if in_use:
+    if in_use and remap_to is None and not delete_labels:
         raise ClassInUseError(
             f"{in_use} annotation(s) still use {target.name!r}, including any rejected reviews. "
             "Move them to another class or delete them first."
         )
 
+    remapped = 0
+    deleted = 0
+    if in_use and remap_to is not None:
+        remapped = _remap_labels(db, project_id, class_id, remap_to)
+    elif in_use and delete_labels:
+        deleted = _delete_labels(db, project_id, class_id)
+
     db.delete(target)
     db.flush()
+    return DeleteOutcome(remapped=remapped, deleted_labels=deleted)
+
+
+def _remap_labels(db: Session, project_id: str, from_class_id: int, to_class_id: int) -> int:
+    if from_class_id == to_class_id:
+        raise InvalidRemapError("A class cannot be merged into itself.")
+    # Validated before anything moves: remapping onto a class that does
+    # not exist would orphan every label it touched.
+    get_class(db, project_id, to_class_id)
+
+    affected = _annotation_ids_using(db, project_id, from_class_id)
+    if not affected:
+        return 0
+    db.execute(update(Annotation).where(Annotation.id.in_(affected)).values(class_id=to_class_id))
+    db.flush()
+    return len(affected)
+
+
+def _delete_labels(db: Session, project_id: str, class_id: int) -> int:
+    affected = _annotation_ids_using(db, project_id, class_id)
+    if not affected:
+        return 0
+
+    # The tracks these labels reviewed. Reset before the labels go, while
+    # the join from annotation to track still resolves.
+    track_ids = list(
+        db.scalars(
+            select(FrameCandidate.track_id)
+            .join(Annotation, Annotation.frame_candidate_id == FrameCandidate.id)
+            .where(Annotation.id.in_(affected))
+            .distinct()
+        )
+    )
+
+    db.execute(delete(DatasetItem).where(DatasetItem.annotation_id.in_(affected)))
+    db.execute(delete(Annotation).where(Annotation.id.in_(affected)))
+    if track_ids:
+        db.execute(update(Track).where(Track.id.in_(track_ids)).values(review_status="unreviewed"))
+    db.flush()
+    return len(affected)
+
+
+def _annotation_ids_using(db: Session, project_id: str, class_id: int) -> list[str]:
+    """Ids of every annotation in the project that points at this class.
+
+    Materialised as a list rather than left as a subquery so the same
+    set drives the count, the update and the delete - a label written
+    between those steps is not silently caught by one and missed by
+    another.
+    """
+    return list(
+        db.scalars(
+            project_annotations(project_id).where(Annotation.class_id == class_id).with_only_columns(Annotation.id)
+        )
+    )

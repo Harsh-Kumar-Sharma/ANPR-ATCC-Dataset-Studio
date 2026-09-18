@@ -121,7 +121,10 @@ def test_usage_reports_how_many_labels_a_class_holds():
 def test_an_unused_class_can_be_deleted():
     project = _anpr_project("Editor Delete Project")
 
-    assert client.delete(f"/projects/{project['id']}/classes/2").status_code == 204
+    response = client.delete(f"/projects/{project['id']}/classes/2")
+
+    assert response.status_code == 200
+    assert response.json() == {"class_id": 2, "remapped": 0, "deleted_labels": 0}
     assert [c["name"] for c in client.get(f"/projects/{project['id']}/classes").json()] == ["vehicle"]
 
 
@@ -166,3 +169,123 @@ def test_class_edits_do_not_leak_between_projects():
         "vehicle",
         "number_plate",
     ]
+
+
+# --- ticket 07: deleting a class that is in use ----------------------------
+
+
+def _project_with_labelled_track(tmp_path, name: str, class_id: int) -> tuple[dict, dict]:
+    """An ANPR project with one accepted label on ``class_id``."""
+    from tests.job_execution import process_source_sync, tracks_for_run
+    from tests.stub_detector import StubDetector
+    from tests.video_factory import create_synthetic_video
+
+    project = _anpr_project(name)
+    video = create_synthetic_video(tmp_path / f"{name}.mp4", frame_count=30, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+    track = tracks_for_run(client, project["id"], submitted["run_id"])[0]
+    frame_id = client.get(f"/tracks/{track['id']}").json()["frames"][0]["id"]
+    client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": class_id},
+    )
+    return project, track
+
+
+def test_deleting_a_class_in_use_prompts_with_the_actual_count(tmp_path):
+    """The refusal carries the number, so the editor can ask "these N
+    labels use this class - move them where, or delete them?"."""
+    project, _ = _project_with_labelled_track(tmp_path, "Prompt Count Project", class_id=2)
+
+    response = client.delete(f"/projects/{project['id']}/classes/2")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "class_in_use"
+    assert "1 annotation" in response.json()["message"]
+    assert client.get(f"/projects/{project['id']}/classes/2/usage").json()["label_count"] == 1
+
+
+def test_choosing_a_target_class_remaps_every_label(tmp_path):
+    project, track = _project_with_labelled_track(tmp_path, "Remap Project", class_id=2)
+
+    response = client.delete(f"/projects/{project['id']}/classes/2", params={"remap_to": 1})
+
+    assert response.status_code == 200
+    assert response.json() == {"class_id": 2, "remapped": 1, "deleted_labels": 0}
+    assert client.get(f"/tracks/{track['id']}/annotation").json()["class_id"] == 1
+    assert [c["class_id"] for c in client.get(f"/projects/{project['id']}/classes").json()] == [1]
+
+
+def test_choosing_deletion_removes_the_labels_with_the_class(tmp_path):
+    project, track = _project_with_labelled_track(tmp_path, "Delete Labels Project", class_id=2)
+
+    response = client.delete(f"/projects/{project['id']}/classes/2", params={"delete_labels": "true"})
+
+    assert response.status_code == 200
+    assert response.json() == {"class_id": 2, "remapped": 0, "deleted_labels": 1}
+    assert client.get(f"/tracks/{track['id']}/annotation").status_code == 404
+    # The track no longer claims a review it does not have.
+    listed = client.get(f"/projects/{project['id']}/tracks").json()
+    assert next(t for t in listed if t["id"] == track["id"])["review_status"] == "unreviewed"
+
+
+def test_merging_two_classes_uses_the_same_path(tmp_path):
+    project, track = _project_with_labelled_track(tmp_path, "Merge Project", class_id=1)
+
+    # "Merge vehicle into number_plate" is "delete vehicle, remapping to 2".
+    response = client.delete(f"/projects/{project['id']}/classes/1", params={"remap_to": 2})
+
+    assert response.status_code == 200
+    assert client.get(f"/tracks/{track['id']}/annotation").json()["class_id"] == 2
+    assert [c["name"] for c in client.get(f"/projects/{project['id']}/classes").json()] == ["number_plate"]
+
+
+def test_remapping_onto_a_class_that_does_not_exist_is_refused(tmp_path):
+    project, track = _project_with_labelled_track(tmp_path, "Remap Missing Project", class_id=2)
+
+    response = client.delete(f"/projects/{project['id']}/classes/2", params={"remap_to": 99})
+
+    assert response.status_code == 404
+    # Nothing moved, nothing deleted.
+    assert client.get(f"/tracks/{track['id']}/annotation").json()["class_id"] == 2
+    assert any(c["class_id"] == 2 for c in client.get(f"/projects/{project['id']}/classes").json())
+
+
+def test_merging_a_class_into_itself_is_refused(tmp_path):
+    project, _ = _project_with_labelled_track(tmp_path, "Self Merge Project", class_id=2)
+
+    response = client.delete(f"/projects/{project['id']}/classes/2", params={"remap_to": 2})
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_remap"
+
+
+def test_asking_for_both_options_is_refused(tmp_path):
+    project, _ = _project_with_labelled_track(tmp_path, "Both Options Project", class_id=2)
+
+    response = client.delete(
+        f"/projects/{project['id']}/classes/2", params={"remap_to": 1, "delete_labels": "true"}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_remap"
+
+
+def test_a_remapped_label_exports_under_its_new_class(tmp_path):
+    """The end of the seam: a remap is only real if the next export
+    reflects it."""
+    project, _ = _project_with_labelled_track(tmp_path, "Remap Export Project", class_id=2)
+    client.delete(f"/projects/{project['id']}/classes/2", params={"remap_to": 1})
+
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={})
+
+    assert created.status_code == 201, created.text
+    assert created.json()["validation"]["valid"] is True
+    import json
+    from pathlib import Path
+
+    manifest = json.loads(
+        (Path(project["workspace_path"]) / "exports" / "v1" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["items"][0]["objects"][0]["class_name"] == "vehicle"

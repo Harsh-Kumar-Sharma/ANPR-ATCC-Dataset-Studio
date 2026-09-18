@@ -35,3 +35,11 @@ class ClassUsage(BaseModel):
 
     class_id: int
     label_count: int
+
+
+class ClassDeleteOutcome(BaseModel):
+    """What deleting a class did to the labels that were using it."""
+
+    class_id: int
+    remapped: int
+    deleted_labels: int

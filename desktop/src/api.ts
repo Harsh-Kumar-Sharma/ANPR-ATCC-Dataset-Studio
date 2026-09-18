@@ -1,6 +1,8 @@
 import type {
   Annotation,
   ClassDefinition,
+  ClassDeleteOutcome,
+  ClassUsage,
   DatasetExportResult,
   DatasetVersion,
   DisagreementItem,
@@ -65,8 +67,20 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ name }),
     }),
-  deleteClass: (projectId: string, classId: number) =>
-    request<void>(`/projects/${projectId}/classes/${classId}`, { method: "DELETE" }),
+  getClassUsage: (projectId: string, classId: number) =>
+    request<ClassUsage>(`/projects/${projectId}/classes/${classId}/usage`),
+  /** A class in use is refused unless told what happens to its labels:
+   *  `remapTo` moves them onto another class (also how two classes are
+   *  merged), `deleteLabels` removes them with it. */
+  deleteClass: (projectId: string, classId: number, options: { remapTo?: number; deleteLabels?: boolean } = {}) => {
+    const query = new URLSearchParams();
+    if (options.remapTo !== undefined) query.set("remap_to", String(options.remapTo));
+    if (options.deleteLabels) query.set("delete_labels", "true");
+    const suffix = query.toString();
+    return request<ClassDeleteOutcome>(`/projects/${projectId}/classes/${classId}${suffix ? `?${suffix}` : ""}`, {
+      method: "DELETE",
+    });
+  },
 
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>

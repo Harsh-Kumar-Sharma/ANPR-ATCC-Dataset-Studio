@@ -75,29 +75,85 @@ describe("ClassSchemaEditor", () => {
     await waitFor(() => expect(onClassesChanged).toHaveBeenCalled());
   });
 
-  it("shows why a delete was refused, with the server's own count", async () => {
-    vi.spyOn(api, "deleteClass").mockRejectedValue(
-      new ApiError(
-        409,
-        "class_in_use",
-        "47 annotation(s) still use 'number_plate', including any rejected reviews. Move them to another class or delete them first.",
-      ),
-    );
-    render(<ClassSchemaEditor project={project} />);
-
-    (await screen.findByRole("button", { name: /delete number_plate/i })).click();
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/47 annotation/i);
-  });
-
-  it("deletes a class nothing is using", async () => {
-    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue(undefined);
+  it("deletes a class nothing is using without asking", async () => {
+    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 0 });
+    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue({ class_id: 2, remapped: 0, deleted_labels: 0 });
     render(<ClassSchemaEditor project={project} />);
 
     (await screen.findByRole("button", { name: /delete number_plate/i })).click();
 
     await waitFor(() => expect(deleted).toHaveBeenCalledWith("p-1", 2));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("asks where the labels go when a class is in use, with the real count", async () => {
+    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 47 });
+    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue({ class_id: 2, remapped: 47, deleted_labels: 0 });
+    render(<ClassSchemaEditor project={project} />);
+
+    (await screen.findByRole("button", { name: /delete number_plate/i })).click();
+
+    const dialog = await screen.findByRole("dialog", { name: /delete number_plate/i });
+    expect(dialog).toHaveTextContent(/47 label/);
+    expect(dialog).toHaveTextContent(/move them where, or delete them/i);
+    expect(deleted).not.toHaveBeenCalled();
+  });
+
+  it("remaps the labels onto the chosen class", async () => {
+    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 47 });
+    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue({ class_id: 2, remapped: 47, deleted_labels: 0 });
+    render(<ClassSchemaEditor project={project} />);
+
+    (await screen.findByRole("button", { name: /delete number_plate/i })).click();
+    await screen.findByRole("dialog");
+
+    // Only the other class is offered as a destination.
+    const select = screen.getByLabelText(/move to/i) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["vehicle"]);
+
+    screen.getByRole("button", { name: /^move$/i }).click();
+
+    await waitFor(() => expect(deleted).toHaveBeenCalledWith("p-1", 2, { remapTo: 1 }));
+  });
+
+  it("deletes the labels with the class when told to", async () => {
+    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 47 });
+    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue({ class_id: 2, remapped: 0, deleted_labels: 47 });
+    render(<ClassSchemaEditor project={project} />);
+
+    (await screen.findByRole("button", { name: /delete number_plate/i })).click();
+    await screen.findByRole("dialog");
+
+    screen.getByRole("button", { name: /delete the labels too/i }).click();
+
+    await waitFor(() => expect(deleted).toHaveBeenCalledWith("p-1", 2, { deleteLabels: true }));
+  });
+
+  it("lets the user back out and keep the class", async () => {
+    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 47 });
+    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue({ class_id: 2, remapped: 0, deleted_labels: 0 });
+    render(<ClassSchemaEditor project={project} />);
+
+    (await screen.findByRole("button", { name: /delete number_plate/i })).click();
+    await screen.findByRole("dialog");
+
+    screen.getByRole("button", { name: /keep the class/i }).click();
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(deleted).not.toHaveBeenCalled();
+  });
+
+  it("offers only deletion when there is no other class to move to", async () => {
+    vi.spyOn(api, "listClasses").mockResolvedValue([cls(1, "only")]);
+    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 1, label_count: 3 });
+    render(<ClassSchemaEditor project={project} />);
+
+    (await screen.findByRole("button", { name: /delete only/i })).click();
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/no other class/i);
+    expect(screen.queryByRole("button", { name: /^move$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /delete the labels too/i })).toBeInTheDocument();
   });
 
   it("says so plainly when a project has no classes yet", async () => {

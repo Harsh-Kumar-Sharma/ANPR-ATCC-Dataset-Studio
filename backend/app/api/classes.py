@@ -6,7 +6,7 @@ review UI already speaks. This router is the editor's view: full rows,
 and the writes.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
@@ -14,6 +14,7 @@ from app.db.models.class_definition import ClassDefinition
 from app.db.session import get_db
 from app.schemas.class_definition import (
     ClassDefinitionCreate,
+    ClassDeleteOutcome,
     ClassDefinitionRead,
     ClassDefinitionRename,
     ClassUsage,
@@ -64,14 +65,23 @@ def get_class_usage(project_id: str, class_id: int, db: Session = Depends(get_db
     return ClassUsage(class_id=class_id, label_count=class_definitions.count_labels_using(db, project_id, class_id))
 
 
-@router.delete("/{class_id}", status_code=204)
-def delete_class(project_id: str, class_id: int, db: Session = Depends(get_db)) -> None:
-    """Delete a class nothing is using.
+@router.delete("/{class_id}", response_model=ClassDeleteOutcome)
+def delete_class(
+    project_id: str,
+    class_id: int,
+    remap_to: int | None = Query(None, description="Move this class's labels onto another class before deleting."),
+    delete_labels: bool = Query(False, description="Delete this class's labels along with it."),
+    db: Session = Depends(get_db),
+) -> ClassDeleteOutcome:
+    """Delete a class, settling any labels that were using it.
 
-    Refuses with ``class_in_use`` while labels still point at it. Moving
-    or deleting those labels is a decision only the user can make, and
-    that conversation is ticket 07.
+    A class in use is refused with ``class_in_use`` unless the caller
+    says what happens to its labels: ``remap_to`` moves them onto
+    another class (which is also how two classes are merged), or
+    ``delete_labels`` removes them with it. Either way, no label is
+    left pointing at a class that no longer exists.
     """
     get_project_or_404(db, project_id)
-    class_definitions.delete_class(db, project_id, class_id)
+    outcome = class_definitions.delete_class(db, project_id, class_id, remap_to=remap_to, delete_labels=delete_labels)
     db.commit()
+    return ClassDeleteOutcome(class_id=class_id, remapped=outcome.remapped, deleted_labels=outcome.deleted_labels)
