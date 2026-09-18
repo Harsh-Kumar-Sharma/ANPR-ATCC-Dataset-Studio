@@ -19,7 +19,9 @@ def _project(name: str) -> Project:
         return project
 
 
-def _label_with(project: Project, class_id: int, status: str = "accepted") -> str:
+def _label_with(
+    project: Project, class_id: int, status: str = "accepted", annotation_source: str = "human"
+) -> str:
     """Put one human annotation on this project using ``class_id``."""
     with SessionLocal() as db:
         source = Source(
@@ -58,7 +60,7 @@ def _label_with(project: Project, class_id: int, status: str = "accepted") -> st
         annotation = Annotation(
             frame_id=frame.id,
             frame_candidate_id=candidate.id,
-            source="human",
+            source=annotation_source,
             class_id=class_id,
             bbox_json=[0, 0, 10, 10],
             status=status,
@@ -468,3 +470,63 @@ def test_remapping_is_scoped_to_the_project():
     with SessionLocal() as db:
         assert db.get(Annotation, theirs).class_id == 2
         assert class_definitions.is_valid_class_id(db, second.id, 2) is True
+
+
+def test_a_rejected_label_is_remapped_like_any_other():
+    """It still carries the class id, so leaving it behind would orphan it."""
+    project = _project("Remap Rejected")
+    rejected = _label_with(project, class_id=2, status="failed")
+
+    with SessionLocal() as db:
+        outcome = class_definitions.delete_class(db, project.id, 2, remap_to=1)
+        db.commit()
+
+    assert outcome.remapped == 1
+    with SessionLocal() as db:
+        assert db.get(Annotation, rejected).class_id == 1
+
+
+def test_deleting_a_rejected_label_resets_its_track_too():
+    project = _project("Delete Rejected")
+    rejected = _label_with(project, class_id=2, status="failed")
+    track_id = _track_of(rejected).id
+    with SessionLocal() as db:
+        db.get(Track, track_id).review_status = "failed"
+        db.commit()
+
+    with SessionLocal() as db:
+        class_definitions.delete_class(db, project.id, 2, delete_labels=True)
+        db.commit()
+
+    with SessionLocal() as db:
+        assert db.get(Track, track_id).review_status == "unreviewed"
+
+
+def test_deleting_a_model_prediction_does_not_touch_the_tracks_review():
+    """A prediction is not a review. Removing one says nothing about
+    whether a human looked at the track - the line review.py draws."""
+    project = _project("Delete Prediction")
+    prediction = _label_with(project, class_id=2, status="pending", annotation_source="model")
+    track_id = _track_of(prediction).id
+    with SessionLocal() as db:
+        db.get(Track, track_id).review_status = "accepted"
+        db.commit()
+
+    with SessionLocal() as db:
+        class_definitions.delete_class(db, project.id, 2, delete_labels=True)
+        db.commit()
+
+    with SessionLocal() as db:
+        assert db.get(Track, track_id).review_status == "accepted"
+
+
+def test_the_remap_target_is_checked_even_when_nothing_is_in_use():
+    """A target that does not exist is a wrong request, not one that
+    happens to be harmless because the class was empty."""
+    project = _project("Remap Target Unused")
+
+    with SessionLocal() as db:
+        with pytest.raises(NotFoundError):
+            class_definitions.delete_class(db, project.id, 2, remap_to=99)
+        with pytest.raises(InvalidRemapError):
+            class_definitions.delete_class(db, project.id, 2, remap_to=2)

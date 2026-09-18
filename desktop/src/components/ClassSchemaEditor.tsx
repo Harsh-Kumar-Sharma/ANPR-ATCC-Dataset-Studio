@@ -21,6 +21,9 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
   // holds, and where the user has chosen to send them.
   const [pendingDelete, setPendingDelete] = useState<{ cls: ClassDefinition; labelCount: number } | null>(null);
   const [remapTarget, setRemapTarget] = useState<number | null>(null);
+  // What the last delete did, so the user sees the outcome rather than
+  // just the class vanishing.
+  const [notice, setNotice] = useState<string | null>(null);
 
   /** Surface the backend's own message. A name clash, or deleting a
    *  class that is still in use, are ordinary things to do by accident,
@@ -105,7 +108,13 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
     if (!pendingDelete) return;
     setBusy(true);
     try {
-      await api.deleteClass(project.id, pendingDelete.cls.class_id, options);
+      const outcome = await api.deleteClass(project.id, pendingDelete.cls.class_id, options);
+      const targetName = classes.find((c) => c.class_id === options.remapTo)?.name;
+      setNotice(
+        outcome.remapped > 0
+          ? `Moved ${outcome.remapped} label(s) from "${pendingDelete.cls.name}" to "${targetName ?? "another class"}".`
+          : `Deleted "${pendingDelete.cls.name}" and its ${outcome.deleted_labels} label(s).`,
+      );
       setPendingDelete(null);
       setError(null);
       await refresh();
@@ -129,17 +138,31 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
         </p>
       )}
 
+      {notice && (
+        <p className="class-editor__notice" role="status">
+          {notice}
+        </p>
+      )}
+
       {pendingDelete && (
-        <div className="class-editor__prompt" role="dialog" aria-label={`Delete ${pendingDelete.cls.name}`}>
+        <div
+          className="class-editor__prompt"
+          role="dialog"
+          aria-label={`Delete ${pendingDelete.cls.name}`}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setPendingDelete(null);
+          }}
+        >
           <p>
-            {pendingDelete.labelCount} label(s) use <strong>{pendingDelete.cls.name}</strong>. Move them where, or
-            delete them?
+            {pendingDelete.labelCount} annotation(s) use <strong>{pendingDelete.cls.name}</strong>, including any
+            rejected reviews. Move them where, or delete them?
           </p>
           {remapChoices.length > 0 ? (
             <div className="class-editor__prompt-row">
               <label htmlFor="remap-target">Move to</label>
               <select
                 id="remap-target"
+                autoFocus
                 value={remapTarget ?? ""}
                 onChange={(e) => setRemapTarget(Number(e.target.value))}
               >
@@ -160,7 +183,12 @@ function ClassSchemaEditor({ project, onClassesChanged }: Props) {
             <p className="class-editor__prompt-note">There is no other class to move them to.</p>
           )}
           <div className="class-editor__prompt-row">
-            <button className="class-editor__danger" disabled={busy} onClick={() => settleDelete({ deleteLabels: true })}>
+            <button
+              className="class-editor__danger"
+              autoFocus={remapChoices.length === 0}
+              disabled={busy}
+              onClick={() => settleDelete({ deleteLabels: true })}
+            >
               Delete the labels too
             </button>
             <button disabled={busy} onClick={() => setPendingDelete(null)}>

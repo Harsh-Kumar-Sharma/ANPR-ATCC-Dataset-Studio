@@ -1625,7 +1625,8 @@ label.toggle {
 }
 
 .class-editor__row button,
-.class-editor__add button {
+.class-editor__add button,
+.class-editor__prompt-row button {
   padding: 2px 8px;
   font-size: 12px;
   background: var(--bg-surface);
@@ -1636,7 +1637,8 @@ label.toggle {
 }
 
 .class-editor__row button:hover,
-.class-editor__add button:hover {
+.class-editor__add button:hover,
+.class-editor__prompt-row button:hover {
   background: var(--bg-hover);
 }
 
@@ -1679,21 +1681,23 @@ label.toggle {
   min-width: 0;
 }
 
-.class-editor__prompt-row button {
-  padding: 2px 8px;
-  font-size: 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
+/* Same specificity as the shared button rule above, so this wins by
+   source order rather than by !important. */
+.class-editor__prompt-row .class-editor__danger {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+.class-editor__prompt-row .class-editor__danger:hover {
+  background: var(--danger-bg);
+}
+
+.class-editor__notice {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--success);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.class-editor__danger {
-  color: var(--danger) !important;
-  border-color: var(--danger-border) !important;
-}
-
-.class-editor__danger:hover {
-  background: var(--danger-bg) !important;
+  padding: 6px 8px;
 }

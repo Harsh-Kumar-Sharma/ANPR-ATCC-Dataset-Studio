@@ -94,7 +94,8 @@ describe("ClassSchemaEditor", () => {
     (await screen.findByRole("button", { name: /delete number_plate/i })).click();
 
     const dialog = await screen.findByRole("dialog", { name: /delete number_plate/i });
-    expect(dialog).toHaveTextContent(/47 label/);
+    expect(dialog).toHaveTextContent(/47 annotation/);
+    expect(dialog).toHaveTextContent(/including any rejected reviews/i);
     expect(dialog).toHaveTextContent(/move them where, or delete them/i);
     expect(deleted).not.toHaveBeenCalled();
   });
@@ -114,6 +115,21 @@ describe("ClassSchemaEditor", () => {
     screen.getByRole("button", { name: /^move$/i }).click();
 
     await waitFor(() => expect(deleted).toHaveBeenCalledWith("p-1", 2, { remapTo: 1 }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/moved 47 label\(s\) from "number_plate" to "vehicle"/i);
+  });
+
+  it("closes the prompt on Escape and keeps the class", async () => {
+    vi.spyOn(api, "getClassUsage").mockResolvedValue({ class_id: 2, label_count: 47 });
+    const deleted = vi.spyOn(api, "deleteClass").mockResolvedValue({ class_id: 2, remapped: 0, deleted_labels: 0 });
+    render(<ClassSchemaEditor project={project} />);
+
+    (await screen.findByRole("button", { name: /delete number_plate/i })).click();
+    const dialog = await screen.findByRole("dialog");
+
+    dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(deleted).not.toHaveBeenCalled();
   });
 
   it("deletes the labels with the class when told to", async () => {

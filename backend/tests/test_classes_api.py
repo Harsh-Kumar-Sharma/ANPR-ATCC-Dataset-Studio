@@ -289,3 +289,23 @@ def test_a_remapped_label_exports_under_its_new_class(tmp_path):
         (Path(project["workspace_path"]) / "exports" / "v1" / "manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["items"][0]["objects"][0]["class_name"] == "vehicle"
+
+
+def test_the_export_on_disk_survives_deleting_its_labels(tmp_path):
+    """The dataset item rows go, because nothing enforces the foreign key
+    and they would dangle. The manifest and files on disk are the
+    durable record of what the version contained, and stay."""
+    import json
+    from pathlib import Path
+
+    project, _ = _project_with_labelled_track(tmp_path, "Export Survives Project", class_id=2)
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
+    export_dir = Path(project["workspace_path"]) / "exports" / "v1"
+    manifest_before = (export_dir / "manifest.json").read_text(encoding="utf-8")
+
+    client.delete(f"/projects/{project['id']}/classes/2", params={"delete_labels": "true"})
+
+    assert (export_dir / "manifest.json").read_text(encoding="utf-8") == manifest_before
+    assert client.get(f"/dataset-versions/{created['dataset_version']['id']}").status_code == 200
+    for item in json.loads(manifest_before)["items"]:
+        assert (export_dir / item["image_path"]).is_file()

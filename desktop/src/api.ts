@@ -37,6 +37,17 @@ export class ApiError extends Error {
   }
 }
 
+/** Build a query string, dropping unset values. Returns "" or "?a=b&c=d". */
+function query(params: Record<string, string | number | boolean | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === false || value === "") continue;
+    search.set(key, String(value));
+  }
+  const suffix = search.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -72,15 +83,11 @@ export const api = {
   /** A class in use is refused unless told what happens to its labels:
    *  `remapTo` moves them onto another class (also how two classes are
    *  merged), `deleteLabels` removes them with it. */
-  deleteClass: (projectId: string, classId: number, options: { remapTo?: number; deleteLabels?: boolean } = {}) => {
-    const query = new URLSearchParams();
-    if (options.remapTo !== undefined) query.set("remap_to", String(options.remapTo));
-    if (options.deleteLabels) query.set("delete_labels", "true");
-    const suffix = query.toString();
-    return request<ClassDeleteOutcome>(`/projects/${projectId}/classes/${classId}${suffix ? `?${suffix}` : ""}`, {
-      method: "DELETE",
-    });
-  },
+  deleteClass: (projectId: string, classId: number, options: { remapTo?: number; deleteLabels?: boolean } = {}) =>
+    request<ClassDeleteOutcome>(
+      `/projects/${projectId}/classes/${classId}${query({ remap_to: options.remapTo, delete_labels: options.deleteLabels })}`,
+      { method: "DELETE" },
+    ),
 
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>
@@ -95,14 +102,8 @@ export const api = {
     }),
   getProcessingRun: (runId: string) => request<ProcessingRun>(`/processing-runs/${runId}`),
 
-  listJobs: (params: { projectId?: string; status?: string; type?: string } = {}) => {
-    const query = new URLSearchParams();
-    if (params.projectId) query.set("project_id", params.projectId);
-    if (params.status) query.set("status", params.status);
-    if (params.type) query.set("type", params.type);
-    const suffix = query.toString();
-    return request<Job[]>(`/jobs${suffix ? `?${suffix}` : ""}`);
-  },
+  listJobs: (params: { projectId?: string; status?: string; type?: string } = {}) =>
+    request<Job[]>(`/jobs${query({ project_id: params.projectId, status: params.status, type: params.type })}`),
   getJob: (jobId: string) => request<Job>(`/jobs/${jobId}`),
   /** Idempotent: cancelling an already-finished job returns it
    *  unchanged rather than failing. */

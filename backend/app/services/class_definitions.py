@@ -1,22 +1,25 @@
-"""Reading and seeding a project's own class list.
+"""A project's own class list: reading it, seeding it, editing it.
 
 Every consumer that used to call ``get_class_schema(version)`` against a
 hardcoded module now comes through here, so there is exactly one answer
 to "what can this project label with", and it is the project's own rows.
+
+Editing is here too - add, rename, delete - because the rules that make
+those safe (names unique per project, a class never removed while
+labels point at it) are rules about the class list. What happens to
+the labels themselves when they go lives in ``annotations``.
 """
 
 from dataclasses import dataclass
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError, NotFoundError
 from app.core.presets import get_preset
 from app.db.models.annotation import Annotation
 from app.db.models.class_definition import ClassDefinition
-from app.db.models.dataset_item import DatasetItem
-from app.db.models.frame_candidate import FrameCandidate
-from app.db.models.track import Track
+from app.services.annotations import chunked, delete_annotations
 from app.services.dataset_query import project_annotations
 
 
@@ -44,8 +47,8 @@ class InvalidRemapError(AppError):
 
 
 class ClassInUseError(ConflictError):
-    """Deleting a class that labels still point at needs the remap
-    conversation in ticket 07."""
+    """Deleting a class that labels still point at needs the caller to
+    say where those labels go - see ``delete_class``."""
 
     code = "class_in_use"
 
@@ -186,9 +189,10 @@ def create_class(db: Session, project_id: str, name: str) -> ClassDefinition:
     """Add a class to the end of the project's list.
 
     The new class_id is one past the highest currently in the project.
-    That can reuse the id of a deleted class, which is safe precisely
-    because deletion is refused while anything still points at one - by
-    the time an id is free, nothing means it.
+    That can reuse the id of a deleted class, which is safe because a
+    class is only ever removed once nothing points at it - its labels
+    were moved elsewhere or deleted with it - so by the time an id is
+    free, nothing means it.
     """
     name = _normalize(name)
     if _find_by_name(db, project_id, name) is not None:
@@ -240,8 +244,7 @@ def count_labels_using(db: Session, project_id: str, class_id: int) -> int:
     undeletable here. This is the number ticket 07's "these 47 labels use
     this class" prompt is built from.
     """
-    annotations = project_annotations(project_id).where(Annotation.class_id == class_id).subquery()
-    return db.scalar(select(func.count()).select_from(annotations)) or 0
+    return len(_annotation_ids_using(db, project_id, class_id))
 
 
 @dataclass(frozen=True)
@@ -269,12 +272,8 @@ def delete_class(
     ``remap_to`` moves every label onto another class. "Merge B into A"
     is this same call - there is deliberately no second path for it.
 
-    ``delete_labels`` removes the labels along with the class. Their
-    tracks stop claiming a review that no longer exists, and any dataset
-    item indexing them goes too: SQLite is not enforcing foreign keys
-    here, so it would otherwise sit there silently pointing at nothing.
-    The export on disk is the durable record of what a version
-    contained; the item row is only an index into it.
+    ``delete_labels`` removes the labels along with the class, and with
+    them whatever depended on them (see ``annotations.delete_annotations``).
 
     With neither, a class in use is refused. Leaving labels pointing at a
     class that is gone is the easiest way to silently poison a dataset,
@@ -286,71 +285,52 @@ def delete_class(
 
     target = get_class(db, project_id, class_id)
 
-    in_use = count_labels_using(db, project_id, class_id)
-    if in_use and remap_to is None and not delete_labels:
+    # Checked whether or not anything is in use: a target that does not
+    # exist, or is the class itself, is a wrong request, not one that
+    # merely happens to be harmless today.
+    if remap_to is not None:
+        if remap_to == class_id:
+            raise InvalidRemapError("A class cannot be merged into itself.")
+        get_class(db, project_id, remap_to)
+
+    # One materialised set drives the gate, the remap and the delete, so
+    # a label written between those steps is not caught by one and
+    # missed by another.
+    affected = _annotation_ids_using(db, project_id, class_id)
+    if affected and remap_to is None and not delete_labels:
         raise ClassInUseError(
-            f"{in_use} annotation(s) still use {target.name!r}, including any rejected reviews. "
+            f"{len(affected)} annotation(s) still use {target.name!r}, including any rejected reviews. "
             "Move them to another class or delete them first."
         )
 
-    remapped = 0
-    deleted = 0
-    if in_use and remap_to is not None:
-        remapped = _remap_labels(db, project_id, class_id, remap_to)
-    elif in_use and delete_labels:
-        deleted = _delete_labels(db, project_id, class_id)
+    remapped = deleted = 0
+    if affected and remap_to is not None:
+        remapped = _remap_labels(db, affected, remap_to)
+    elif affected and delete_labels:
+        deleted = delete_annotations(db, affected)
 
     db.delete(target)
     db.flush()
     return DeleteOutcome(remapped=remapped, deleted_labels=deleted)
 
 
-def _remap_labels(db: Session, project_id: str, from_class_id: int, to_class_id: int) -> int:
-    if from_class_id == to_class_id:
-        raise InvalidRemapError("A class cannot be merged into itself.")
-    # Validated before anything moves: remapping onto a class that does
-    # not exist would orphan every label it touched.
-    get_class(db, project_id, to_class_id)
+def _remap_labels(db: Session, annotation_ids: list[str], to_class_id: int) -> int:
+    """Point every listed annotation at ``to_class_id``.
 
-    affected = _annotation_ids_using(db, project_id, from_class_id)
-    if not affected:
-        return 0
-    db.execute(update(Annotation).where(Annotation.id.in_(affected)).values(class_id=to_class_id))
+    Chunked because ``IN (...)`` spends one bound parameter per id and
+    SQLite caps a statement at 32 766 - plausible for a busy class.
+    """
+    for chunk in chunked(annotation_ids):
+        db.execute(update(Annotation).where(Annotation.id.in_(chunk)).values(class_id=to_class_id))
     db.flush()
-    return len(affected)
-
-
-def _delete_labels(db: Session, project_id: str, class_id: int) -> int:
-    affected = _annotation_ids_using(db, project_id, class_id)
-    if not affected:
-        return 0
-
-    # The tracks these labels reviewed. Reset before the labels go, while
-    # the join from annotation to track still resolves.
-    track_ids = list(
-        db.scalars(
-            select(FrameCandidate.track_id)
-            .join(Annotation, Annotation.frame_candidate_id == FrameCandidate.id)
-            .where(Annotation.id.in_(affected))
-            .distinct()
-        )
-    )
-
-    db.execute(delete(DatasetItem).where(DatasetItem.annotation_id.in_(affected)))
-    db.execute(delete(Annotation).where(Annotation.id.in_(affected)))
-    if track_ids:
-        db.execute(update(Track).where(Track.id.in_(track_ids)).values(review_status="unreviewed"))
-    db.flush()
-    return len(affected)
+    return len(annotation_ids)
 
 
 def _annotation_ids_using(db: Session, project_id: str, class_id: int) -> list[str]:
     """Ids of every annotation in the project that points at this class.
 
-    Materialised as a list rather than left as a subquery so the same
-    set drives the count, the update and the delete - a label written
-    between those steps is not silently caught by one and missed by
-    another.
+    Materialised as a list rather than left as a subquery so one set can
+    drive the count, the update and the delete together.
     """
     return list(
         db.scalars(
