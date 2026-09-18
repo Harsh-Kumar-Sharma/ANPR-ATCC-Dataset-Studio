@@ -13,6 +13,7 @@ import type {
   RtspSessionStatus,
   RtspStartResult,
   Source,
+  SourceDetections,
   Track,
   TrackReviewResult,
   TrackTimeline,
@@ -57,6 +58,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ sampling_config: { target_fps: targetFps } }),
     }),
+  sourceVideoUrl: (projectId: string, sourceId: string) => `${API_BASE}/projects/${projectId}/sources/${sourceId}/video`,
+  getSourceDetections: (projectId: string, sourceId: string, runId?: string) =>
+    request<SourceDetections>(
+      `/projects/${projectId}/sources/${sourceId}/detections${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`,
+    ),
 
   listTracks: (projectId: string) => request<Track[]>(`/projects/${projectId}/tracks`),
   getTrackTimeline: (trackId: string) => request<TrackTimeline>(`/tracks/${trackId}`),
@@ -116,4 +122,5 @@ export const api = {
   getRtspStatus: (runId: string) => request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/status`),
   stopRtspSession: (runId: string) =>
     request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/stop`, { method: "POST" }),
+  rtspPreviewUrl: (runId: string) => `${API_BASE}/processing-runs/${runId}/rtsp/preview.jpg`,
 };

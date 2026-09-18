@@ -150,3 +150,57 @@ def test_start_for_unknown_project_returns_404():
         json={"rtsp_url": "rtsp://camera.example/stream"},
     )
     assert response.status_code == 404
+
+
+def test_live_preview_serves_the_latest_processed_frame_and_keeps_advancing(tmp_path):
+    import cv2
+
+    project = _create_project("RTSP Preview Project")
+    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
+    app.dependency_overrides[get_rtsp_connection_provider] = lambda: (lambda url: _InstantFrameConnection(url))
+    try:
+        started = client.post(
+            f"/projects/{project['id']}/sources/rtsp/start",
+            json={"rtsp_url": "rtsp://camera.example/preview", "expected_fps": 10.0},
+        ).json()
+        run_id = started["run"]["id"]
+        url = f"/processing-runs/{run_id}/rtsp/preview.jpg"
+
+        first = None
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            first = client.get(url)
+            if first.status_code == 200:
+                break
+            assert first.status_code == 204, "before the first frame the preview should be 'no content', not an error"
+            time.sleep(0.05)
+
+        assert first is not None and first.status_code == 200
+        assert first.headers["content-type"] == "image/jpeg"
+        assert first.headers["cache-control"] == "no-store"
+        image = cv2.imdecode(np.frombuffer(first.content, dtype=np.uint8), cv2.IMREAD_COLOR)
+        assert image.shape == (48, 64, 3)
+        first_sequence = int(first.headers["x-frame-sequence"])
+
+        later_sequence = first_sequence
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and later_sequence <= first_sequence:
+            later = client.get(url)
+            later_sequence = int(later.headers.get("x-frame-sequence", first_sequence))
+            time.sleep(0.05)
+        assert later_sequence > first_sequence, "the preview stopped advancing while the stream was still live"
+
+        client.post(f"/processing-runs/{run_id}/rtsp/stop")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if client.get(f"/processing-runs/{run_id}/rtsp/status").json()["stopped"]:
+                break
+            time.sleep(0.05)
+    finally:
+        app.dependency_overrides.pop(get_default_detector, None)
+        app.dependency_overrides.pop(get_rtsp_connection_provider, None)
+
+
+def test_preview_for_unknown_run_returns_404():
+    response = client.get("/processing-runs/does-not-exist/rtsp/preview.jpg")
+    assert response.status_code == 404

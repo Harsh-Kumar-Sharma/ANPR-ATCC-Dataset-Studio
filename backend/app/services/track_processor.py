@@ -53,7 +53,7 @@ def observe_frame(
     timestamp_ms: int,
     detector: Detector,
     tracker: Tracker,
-) -> None:
+) -> list[tuple[int, _Observation]]:
     """Run detect -> track on one frame and accumulate its
     observations by track id, in place.
 
@@ -63,30 +63,36 @@ def observe_frame(
     Phase 9: "same downstream track/review contracts". Nothing here
     knows or cares whether ``image`` came from a decoded file frame or
     a live capture read.
+
+    Also returns this frame's own ``(track_id, observation)`` pairs, so a
+    live caller can draw exactly what was tracked on this frame without
+    searching the accumulated history.
     """
     frame_height, frame_width = image.shape[:2]
     detections = detector.detect(image)
+    tracked_on_frame: list[tuple[int, _Observation]] = []
     for tracked in tracker.update(detections, timestamp_ms=timestamp_ms):
         crop = _crop(image, tracked.bbox_xyxy)
         if crop is None:
             continue
         sharpness = compute_sharpness(crop)
-        observations_by_track.setdefault(tracked.track_id, []).append(
-            _Observation(
-                frame_index=frame_index,
-                timestamp_ms=timestamp_ms,
-                bbox=tracked.bbox_xyxy,
-                class_id=tracked.class_id,
-                confidence=tracked.confidence,
-                crop=crop,
-                sharpness_score=sharpness,
-                blur_score=sharpness_to_blur_score(sharpness),
-                area_ratio=compute_area_ratio(tracked.bbox_xyxy, frame_width, frame_height),
-                truncated=is_truncated(tracked.bbox_xyxy, frame_width, frame_height),
-                frame_width=frame_width,
-                frame_height=frame_height,
-            )
+        observation = _Observation(
+            frame_index=frame_index,
+            timestamp_ms=timestamp_ms,
+            bbox=tracked.bbox_xyxy,
+            class_id=tracked.class_id,
+            confidence=tracked.confidence,
+            crop=crop,
+            sharpness_score=sharpness,
+            blur_score=sharpness_to_blur_score(sharpness),
+            area_ratio=compute_area_ratio(tracked.bbox_xyxy, frame_width, frame_height),
+            truncated=is_truncated(tracked.bbox_xyxy, frame_width, frame_height),
+            frame_width=frame_width,
+            frame_height=frame_height,
         )
+        observations_by_track.setdefault(tracked.track_id, []).append(observation)
+        tracked_on_frame.append((tracked.track_id, observation))
+    return tracked_on_frame
 
 
 def persist_observations(

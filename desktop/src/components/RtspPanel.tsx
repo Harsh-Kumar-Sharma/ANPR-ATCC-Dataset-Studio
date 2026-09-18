@@ -6,9 +6,10 @@ import type { Project, RtspSessionStatus } from "../types";
 interface Props {
   project: Project;
   onSessionEnded: () => void;
+  onShowPreview: (runId: string) => void;
 }
 
-function RtspPanel({ project, onSessionEnded }: Props) {
+function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
   const [url, setUrl] = useState("");
   const [expectedFps, setExpectedFps] = useState(10);
   const [runId, setRunId] = useState<string | null>(null);
@@ -31,6 +32,7 @@ function RtspPanel({ project, onSessionEnded }: Props) {
     try {
       const result = await api.startRtspSession(project.id, url.trim(), expectedFps);
       setRunId(result.run.id);
+      onShowPreview(result.run.id);
       pollRef.current = setInterval(async () => {
         try {
           const s = await api.getRtspStatus(result.run.id);
@@ -125,6 +127,11 @@ function RtspPanel({ project, onSessionEnded }: Props) {
             <span>Tracks persisted</span>
             <strong>{status.tracks_persisted}</strong>
           </div>
+          {runId && (
+            <button className="btn-block" onClick={() => onShowPreview(runId)}>
+              <IconBroadcast /> Show live preview
+            </button>
+          )}
           {isActive && (
             <button className="btn-danger-ghost btn-block" onClick={handleStop}>
               Stop

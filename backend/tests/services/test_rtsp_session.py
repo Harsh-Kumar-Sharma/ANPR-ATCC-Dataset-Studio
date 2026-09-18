@@ -1,5 +1,6 @@
 import time
 
+import cv2
 import numpy as np
 
 #: Real frame arrival is inherently rate-limited by network/decode; an
@@ -34,6 +35,18 @@ class _StaticBoxDetector:
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         return [Detection(bbox_xyxy=(10, 10, 60, 40), class_id=0, confidence=0.9)]
+
+
+class _SlowStaticBoxDetector(_StaticBoxDetector):
+    """Slower than the camera, like a CPU detector on real footage: the
+    buffer backs up and every drained batch spans many frames."""
+
+    def __init__(self, seconds_per_frame: float) -> None:
+        self._seconds_per_frame = seconds_per_frame
+
+    def detect(self, frame: np.ndarray) -> list[Detection]:
+        time.sleep(self._seconds_per_frame)
+        return super().detect(frame)
 
 
 class InfiniteFrameConnection:
@@ -118,6 +131,8 @@ def test_session_captures_and_persists_tracks_until_stopped(tmp_path):
         db.refresh(run)
         assert run.status == "completed"
         assert run.sampled_frame_count == status.frames_captured
+        # Finalizing a live run must record when it ended, like an offline run does.
+        assert run.completed_at is not None
 
         tracks = db.query(Track).filter(Track.run_id == run.id).all()
         assert len(tracks) >= 1
@@ -207,6 +222,51 @@ def test_session_reports_error_when_it_cannot_connect_at_all(tmp_path):
         assert run.status == "failed"
         assert run.error_message == status.error
     finally:
+        db.close()
+
+
+def test_live_preview_keeps_updating_while_a_backed_up_batch_is_processed(tmp_path):
+    """Regression: the preview used to be published once per drained batch.
+    With a detector slower than the camera the buffer fills, each batch
+    spans many frames, and the preview froze for the whole batch - on real
+    1080p footage, one new preview frame in 8 seconds."""
+    db, project, source, run, workspace_path = _setup(tmp_path, "RTSP Preview Backlog Test")
+    adapter = RtspSourceAdapter(connection_factory=lambda: InfiniteFrameConnection())
+    session = RtspCaptureSession(
+        run_id=run.id,
+        adapter=adapter,
+        # 0.15s per frame: far slower than the 0.005s fake camera, and just
+        # above the preview's 0.12s throttle so each processed frame counts.
+        detector=_SlowStaticBoxDetector(seconds_per_frame=0.15),
+        tracker=ByteTrackTracker(frame_rate=10.0),
+        workspace_path=workspace_path,
+        # Small enough that shutdown (which finishes the buffered backlog)
+        # stays a few seconds, big enough that one batch outlasts the window.
+        buffer_maxlen=30,
+        persist_interval_seconds=1000,
+    )
+    try:
+        session.start()
+
+        deadline = time.monotonic() + 5
+        while session.preview() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        first = session.preview()
+        assert first is not None, "no preview frame was ever published"
+
+        # The fake camera fills the 30-frame buffer within a fraction of a
+        # second, so processing is now inside a multi-second batch. Publishing
+        # only between batches would leave the sequence frozen for this window.
+        time.sleep(1.5)
+        later = session.preview()
+        advanced = later.sequence - first.sequence
+        assert advanced >= 3, f"preview advanced only {advanced} time(s) in 1.5s while frames were being processed"
+
+        image = cv2.imdecode(np.frombuffer(later.jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        assert image.shape == (48, 64, 3)
+    finally:
+        session.stop()
+        session.join(timeout=15)
         db.close()
 
 

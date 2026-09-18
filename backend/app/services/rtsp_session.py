@@ -2,15 +2,19 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
+
+import numpy as np
 
 from app.db.models.processing_run import ProcessingRun
 from app.db.session import SessionLocal
 from app.ml.detector import Detector
 from app.ml.tracker import Tracker
+from app.services.live_preview import LivePreview, PreviewBox, PreviewFrame
 from app.services.rolling_buffer import RollingFrameBuffer
 from app.services.rtsp_source import RtspSourceAdapter
-from app.services.track_processor import ObservationsByTrack, observe_frame, persist_observations
+from app.services.track_processor import ObservationsByTrack, _Observation, observe_frame, persist_observations
 
 
 @dataclass
@@ -63,6 +67,7 @@ class RtspCaptureSession:
         self._poll_interval_seconds = poll_interval_seconds
 
         self._observations_by_track: ObservationsByTrack = {}
+        self._preview = LivePreview()
         self._lock = threading.Lock()
         self._status = RtspSessionStatus(run_id=run_id)
         self._stop_event = threading.Event()
@@ -88,6 +93,11 @@ class RtspCaptureSession:
     def status(self) -> RtspSessionStatus:
         with self._lock:
             return replace(self._status)
+
+    def preview(self) -> PreviewFrame | None:
+        """The latest processed frame with its tracked boxes drawn on, or
+        None before the first frame has been processed."""
+        return self._preview.latest()
 
     def _on_reconnect_attempt(self, attempt: int) -> None:
         with self._lock:
@@ -144,10 +154,19 @@ class RtspCaptureSession:
         while True:
             with self._lock:
                 drained = self._buffer.drain()
+
             for item in drained:
-                observe_frame(
+                tracked = observe_frame(
                     self._observations_by_track, item.payload, item.frame_index, item.timestamp_ms, self._detector, self._tracker
                 )
+                # Published per processed frame, not once per drained batch.
+                # When detection is slower than capture the buffer backs up and
+                # a single batch can span hundreds of frames, so a batch-level
+                # publish froze the preview for the whole batch (measured on a
+                # real 1080p clip: one new preview frame in 8 seconds while 854
+                # frames arrived). LivePreview throttles, so this does not
+                # JPEG-encode every frame.
+                self._publish_preview(item.payload, tracked)
 
             capture_done = self._capture_finished.is_set()
             if capture_done and not drained:
@@ -161,6 +180,19 @@ class RtspCaptureSession:
                 time.sleep(self._poll_interval_seconds)
 
         self._persist(status="failed" if self._status_snapshot().error else "completed", finalize=True)
+
+    def _publish_preview(self, frame: np.ndarray, tracked: list[tuple[int, _Observation]]) -> None:
+        class_names = self._detector.class_names
+        boxes = [
+            PreviewBox(
+                bbox_xyxy=observation.bbox,
+                label=f"#{track_id} {class_names.get(observation.class_id, observation.class_id)} "
+                f"{observation.confidence:.0%}",
+                track_id=track_id,
+            )
+            for track_id, observation in tracked
+        ]
+        self._preview.update(frame, boxes)
 
     def _status_snapshot(self) -> RtspSessionStatus:
         with self._lock:
@@ -180,6 +212,7 @@ class RtspCaptureSession:
                     run.status = status
                     run.error_message = self._status.error
                     run.sampled_frame_count = self._status.frames_captured
+                    run.completed_at = datetime.now(timezone.utc)
                     self._status.stopped = True
             db.commit()
         finally:

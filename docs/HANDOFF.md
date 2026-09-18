@@ -3,6 +3,70 @@
 This file is updated by Codex after every meaningful implementation
 session.
 
+## Session: Video Player With Detection Boxes + Live Stream Preview
+
+User report: "started it but detection and video stream not show". Nothing
+was broken - the app simply had no way to *watch* footage: Detect+Track
+ran headless and only produced a track list, and the Live tab showed
+counters only. Both views were added.
+
+### What was built
+
+-   **Video player** (`desktop/src/components/VideoPlayer.tsx`, opened
+    with **Watch** on a video source). Plays the imported file natively
+    via `GET /projects/{p}/sources/{s}/video` (`app/api/playback.py`,
+    `FileResponse` with HTTP Range, no transcoding) and draws tracked
+    boxes from `GET .../detections` (`services/detection_overlay.py`)
+    as an SVG overlay synced with `requestVideoFrameCallback`. Timeline
+    markers per vehicle, Prev/Next vehicle, speed, run selector (only one
+    run is ever overlaid - re-processing would otherwise double every
+    box), click a box to open that track for review.
+-   **Live preview** (`LivePreview.tsx`, opens automatically on Start).
+    The RTSP processing thread renders the latest processed frame with
+    boxes burned in (`services/live_preview.py`), held in memory only -
+    no DB writes. UI polls `GET /processing-runs/{run}/rtsp/preview.jpg`
+    (204 until the first frame; `X-Frame-Sequence` exposed via CORS).
+-   `observe_frame` now returns the frame's own tracked boxes;
+    RTSP runs now set `completed_at` on finalize (pre-existing omission).
+
+### Verified on the real 3gp gantry clip
+
+-   Chromium decodes the H.264-in-3GP file natively (readyState 4,
+    1920x1080, 155.9s). Box overlay alignment measured pixel-exact
+    (drawn `[289,168,241,137]` == expected). Next vehicle, click-box ->
+    review, and constant 13px labels all confirmed.
+-   Live preview: 237 distinct server-drawn frames in 40s (~5.9/s),
+    boxes correctly drawn on vehicles, UI badge 7.0 fps. Stop -> run
+    `completed` with `completed_at`, CPU back to 0 cores.
+-   Tests: backend 183 passed; desktop 6 passed (new
+    `tests/VideoPlayer.test.tsx`); `tsc -b` clean.
+
+### Bugs found while verifying (and fixed)
+
+-   **Live preview froze for whole batches.** It was published once per
+    drained batch; with detection slower than capture a batch spans
+    hundreds of frames (measured: 1 new frame in 8s). Now published per
+    processed frame, throttled. Regression test
+    `test_live_preview_keeps_updating_while_a_backed_up_batch_is_processed`
+    was run against the old loop too: old advanced 0 times, new 9.
+-   **Labels ~8px on a small player** - font size was in video pixels;
+    now converted from a fixed screen size via `ResizeObserver`.
+
+### Known limitations / notes
+
+-   A local file used as an "RTSP" URL is read unpaced (~224 fps), so
+    most frames are dropped and the backend used ~10 cores. A real
+    camera is paced by its own frame rate.
+-   Stop finishes the frames already buffered first: measured 5.1s and
+    15.7s. Deliberately not changed (it would discard captured frames).
+-   No React error boundary: any render error in the player/preview
+    blanks the whole app. Seen during dev when Vite's file watcher
+    missed an `api.ts` write and kept serving a stale module (fixed by
+    touching the file). Adding a boundary around the main panel is
+    recommended.
+-   Codecs the embedded Chromium can't decode show a message instead of
+    playback; detections remain reviewable in the Tracks list.
+
 ## Phase 10 --- Full-Frame Foundation (2026-09-11)
 
 First phase of `docs/13_LABELING_AND_TRAINING_PLAN.md`, the plan for

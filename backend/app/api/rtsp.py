@@ -1,7 +1,7 @@
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
@@ -112,3 +112,24 @@ def stop_rtsp_session(run_id: str) -> RtspSessionStatusRead:
     session.stop()
     status = session.status()
     return RtspSessionStatusRead(**asdict(status))
+
+
+@run_router.get("/{run_id}/rtsp/preview.jpg")
+def get_rtsp_preview(run_id: str) -> Response:
+    """The latest processed frame of a live session with its tracked
+    boxes drawn on, for the desktop's live view to poll.
+
+    Returns 204 until the first frame has been processed rather than an
+    error, since "not yet" is the normal state for the first second or
+    two of every session. ``X-Frame-Sequence`` lets the client skip
+    re-rendering a frame it already has.
+    """
+    session = _get_session_or_404(run_id)
+    frame = session.preview()
+    if frame is None:
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+    return Response(
+        content=frame.jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store", "X-Frame-Sequence": str(frame.sequence)},
+    )

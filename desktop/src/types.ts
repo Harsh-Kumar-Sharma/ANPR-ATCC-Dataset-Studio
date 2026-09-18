@@ -112,6 +112,40 @@ export interface DatasetExportResult {
   validation: { valid: boolean; errors: string[]; warnings: string[] };
 }
 
+export interface DetectionBox {
+  track_id: string;
+  tracker_track_id: number;
+  /** Full source-frame pixels, [x1, y1, x2, y2]. */
+  bbox: [number, number, number, number];
+  detector_class: string;
+  confidence: number;
+  bucket: string | null;
+  review_status: string;
+}
+
+export interface DetectionFrame {
+  frame_index: number;
+  timestamp_ms: number;
+  boxes: DetectionBox[];
+}
+
+export interface DetectionRun {
+  id: string;
+  status: string;
+  started_at: string;
+  track_count: number;
+}
+
+export interface SourceDetections {
+  source_id: string;
+  width: number;
+  height: number;
+  fps: number;
+  run_id: string | null;
+  runs: DetectionRun[];
+  frames: DetectionFrame[];
+}
+
 export interface RetrainingHandoffResult {
   data_yaml_path: string;
   instructions_path: string;

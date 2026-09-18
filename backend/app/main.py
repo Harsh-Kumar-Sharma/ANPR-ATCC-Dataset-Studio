@@ -5,6 +5,7 @@ from app.api.active_learning import router as active_learning_router
 from app.api.datasets import datasets_router, project_datasets_router
 from app.api.evaluation import router as evaluation_router
 from app.api.health import router as health_router
+from app.api.playback import router as playback_router
 from app.api.processing_profiles import router as processing_profiles_router
 from app.api.projects import router as projects_router
 from app.api.rtsp import router as rtsp_router
@@ -27,12 +28,18 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    # The renderer runs on a different origin (Vite dev server / file://),
+    # and browsers hide non-standard response headers cross-origin unless
+    # they are listed here - the live preview needs this one to skip
+    # frames it has already shown.
+    expose_headers=["X-Frame-Sequence"],
 )
 
 register_exception_handlers(app)
 app.include_router(health_router)
 app.include_router(projects_router)
 app.include_router(sources_router)
+app.include_router(playback_router)
 app.include_router(processing_profiles_router)
 app.include_router(project_tracks_router)
 app.include_router(tracks_router)

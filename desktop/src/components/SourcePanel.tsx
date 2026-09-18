@@ -6,9 +6,10 @@ import type { Project, Source } from "../types";
 interface Props {
   project: Project;
   onProcessed: () => void;
+  onWatch: (source: Source) => void;
 }
 
-function SourcePanel({ project, onProcessed }: Props) {
+function SourcePanel({ project, onProcessed, onWatch }: Props) {
   const [sources, setSources] = useState<Source[]>([]);
   const [path, setPath] = useState("");
   const [targetFps, setTargetFps] = useState(5);
@@ -118,6 +119,11 @@ function SourcePanel({ project, onProcessed }: Props) {
               {s.width}x{s.height} @ {s.fps}fps · {s.frame_count} frames
             </span>
             <div className="source-actions">
+              {s.type === "video" && (
+                <button onClick={() => onWatch(s)} title="Play this video with detection boxes">
+                  <IconFilm /> Watch
+                </button>
+              )}
               <button disabled={busySourceId === s.id || s.is_processing} onClick={() => handleProcess(s)}>
                 <IconPlay />
                 {busySourceId === s.id || s.is_processing ? "Processing…" : "Detect + Track"}
