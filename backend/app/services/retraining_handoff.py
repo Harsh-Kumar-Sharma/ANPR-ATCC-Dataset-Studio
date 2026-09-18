@@ -1,21 +1,26 @@
 from pathlib import Path
 
 
-def write_retraining_handoff(export_dir: Path, class_schema: list[dict], base_model: str) -> dict[str, str]:
+def write_retraining_handoff(export_dir: Path, class_names: list[str], base_model: str) -> dict[str, str]:
     """Generate the two files an external training job actually needs
     to pick up an exported dataset version: a standard Ultralytics
     ``data.yaml`` and a short instructions file with the exact command
     to run. This app hands the data off - it does not run training
     itself (a real training run is long-lived and resource-heavy, and
     squarely out of scope for a dataset/review tool).
+
+    ``class_names`` must be the classes the dataset was *exported* with,
+    in index order - not the project's current list. The label files on
+    disk hold indices assigned at export time, so naming them from a
+    since-edited list would mislabel every box.
     """
-    names_block = "\n".join(f"  {i}: {c['name']}" for i, c in enumerate(class_schema))
+    names_block = "\n".join(f"  {i}: {name}" for i, name in enumerate(class_names))
     data_yaml = (
         f"path: {export_dir.resolve().as_posix()}\n"
         "train: images/train\n"
         "val: images/val\n"
         "test: images/test\n"
-        f"nc: {len(class_schema)}\n"
+        f"nc: {len(class_names)}\n"
         "names:\n"
         f"{names_block}\n"
     )

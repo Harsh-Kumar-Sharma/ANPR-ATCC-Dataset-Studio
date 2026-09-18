@@ -351,3 +351,53 @@ def test_invalid_ratios_are_rejected(tmp_path):
         json={"train_ratio": 0.5, "val_ratio": 0.3, "test_ratio": 0.3},
     )
     assert response.status_code == 422
+
+
+def test_revalidating_an_export_made_before_classes_were_snapshotted(tmp_path):
+    """Manifests written before classes lived in the database have no
+    "classes" key. Reading it unconditionally would 500 on every export
+    already on disk - and there are real ones there."""
+    ctx = _create_and_accept_track(tmp_path, "Legacy Manifest Project")
+    project = ctx["project"]
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
+    version_id = created["dataset_version"]["id"]
+
+    export_dir = Path(project["workspace_path"]) / "exports" / "v1"
+    manifest_path = export_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    # Roll the manifest back to the old shape.
+    manifest["config"].pop("classes")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    response = client.get(f"/dataset-versions/{version_id}/validate")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["valid"] is True
+
+
+def test_retraining_handoff_describes_the_classes_the_dataset_was_exported_with(tmp_path):
+    """The label files on disk hold indices assigned at export time. If
+    data.yaml names them from today's class list, a rename after export
+    silently mislabels every box in the dataset."""
+    from app.db.models import ClassDefinition
+    from app.db.session import SessionLocal
+
+    ctx = _create_and_accept_track(tmp_path, "Handoff Snapshot Project")
+    project = ctx["project"]
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={}).json()
+    version_id = created["dataset_version"]["id"]
+
+    with SessionLocal() as db:
+        row = (
+            db.query(ClassDefinition)
+            .filter(ClassDefinition.project_id == project["id"], ClassDefinition.class_id == 4)
+            .one()
+        )
+        row.name = "Renamed After Export"
+        db.commit()
+
+    handoff = client.post(f"/dataset-versions/{version_id}/retraining-handoff").json()
+
+    assert "Car/Jeep/Van" in handoff["data_yaml_content"]
+    assert "Renamed After Export" not in handoff["data_yaml_content"]

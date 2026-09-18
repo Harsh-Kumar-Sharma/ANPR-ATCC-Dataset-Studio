@@ -93,6 +93,32 @@ def get_dataset_manifest(dataset_version_id: str, db: Session = Depends(get_db))
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
+def _snapshot_class_names(manifest: dict, export_dir: Path, db: Session, project_id: str) -> list[str]:
+    """The classes this version was exported against, in index order.
+
+    Deliberately not "whatever the project has now": classes are
+    editable, so a rename or reorder after export would make this
+    disagree with the indices already written into the label files -
+    validating a correct dataset as broken, and describing it to a
+    trainer under the wrong names.
+
+    Exports written before classes moved into the database have no
+    snapshot in their manifest, but they do have the classes.txt sitting
+    next to them, which is the same information. Falling back to the
+    project's current list is the last resort, and only reached if both
+    are missing.
+    """
+    snapshot = manifest.get("config", {}).get("classes")
+    if snapshot is not None:
+        return [c["name"] for c in snapshot]
+
+    classes_txt = export_dir / "classes.txt"
+    if classes_txt.is_file():
+        return [line for line in classes_txt.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    return [c["name"] for c in class_schema_for(db, project_id)]
+
+
 @datasets_router.get("/{dataset_version_id}/validate", response_model=ValidationResultRead)
 def revalidate_dataset_version(dataset_version_id: str, db: Session = Depends(get_db)) -> ValidationResultRead:
     """Re-run the integrity validator against whatever is currently on
@@ -104,10 +130,7 @@ def revalidate_dataset_version(dataset_version_id: str, db: Session = Depends(ge
     if not manifest_path.is_file():
         raise NotFoundError(f"Manifest not found on disk for dataset version: {dataset_version_id}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    # From the manifest's own snapshot: the project's classes may have
-    # been edited since this version was exported, and validating against
-    # today's list would fail a dataset that was correct when written.
-    num_classes = len(manifest["config"]["classes"])
+    num_classes = len(_snapshot_class_names(manifest, manifest_path.parent, db, version.project_id))
     result = validate_export(manifest_path.parent, manifest, num_classes=num_classes)
     return ValidationResultRead(valid=result.valid, errors=result.errors, warnings=result.warnings)
 
@@ -124,8 +147,10 @@ def create_retraining_handoff(dataset_version_id: str, db: Session = Depends(get
     if not export_dir.is_dir():
         raise NotFoundError(f"Export directory not found on disk for dataset version: {dataset_version_id}")
 
-    class_schema = class_schema_for(db, project.id)
-    paths = write_retraining_handoff(export_dir, class_schema, base_model=DEFAULT_MODEL_WEIGHTS)
+    manifest_path = _manifest_path(project.workspace_path, version)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    class_names = _snapshot_class_names(manifest, export_dir, db, project.id)
+    paths = write_retraining_handoff(export_dir, class_names, base_model=DEFAULT_MODEL_WEIGHTS)
     return RetrainingHandoffResult(
         data_yaml_path=paths["data_yaml_path"],
         instructions_path=paths["instructions_path"],

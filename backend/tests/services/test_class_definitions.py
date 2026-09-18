@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.presets import ANPR_V1, ATCC_V1, get_preset
+from app.core.presets import ANPR_V1, ATCC_V1, UnknownPresetError, get_preset
 from app.db.models import ClassDefinition, Project
 from app.db.session import SessionLocal
 from app.services import class_definitions
@@ -20,6 +20,7 @@ def test_seeding_copies_a_preset_into_the_project():
 
     with SessionLocal() as db:
         class_definitions.seed_project_classes(db, project.id, "atcc-v1")
+        db.commit()
 
     with SessionLocal() as db:
         classes = class_definitions.list_project_classes(db, project.id)
@@ -55,6 +56,7 @@ def test_editing_one_project_cannot_reach_another():
     with SessionLocal() as db:
         class_definitions.seed_project_classes(db, first.id, "atcc-v1")
         class_definitions.seed_project_classes(db, second.id, "atcc-v1")
+        db.commit()
 
     with SessionLocal() as db:
         renamed = class_definitions.list_project_classes(db, first.id)[0]
@@ -74,6 +76,7 @@ def test_classes_come_back_in_display_order():
 
     with SessionLocal() as db:
         class_definitions.seed_project_classes(db, project.id, "atcc-v1")
+        db.commit()
 
     with SessionLocal() as db:
         # Push the first class to the end.
@@ -94,7 +97,7 @@ def test_an_unknown_preset_is_rejected():
     project = _project("Bad Preset")
 
     with SessionLocal() as db:
-        with pytest.raises(ValueError):
+        with pytest.raises(UnknownPresetError):
             class_definitions.seed_project_classes(db, project.id, "atcc-v99")
 
 
@@ -106,6 +109,7 @@ def test_seeding_twice_does_not_duplicate_the_list():
     with SessionLocal() as db:
         class_definitions.seed_project_classes(db, project.id, "atcc-v1")
         class_definitions.seed_project_classes(db, project.id, "atcc-v1")
+        db.commit()
 
     with SessionLocal() as db:
         assert len(class_definitions.list_project_classes(db, project.id)) == len(ATCC_V1)
@@ -118,6 +122,7 @@ def test_a_valid_class_id_is_one_of_the_projects_own():
     with SessionLocal() as db:
         class_definitions.seed_project_classes(db, first.id, "atcc-v1")
         class_definitions.seed_project_classes(db, second.id, "anpr-v1")
+        db.commit()
 
     with SessionLocal() as db:
         # 20 exists in ATCC but not in the two-class ANPR project.
@@ -150,6 +155,7 @@ def test_class_rows_belong_to_exactly_one_project():
 
     with SessionLocal() as db:
         class_definitions.seed_project_classes(db, project.id, "anpr-v1")
+        db.commit()
 
     with SessionLocal() as db:
         rows = db.query(ClassDefinition).filter(ClassDefinition.project_id == project.id).all()

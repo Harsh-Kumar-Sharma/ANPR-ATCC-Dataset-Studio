@@ -33,6 +33,11 @@ def class_schema_for(db: Session, project_id: str) -> list[dict]:
     return [{"id": c.class_id, "name": c.name} for c in list_project_classes(db, project_id)]
 
 
+def class_names_for(db: Session, project_id: str) -> dict[int, str]:
+    """This project's class names, keyed by class id."""
+    return {c.class_id: c.name for c in list_project_classes(db, project_id)}
+
+
 def is_valid_class_id(db: Session, project_id: str, class_id: int) -> bool:
     """Is this class one of *this* project's own?
 
@@ -57,10 +62,15 @@ def seed_project_classes(db: Session, project_id: str, preset_name: str) -> list
     A copy, never a reference: a project's classes are its own from this
     moment on, and editing them must not reach into any other project.
 
-    Idempotent - a project that already has classes is left exactly as it
-    is. The seeding migration and a retried project creation can both run
-    twice without doubling the list, and neither will overwrite an edit
-    the user has since made.
+    Idempotent in the sense that matters: a project that already has any
+    classes is left exactly as it is, so a retried creation cannot double
+    the list or overwrite an edit the user has since made. It is a
+    presence check, not a completeness check - a half-seeded project
+    would stay half-seeded, which nothing can currently produce because
+    the rows go in as one flush.
+
+    Does not commit. The caller owns the transaction, so a project and
+    its classes can be made to arrive together or not at all.
     """
     classes = get_preset(preset_name)
 
@@ -78,5 +88,5 @@ def seed_project_classes(db: Session, project_id: str, preset_name: str) -> list
         for order, preset_class in enumerate(classes)
     ]
     db.add_all(created)
-    db.commit()
+    db.flush()
     return list_project_classes(db, project_id)

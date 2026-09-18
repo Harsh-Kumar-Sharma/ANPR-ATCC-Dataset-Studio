@@ -13,6 +13,19 @@ user has since added or renamed.
 
 from dataclasses import dataclass
 
+from app.core.errors import AppError
+
+
+class UnknownPresetError(AppError):
+    """Raised for a preset name that does not exist.
+
+    Coded like every other domain error in the app, so any caller - not
+    just the create-project endpoint - surfaces it as a 400 with a
+    message rather than an anonymous 500.
+    """
+
+    code = "unknown_class_preset"
+
 
 @dataclass(frozen=True)
 class PresetClass:
@@ -76,9 +89,16 @@ DEFAULT_PRESET = "atcc-v1"
 
 
 def get_preset(name: str) -> list[PresetClass]:
-    """The template for ``name``. Raises for an unknown preset rather than
-    quietly handing back an empty project."""
+    """The template for ``name``.
+
+    Raises ``UnknownPresetError`` rather than quietly handing back an
+    empty list, which would look like a labelling bug much later.
+    """
     try:
-        return PRESETS[name]
+        # A copy: the caller is about to seed a project from this, and the
+        # template must stay a template.
+        return list(PRESETS[name])
     except KeyError:
-        raise ValueError(f"Unknown class preset: {name!r}. Expected one of {', '.join(PRESETS)}.") from None
+        raise UnknownPresetError(
+            f"Unknown class preset: {name!r}. Expected one of {', '.join(PRESETS)}."
+        ) from None

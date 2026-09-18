@@ -176,3 +176,30 @@ def test_bbox_can_be_overridden(tmp_path):
         },
     )
     assert response.json()["annotation"]["bbox_json"] == [1.0, 2.0, 30.0, 40.0]
+
+
+def test_a_project_rejects_a_class_it_does_not_have(tmp_path):
+    """Class validation is per project now. Class 20 is meaningful in a
+    twenty-class traffic survey and meaningless in a two-class ANPR
+    project, and the API has to know the difference."""
+    project = client.post("/projects", json={"name": "ANPR Review Project", "class_preset": "anpr-v1"}).json()
+    video = create_synthetic_video(tmp_path / "anpr.mp4", frame_count=30, fps=10.0)
+    source = client.post(f"/projects/{project['id']}/sources", json={"path": str(video)}).json()
+    submitted = process_source_sync(client, project["id"], source["id"], StubDetector())
+    track = tracks_for_run(client, project["id"], submitted["run_id"])[0]
+    frame_id = _first_frame_id(track["id"])
+
+    rejected = client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": 20},
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["code"] == "invalid_review"
+
+    # ...and one of its own classes is accepted.
+    accepted = client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": 2},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["annotation"]["class_id"] == 2

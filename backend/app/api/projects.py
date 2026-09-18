@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.errors import AppError, NotFoundError
+from app.core.errors import NotFoundError
 from app.core.presets import DEFAULT_PRESET, get_preset
 from app.db.models.project import Project
 from app.db.session import get_db
@@ -12,11 +12,6 @@ from app.services.class_definitions import class_schema_for, seed_project_classe
 from app.services.workspace import create_project_workspace
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-
-
-class UnknownPresetError(AppError):
-    code = "unknown_class_preset"
-
 
 def get_project_or_404(db: Session, project_id: str) -> Project:
     project = db.get(Project, project_id)
@@ -30,10 +25,7 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
     preset = payload.class_preset or DEFAULT_PRESET
     # Validate before creating anything: a project that exists with no
     # usable classes is worse than a rejected request.
-    try:
-        get_preset(preset)
-    except ValueError as exc:
-        raise UnknownPresetError(str(exc)) from exc
+    get_preset(preset)
 
     project = Project(name=payload.name, workspace_path="", class_schema_version=preset)
     db.add(project)
@@ -43,12 +35,14 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
     workspace_path = create_project_workspace(settings.workspace_root, project.id, project.name)
     project.workspace_path = str(workspace_path)
 
-    db.commit()
-
     # Copied, not referenced: from here the project owns its classes and
-    # editing them can never reach another project.
+    # editing them can never reach another project. Seeded before the
+    # commit so the project and its classes arrive together - a project
+    # that exists with no classes is the state this endpoint refuses to
+    # create four lines above.
     seed_project_classes(db, project.id, preset)
 
+    db.commit()
     db.refresh(project)
     return project
 

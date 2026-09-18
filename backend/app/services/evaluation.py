@@ -3,7 +3,7 @@ from collections import defaultdict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.services.class_definitions import class_schema_for
+from app.services.class_definitions import class_names_for
 from app.db.models.annotation import Annotation
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.ocr_candidate import OcrCandidate
@@ -55,7 +55,7 @@ def _compute_class_distribution(db: Session, run_id: str, project_id: str) -> di
         )
         .group_by(Annotation.class_id)
     )
-    schema_names = {c["id"]: c["name"] for c in class_schema_for(db, project_id)}
+    schema_names = class_names_for(db, project_id)
     return {schema_names.get(class_id, str(class_id)): count for class_id, count in db.execute(stmt).all()}
 
 
