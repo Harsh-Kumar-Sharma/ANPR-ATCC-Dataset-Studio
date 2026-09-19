@@ -2814,3 +2814,29 @@ label.toggle {
   color: var(--warning-text, #8a6d1f);
   line-height: 1.45;
 }
+
+.training-runs__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.training-runs__header button,
+.training-runs__forget {
+  align-self: flex-start;
+  padding: 1px 6px;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.training-runs__forget {
+  margin-top: 3px;
+}

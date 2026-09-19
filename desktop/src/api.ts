@@ -313,6 +313,14 @@ export const api = {
 
   listTrainingRuns: (projectId: string) =>
     request<TrainingRun[]>(`/projects/${projectId}/training-runs`),
+
+  /** Take one finished run off the list. Its model stays. */
+  forgetTrainingRun: (runId: string) =>
+    request<void>(`/training-runs/${runId}`, { method: "DELETE" }),
+
+  /** Clear every finished run off the list. Models stay. */
+  clearFinishedTrainingRuns: (projectId: string) =>
+    request<{ forgotten: number }>(`/projects/${projectId}/training-runs`, { method: "DELETE" }),
   exportDataset: (projectId: string) =>
     request<DatasetExportResult>(`/projects/${projectId}/dataset-versions`, { method: "POST", body: JSON.stringify({}) }),
 

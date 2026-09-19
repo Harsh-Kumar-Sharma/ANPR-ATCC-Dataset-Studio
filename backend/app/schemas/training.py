@@ -44,3 +44,9 @@ class TrainingRunRead(BaseModel):
 class TrainingStarted(BaseModel):
     run: TrainingRunRead
     job_id: str
+
+
+class ForgottenRuns(BaseModel):
+    """How many rows were cleared off the list."""
+
+    forgotten: int

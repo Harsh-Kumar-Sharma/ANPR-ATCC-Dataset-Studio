@@ -263,3 +263,71 @@ describe("TrainingPanel: when validation had to borrow a split", () => {
     expect(screen.queryByText(/validated on/i)).not.toBeInTheDocument();
   });
 });
+
+describe("TrainingPanel: clearing old runs off the list", () => {
+  const failed = run({
+    id: "tr-old",
+    status: "failed",
+    output_model_id: null,
+    error_message: "Invalid CUDA 'device=auto' requested",
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listDatasetVersions").mockResolvedValue([version()]);
+    vi.spyOn(api, "listModels").mockResolvedValue([model()]);
+    vi.spyOn(api, "listTrainingRuns").mockResolvedValue([failed, run()]);
+  });
+
+  it("removes one run from the list", async () => {
+    const forget = vi.spyOn(api, "forgetTrainingRun").mockResolvedValue(undefined);
+    render(<TrainingPanel project={project} jobs={[]} />);
+    await screen.findByText(/invalid cuda/i);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /remove this run from the list/i })[0]);
+
+    await waitFor(() => expect(forget).toHaveBeenCalledWith("tr-old"));
+    await waitFor(() => expect(screen.queryByText(/invalid cuda/i)).not.toBeInTheDocument());
+  });
+
+  it("clears them all at once", async () => {
+    // Three failures from three attempts at the same bug is a list
+    // nobody wants to clear one line at a time.
+    // Emptied by the call itself rather than by a queued response:
+    // the panel refreshes twice on mount, which eats a "once".
+    const clear = vi.spyOn(api, "clearFinishedTrainingRuns").mockImplementation(async () => {
+      vi.mocked(api.listTrainingRuns).mockResolvedValue([]);
+      return { forgotten: 2 };
+    });
+    render(<TrainingPanel project={project} jobs={[]} />);
+    await screen.findByText(/invalid cuda/i);
+
+    fireEvent.click(await screen.findByRole("button", { name: /clear all/i }));
+
+    await waitFor(() => expect(clear).toHaveBeenCalledWith(project.id));
+    await waitFor(() => expect(screen.queryByText(/invalid cuda/i)).not.toBeInTheDocument());
+  });
+
+  it("offers nothing to clear when there is no history", async () => {
+    vi.mocked(api.listTrainingRuns).mockResolvedValue([]);
+    render(<TrainingPanel project={project} jobs={[]} />);
+    await screen.findByRole("button", { name: /^train$/i });
+
+    expect(screen.queryByRole("button", { name: /clear all/i })).not.toBeInTheDocument();
+  });
+
+  it("says why a removal was refused", async () => {
+    // A run still going holds the GPU lock; removing the row would
+    // let a second one start.
+    vi.spyOn(api, "forgetTrainingRun").mockRejectedValue(
+      new ApiError(409, "training_busy", "That run is still going. Cancel it first."),
+    );
+    render(<TrainingPanel project={project} jobs={[]} />);
+    await screen.findByText(/invalid cuda/i);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /remove this run from the list/i })[0]);
+
+    expect(await screen.findByText(/cancel it first/i)).toBeInTheDocument();
+  });
+});

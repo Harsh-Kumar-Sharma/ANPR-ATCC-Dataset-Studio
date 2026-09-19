@@ -80,6 +80,30 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
   const finished = runs.filter((r) => r.id !== active?.id);
   const activeJob = active ? jobs.find((j) => j.id === active.job_id) ?? null : null;
 
+  /** Both of these take the row and nothing else: a model the run
+   *  trained is in the models directory and may be in use, and its
+   *  checkpoints are on disk. Clearing a failure off a screen should
+   *  not delete a model. */
+  async function forget(run: TrainingRun) {
+    setError(null);
+    try {
+      await api.forgetTrainingRun(run.id);
+      setRuns((previous) => previous.filter((r) => r.id !== run.id));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function clearFinished() {
+    setError(null);
+    try {
+      await api.clearFinishedTrainingRuns(project.id);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   async function start() {
     if (!versionId) return;
     setStarting(true);
@@ -169,6 +193,15 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
         </div>
       )}
 
+      {finished.length > 0 && (
+        <div className="training-runs__header">
+          <span>Past runs</span>
+          {/* Three failures from three attempts at the same bug is a
+              list nobody wants to clear one line at a time. */}
+          <button onClick={clearFinished}>Clear all</button>
+        </div>
+      )}
+
       {/* The run in progress has its own block above; repeating it
           here would print the same epoch twice, one line apart. */}
       {finished.length > 0 && (
@@ -191,6 +224,13 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
               {typeof run.settings_json?.note === "string" && (
                 <span className="training-runs__caveat">{run.settings_json.note}</span>
               )}
+              <button
+                className="training-runs__forget"
+                aria-label={`Remove this run from the list`}
+                onClick={() => forget(run)}
+              >
+                Remove from list
+              </button>
             </li>
           ))}
         </ul>

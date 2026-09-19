@@ -17,7 +17,7 @@ from app.core.errors import NotFoundError
 from app.db.models.dataset_version import DatasetVersion
 from app.db.models.training_run import TrainingRun
 from app.db.session import get_db
-from app.schemas.training import TrainingRunRead, TrainingStarted, TrainingStartRequest
+from app.schemas.training import ForgottenRuns, TrainingRunRead, TrainingStarted, TrainingStartRequest
 from app.services import training
 from app.services.jobs.runner import Launcher, get_launcher, submit_job
 
@@ -54,6 +54,13 @@ def start_training(
         epochs=payload.epochs,
         image_size=payload.image_size,
     )
+    # Committed before the job is launched, not after. The worker is
+    # a separate process with its own connection: a row that is only
+    # flushed does not exist as far as it is concerned, and the job
+    # would fail with "training run not found". Detection commits
+    # here for the same reason.
+    db.commit()
+    db.refresh(run)
 
     job = submit_job(
         db,
@@ -84,3 +91,24 @@ def list_training_runs(project_id: str, db: Session = Depends(get_db)) -> list[T
 @runs_router.get("/{run_id}", response_model=TrainingRunRead)
 def get_training_run(run_id: str, db: Session = Depends(get_db)) -> TrainingRunRead:
     return TrainingRunRead.model_validate(training.get_run(db, run_id))
+
+
+@router.delete("", response_model=ForgottenRuns)
+def forget_finished_runs(project_id: str, db: Session = Depends(get_db)) -> ForgottenRuns:
+    """Clear this project's finished training runs off the list.
+
+    Rows only. Models they trained stay in the models directory, and
+    their checkpoints stay on disk - clearing an old failure off a
+    screen should not delete a model.
+    """
+    get_project_or_404(db, project_id)
+    forgotten = training.forget_finished(db, project_id)
+    db.commit()
+    return ForgottenRuns(forgotten=forgotten)
+
+
+@runs_router.delete("/{run_id}", status_code=204)
+def forget_training_run(run_id: str, db: Session = Depends(get_db)) -> None:
+    """Take one finished run off the list. Its model stays."""
+    training.forget(db, training.get_run(db, run_id))
+    db.commit()

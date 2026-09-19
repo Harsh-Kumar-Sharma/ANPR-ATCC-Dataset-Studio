@@ -269,20 +269,54 @@ def train_with_ultralytics(
         )
 
     model.add_callback("on_fit_epoch_end", report)
-    model.train(
-        data=str(data_yaml),
+    results = model.train(
+        data=str(data_yaml.resolve()),
         epochs=epochs,
         imgsz=image_size,
         device=device,
-        project=str(output_dir),
+        # Absolute, always. A relative project path is resolved by
+        # ultralytics against its own runs directory, not against the
+        # working directory - so the checkpoints landed under
+        # backend/runs/detect/<the whole relative path again> and the
+        # run was reported as having produced nothing.
+        project=str(output_dir.resolve()),
         name="run",
         exist_ok=True,
     )
 
-    best = output_dir / "run" / "weights" / "best.pt"
-    if not best.is_file():
-        raise TrainingUnavailableError(f"Training finished but left no checkpoint at {best}")
+    best = _written_checkpoint(model, results, output_dir)
+    if best is None:
+        raise TrainingUnavailableError(
+            f"Training finished but left no checkpoint under {output_dir.resolve()}"
+        )
     return best
+
+
+def _written_checkpoint(model, results, output_dir: Path) -> Path | None:
+    """Where the weights actually went.
+
+    Asked of ultralytics first and guessed second. It reports its own
+    save directory, and trusting that rather than reconstructing the
+    path is what keeps this working when it decides to put things
+    somewhere else.
+    """
+    candidates: list[Path] = []
+
+    trainer = getattr(model, "trainer", None)
+    if trainer is not None and getattr(trainer, "best", None):
+        candidates.append(Path(trainer.best))
+
+    save_dir = getattr(results, "save_dir", None) or getattr(trainer, "save_dir", None)
+    if save_dir:
+        candidates.append(Path(save_dir) / "weights" / "best.pt")
+        candidates.append(Path(save_dir) / "weights" / "last.pt")
+
+    candidates.append(output_dir.resolve() / "run" / "weights" / "best.pt")
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _first_float(metrics: dict, keys: tuple[str, ...]) -> float | None:
@@ -346,3 +380,34 @@ def get_run(db: Session, run_id: str) -> TrainingRun:
     if run is None:
         raise NotFoundError(f"Training run not found: {run_id}")
     return run
+
+
+def forget(db: Session, run: TrainingRun) -> None:
+    """Take a finished run out of the list.
+
+    The row only. Whatever it produced stays: a model it trained is
+    in the models directory and may be in use, and its checkpoints
+    are on disk. Clearing a failure off a screen should not delete a
+    model.
+
+    A run still going is refused - forgetting it would free the GPU
+    lock while the process carries on holding the GPU.
+    """
+    if run.status in UNFINISHED:
+        raise TrainingBusyError(
+            "That run is still going. Cancel it first - removing the row while the process "
+            "continues would leave the app thinking the GPU is free."
+        )
+    db.delete(run)
+
+
+def forget_finished(db: Session, project_id: str) -> int:
+    """Clear this project's finished runs. Returns how many went."""
+    runs = [
+        run
+        for run in db.scalars(select(TrainingRun).where(TrainingRun.project_id == project_id))
+        if run.status not in UNFINISHED
+    ]
+    for run in runs:
+        db.delete(run)
+    return len(runs)

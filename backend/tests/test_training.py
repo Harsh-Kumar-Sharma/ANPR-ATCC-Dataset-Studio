@@ -73,7 +73,15 @@ def gpu_is_free():
     refuse every run after it.
     """
     with SessionLocal() as db:
-        for run in db.query(TrainingRun).filter(TrainingRun.status.in_(training.UNFINISHED)):
+        # Every run, not only the unfinished ones. "One at a time" is
+        # deliberately global - this machine has one GPU, not one per
+        # project - so training runs are the one thing in this suite
+        # where tests genuinely interfere with each other, and the
+        # only clean answer is to start each with none.
+        #
+        # Listed before deleting: deleting while the query is still
+        # streaming flushes mid-iteration and quietly skips rows.
+        for run in db.query(TrainingRun).all():
             db.delete(run)
         db.commit()
     yield
@@ -535,3 +543,72 @@ def test_an_export_with_no_training_images_is_refused(tmp_path, models_dir, fake
 
     assert status == 400
     assert "no training images" in body["message"].lower()
+
+
+# --- clearing old runs off the list ------------------------------------------
+
+
+def test_a_finished_run_can_be_taken_off_the_list(tmp_path, models_dir, fake_training):
+    project, version = _exported_version(tmp_path, "Forget One Run")
+    with run_jobs_inline():
+        _, body = _start(project, version)
+    run_id = body["run"]["id"]
+
+    removed = client.delete(f"/training-runs/{run_id}")
+
+    assert removed.status_code == 204
+    assert run_id not in [r["id"] for r in client.get(f"/projects/{project['id']}/training-runs").json()]
+
+
+def test_forgetting_a_run_keeps_the_model_it_trained(tmp_path, models_dir, fake_training):
+    """Clearing an old failure off a screen should not delete a model
+    that may be in use."""
+    project, version = _exported_version(tmp_path, "Forget Keeps The Model")
+    with run_jobs_inline():
+        _, body = _start(project, version)
+    model_id = client.get(f"/training-runs/{body['run']['id']}").json()["output_model_id"]
+
+    client.delete(f"/training-runs/{body['run']['id']}")
+
+    assert (models_dir / f"{model_id}.pt").is_file()
+    assert model_id in [m["id"] for m in client.get("/models").json()]
+
+
+def test_a_run_that_is_still_going_cannot_be_forgotten(tmp_path, models_dir, fake_training):
+    """The row is what holds the GPU lock. Deleting it while the
+    process carries on would let a second run start."""
+    project, version = _exported_version(tmp_path, "Cannot Forget A Live Run")
+    _, body = _start(project, version)
+
+    refused = client.delete(f"/training-runs/{body['run']['id']}")
+
+    assert refused.status_code == 409
+    assert "cancel it first" in refused.json()["message"].lower()
+
+
+def test_all_finished_runs_can_be_cleared_at_once(tmp_path, models_dir, fake_training):
+    """Three failures from three attempts at the same bug is a list
+    nobody wants to clear one at a time."""
+    project, version = _exported_version(tmp_path, "Clear Them All")
+    for attempt in range(3):
+        with run_jobs_inline():
+            status, body = _start(project, version)
+        assert status == 202, f"attempt {attempt}: {body}"
+
+    cleared = client.delete(f"/projects/{project['id']}/training-runs")
+
+    assert cleared.status_code == 200
+    assert cleared.json()["forgotten"] == 3
+    assert client.get(f"/projects/{project['id']}/training-runs").json() == []
+
+
+def test_clearing_leaves_a_run_that_is_still_going(tmp_path, models_dir, fake_training):
+    project, version = _exported_version(tmp_path, "Clearing Spares The Live One")
+    with run_jobs_inline():
+        _start(project, version)
+    _, live = _start(project, version)
+
+    client.delete(f"/projects/{project['id']}/training-runs")
+
+    remaining = [r["id"] for r in client.get(f"/projects/{project['id']}/training-runs").json()]
+    assert remaining == [live["run"]["id"]]
