@@ -1,3 +1,4 @@
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -40,9 +41,32 @@ class Settings(BaseSettings):
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url
+        _refuse_real_database_under_test()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         db_path = self.data_dir / "app.db"
         return f"sqlite:///{db_path.as_posix()}"
+
+
+def _refuse_real_database_under_test() -> None:
+    """Stop a test run falling through to the real database.
+
+    ``tests/conftest.py`` points the app at a temporary database, but a
+    conftest only loads for files beneath it. A test written anywhere
+    else - a throwaway script in a scratch directory, most likely - gets
+    the default instead, and the default is the user's real data. That
+    has happened, and it is silent: the run passes and the database
+    quietly grows a project.
+
+    Falling back is never what a test wants, so this fails loudly and
+    says how to ask for a database on purpose.
+    """
+    if "pytest" not in sys.modules:
+        return
+    raise RuntimeError(
+        "Refusing to use the default database (data/app.db) from a test run: that is real data. "
+        "Run tests from the backend directory so tests/conftest.py applies, or set ANPR_DATABASE_URL "
+        "(and ANPR_WORKSPACE_ROOT) to somewhere disposable before importing the app."
+    )
 
 
 @lru_cache
