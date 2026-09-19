@@ -101,6 +101,21 @@ COCO_TO_PLAUSIBLE_ATCC_CLASS_IDS: dict[str, set[int]] = {
 
 
 def find_model_human_disagreements(db: Session, project_id: str) -> list[DisagreementItem]:
+    """Where the human's class contradicts what the detector called it.
+
+    Joins through the frame candidate, so it sees only labels written by
+    track review. A box drawn on the labelling canvas has no candidate
+    and is invisible here - a project labelled entirely on the canvas
+    gets an empty queue, which reads as "no problems found" rather than
+    "not looked at".
+
+    That is a real gap, not an inherent limit. The frames those boxes sit
+    on do carry ``FrameCandidate`` rows with their own boxes, so a canvas
+    label could be matched to a detection by overlap and compared the
+    same way. It is left undone deliberately: picking an overlap
+    threshold is a judgement with its own consequences, and it is a
+    ticket rather than a footnote.
+    """
     class_names = class_names_for(db, project_id)
     stmt = (
         select(Annotation, FrameCandidate)

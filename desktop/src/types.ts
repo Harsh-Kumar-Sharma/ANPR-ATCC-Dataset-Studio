@@ -138,6 +138,31 @@ export interface Annotation {
   updated_at: string;
 }
 
+/** One value a `choice` attribute can take. The value is stored, the
+ *  label is read - `left_to_right` is a sane thing to query on and a
+ *  poor thing to put in a dropdown. */
+export interface AttributeOption {
+  value: string;
+  label: string;
+}
+
+/** One attribute a box can carry, and how to edit it.
+ *
+ *  Served by the backend rather than hard-coded here, because the same
+ *  list is what the save is validated against: a copy on each side
+ *  drifts, and the first sign of it is a control offering a value the
+ *  server refuses. */
+export interface AttributeDefinition {
+  key: string;
+  label: string;
+  type: "text" | "choice" | "boolean";
+  /** `choice` only. */
+  options?: AttributeOption[];
+  /** `text` only. */
+  max_length?: number;
+  placeholder?: string;
+}
+
 export type FrameStatus = "pending" | "labeled" | "rejected" | "skipped";
 
 /** A full frame, and its place in the labelling queue. */
@@ -186,8 +211,15 @@ export interface DatasetExportResult {
   counts: Record<string, number>;
   /** Boxes, per split plus `total`. A frame can hold many. */
   object_counts: Record<string, number>;
-  /** Images exported with an empty label file, labelled as holding nothing. */
+  /** Images exported with an empty label file, labelled as holding nothing.
+   *  A subset of `counts.total`, not an addition to it. */
   background_frames: number;
+  /** Exported frames carrying a box with no class; those boxes are not in
+   *  the label file. */
+  frames_with_unclassified_boxes: number;
+  /** Labelled frames left out of the export entirely, because not one of
+   *  their boxes had a class yet. */
+  frames_skipped_unclassified: number;
   validation: { valid: boolean; errors: string[]; warnings: string[] };
 }
 

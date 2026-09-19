@@ -48,4 +48,11 @@ class DatasetExportResult(BaseModel):
     #: Images exported with an empty label file because a human labelled
     #: the frame as holding nothing. Deliberate negative examples.
     background_frames: int = 0
+    #: Exported frames carrying a box with no class; those boxes are not
+    #: in the label file.
+    frames_with_unclassified_boxes: int = 0
+    #: Labelled frames left out of the export entirely, because not one
+    #: of their boxes had a class. Reported so an export that shrank can
+    #: say by how much.
+    frames_skipped_unclassified: int = 0
     validation: ValidationResultRead

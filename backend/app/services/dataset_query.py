@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models.annotation import Annotation
@@ -87,8 +87,18 @@ def query_export_frames(db: Session, project_id: str) -> list[ExportFrame]:
     A frame qualifies two ways:
 
     * it carries at least one accepted human box, or
-    * a human labelled it and saved nothing, which says "no vehicles
-      here" and is a background image rather than an absence of work.
+    * a human labelled it and it carries no boxes *at all*, which says
+      "no vehicles here" and is a background image rather than an
+      absence of work.
+
+    The second clause tests for no annotation rows whatsoever, not for
+    no *accepted* ones, and the difference is the whole safety of it. A
+    box reviewed ``hard`` is a human saying "this one is difficult",
+    which is not an accepted label - so a frame carrying only hard boxes
+    has none by the first clause, and reading that as "empty" would turn
+    "this vehicle is hard" into a training image asserting the vehicle
+    is not there. Anything on the frame disqualifies it from being
+    background, whatever that thing's status.
 
     Rejected frames are excluded whichever way they would have
     qualified: rejecting means "not worth labelling", and if that did
@@ -105,7 +115,6 @@ def query_export_frames(db: Session, project_id: str) -> list[ExportFrame]:
             Source.project_id == project_id,
             Frame.status != "rejected",
             or_(
-                Frame.status == "labeled",
                 # Not scoped to the project or to frame status: the outer
                 # query already is, and repeating the frame join inside a
                 # subquery is how you end up correlating it by accident.
@@ -114,6 +123,10 @@ def query_export_frames(db: Session, project_id: str) -> list[ExportFrame]:
                         Annotation.source == "human",
                         Annotation.status == "accepted",
                     )
+                ),
+                and_(
+                    Frame.status == "labeled",
+                    Frame.id.not_in(select(Annotation.frame_id)),
                 ),
             ),
         )

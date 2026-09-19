@@ -1,6 +1,7 @@
 import json
 import random
 import shutil
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.project import Project
 from app.db.models.source import Source
+from app.services.annotations import chunked
 from app.services.dataset_query import ExportFrame, query_export_frames
 from app.services.dataset_split import SPLIT_TEST, SPLIT_TRAIN, SPLIT_VAL, compute_split
 from app.services.dataset_validator import ValidationResult, validate_export
@@ -40,7 +42,7 @@ def export_dataset_version(
     val_ratio: float = 0.1,
     test_ratio: float = 0.1,
     split_seed: int | None = None,
-) -> tuple[DatasetVersion, ValidationResult]:
+) -> tuple[DatasetVersion, ValidationResult, dict]:
     """Build a new, immutable, reproducible YOLO-format dataset version
     from every accepted annotation in the project.
 
@@ -75,17 +77,26 @@ def export_dataset_version(
     class_schema = class_schema_for(db, project.id)
     class_id_to_index = {c["id"]: i for i, c in enumerate(class_schema)}
 
-    items_by_frame: dict[str, list[Annotation]] = {}
-    frames_by_id: dict[str, Frame] = {}
-    sources_by_id: dict[str, Source] = {}
-    for entry in export_frames:
-        items_by_frame[entry.frame.id] = entry.annotations
-        frames_by_id[entry.frame.id] = entry.frame
-        sources_by_id[entry.frame.source_id] = entry.source
+    # What is really going to be written, decided before anything else
+    # happens. The split ratios, the decode pass and the version number
+    # all have to be about those frames and no others: computing a
+    # 80/10/10 split over fifty frames and then writing forty-five of
+    # them is not the split that was asked for, and decoding the other
+    # five is work for an image that never lands.
+    planned = _plan(export_frames, class_id_to_index)
+    if not planned:
+        raise DatasetExportError(
+            f"Nothing to export: {len(export_frames)} labelled frame(s) have boxes on them, "
+            "but none of those boxes has a class yet."
+        )
 
+    frames_skipped_unclassified = len(export_frames) - len(planned)
     track_by_annotation = _tracks_by_annotation(db, export_frames)
 
-    split_by_frame = compute_split(sorted(items_by_frame), train_ratio, val_ratio, test_ratio, split_seed)
+    frames_by_id = {p.frame.id: p.frame for p in planned}
+    sources_by_id: dict[str, Source] = {p.frame.source_id: p.source for p in planned}
+
+    split_by_frame = compute_split(list(frames_by_id), train_ratio, val_ratio, test_ratio, split_seed)
 
     # One ordered decode pass per source video, rather than reopening the
     # video for every frame (see materialize_frames).
@@ -124,33 +135,13 @@ def export_dataset_version(
     object_counts = {SPLIT_TRAIN: 0, SPLIT_VAL: 0, SPLIT_TEST: 0}
     partially_labeled_frames = 0
     background_frames = 0
+    frames_with_unclassified_boxes = 0
 
-    for frame_id, annotations in sorted(items_by_frame.items()):
-        frame = frames_by_id[frame_id]
+    for entry in planned:
+        frame = entry.frame
+        frame_id = frame.id
         split = split_by_frame[frame_id]
-
-        label_lines = []
-        objects = []
-        for annotation in annotations:
-            class_id = annotation.class_id
-            if class_id is None or class_id not in class_id_to_index:
-                continue  # not classified (or schema mismatch) - not exportable, but not an error either
-            class_index = class_id_to_index[class_id]
-            normalized = normalize_yolo_bbox(tuple(annotation.bbox_json), frame.width, frame.height)
-            label_lines.append(format_yolo_label_line(class_index, normalized))
-            objects.append((annotation, class_index, normalized))
-
-        # A frame with no exportable box is only dataset material if a
-        # human put it there: saving zero boxes is the label "nothing
-        # here", and an image with an empty label file is the negative
-        # example that teaches it. A frame whose only boxes are
-        # unclassified is not that - it is unfinished work, and shipping
-        # it as background would train the model to ignore the very
-        # vehicles someone was part-way through labelling.
-        is_background = not label_lines
-        if is_background and (frame.status != "labeled" or annotations):
-            continue
-        if is_background:
+        if entry.is_background:
             background_frames += 1
 
         stem = f"{frame.source_id}_{frame.frame_index:06d}"
@@ -159,11 +150,13 @@ def export_dataset_version(
         shutil.copy2(image_path_by_frame[frame_id], export_dir / image_rel)
         # A background frame's label file is empty, not a blank line -
         # YOLO reads the file, and a stray newline is a malformed row.
-        body = "\n".join(label_lines)
+        body = "\n".join(
+            format_yolo_label_line(class_index, normalized) for _, class_index, normalized in entry.objects
+        )
         (export_dir / label_rel).write_text(body + "\n" if body else "", encoding="utf-8")
 
         manifest_objects = []
-        for annotation, class_index, normalized in objects:
+        for annotation, class_index, normalized in entry.objects:
             dataset_item = DatasetItem(
                 dataset_version_id=dataset_version.id,
                 annotation_id=annotation.id,
@@ -185,6 +178,11 @@ def export_dataset_version(
                     "class_id": annotation.class_id,
                     "class_name": class_schema[class_index]["name"],
                     "bbox_yolo": list(normalized),
+                    # Plate text, colour, direction and the rest. A YOLO
+                    # label line has room for a class and four numbers
+                    # and nothing else, so the manifest is the only
+                    # place this work can survive the export.
+                    "attributes": dict(annotation.attributes or {}),
                 }
             )
 
@@ -193,18 +191,27 @@ def export_dataset_version(
         # which teaches the model they are background. Surfaced here (and
         # in the validator) rather than silently shipped.
         #
-        # Only for frames nobody finished. A frame a human labelled on
-        # the canvas has had every object on it looked at, so a detection
-        # without a box is one they declined - warning about it would be
-        # telling them off for doing the job. The heuristic is for frames
-        # that only ever went through track review, where "reviewed one
-        # track" really does leave the rest of the frame unlabelled.
+        # Suppressed only for a frame that is *finished*: every box on
+        # it carries a class, so the human demonstrably went through the
+        # objects and a detection without a box is one they declined.
+        # Warning about that would be telling them off for doing the job.
+        #
+        # Deliberately not suppressed merely because the frame reads as
+        # "labeled". A frame with one classified box and one the user
+        # never got round to classifying is exactly the unfinished work
+        # this warning exists for, and the unclassified box is dropped
+        # from the label file - so staying quiet would hide the loss.
+        # Nor for a background frame: "there is nothing in this picture"
+        # is a strong claim to make over the detector's head, and worth
+        # saying out loud.
         unlabeled = 0
-        if frame.status != "labeled":
+        if not entry.is_finished:
             detected = db.scalar(select(func.count(FrameCandidate.id)).where(FrameCandidate.frame_id == frame.id)) or 0
             unlabeled = max(0, detected - len(manifest_objects))
         if unlabeled:
             partially_labeled_frames += 1
+        if entry.unclassified_count:
+            frames_with_unclassified_boxes += 1
 
         frame_counts[split] += 1
         object_counts[split] += len(manifest_objects)
@@ -222,6 +229,11 @@ def export_dataset_version(
                 "label_path": label_rel,
                 "objects": manifest_objects,
                 "unlabeled_detection_count": unlabeled,
+                #: Boxes on this frame that have no class, and so were
+                #: left out of the label file. The frame still exports -
+                #: the classified boxes on it are real work - but the
+                #: unclassified ones ship as background.
+                "unclassified_box_count": entry.unclassified_count,
             }
         )
 
@@ -240,6 +252,13 @@ def export_dataset_version(
         #: a deliberate negative example, and a dataset that is mostly
         #: them is a problem you want to be able to see.
         "background_frames": background_frames,
+        #: Exported frames carrying at least one box with no class. Those
+        #: boxes are not in the label file.
+        "frames_with_unclassified_boxes": frames_with_unclassified_boxes,
+        #: Labelled frames left out entirely because not one of their
+        #: boxes had a class. Recorded so an export that quietly shrank
+        #: can say by how much and why.
+        "frames_skipped_unclassified": frames_skipped_unclassified,
         "items": manifest_items,
     }
     (export_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -248,12 +267,108 @@ def export_dataset_version(
     db.refresh(dataset_version)
 
     validation = validate_export(export_dir, manifest, num_classes=len(class_schema))
-    return dataset_version, validation
+    return dataset_version, validation, manifest_summary(manifest)
 
 
-#: SQLite refuses a statement with more than 32 766 bound parameters, so
-#: an IN clause built from a Python list has to be fed in chunks.
-_STATEMENT_BATCH = 500
+def manifest_summary(manifest: dict) -> dict:
+    """The headline numbers of an export, defaulted and in a fixed order.
+
+    Taken from the manifest because the manifest is the record of what
+    was written. Counting dataset-item rows instead gave the number of
+    *boxes* while calling it frames, and missed background frames
+    entirely because they write an image and no items.
+    """
+    splits = (SPLIT_TRAIN, SPLIT_VAL, SPLIT_TEST, "total")
+    return {
+        "counts": {split: int(manifest.get("counts", {}).get(split, 0)) for split in splits},
+        "object_counts": {split: int(manifest.get("object_counts", {}).get(split, 0)) for split in splits},
+        "background_frames": int(manifest.get("background_frames", 0)),
+        "frames_with_unclassified_boxes": int(manifest.get("frames_with_unclassified_boxes", 0)),
+        "frames_skipped_unclassified": int(manifest.get("frames_skipped_unclassified", 0)),
+    }
+
+
+@dataclass
+class _PlannedFrame:
+    """One frame the export has decided it is going to write.
+
+    Built before the split is computed, the images are decoded or the
+    version row is created, so every one of those is about frames that
+    will really land on disk.
+    """
+
+    frame: Frame
+    source: Source
+    #: ``(annotation, class index, normalised bbox)`` for each box that
+    #: will appear in the label file.
+    objects: list[tuple[Annotation, int, tuple[float, float, float, float]]]
+    #: Boxes on this frame with no class. They are dropped from the label
+    #: file, which is a loss worth counting rather than swallowing.
+    unclassified_count: int
+    #: A human labelled this frame and it holds nothing at all.
+    is_background: bool
+
+    @property
+    def is_finished(self) -> bool:
+        """A human worked this whole frame and left nothing half-done.
+
+        The test the partial-label warning is gated on, and it takes all
+        three parts. ``labeled`` is set only by a canvas save, so it is
+        what separates "someone went through this picture" from "someone
+        reviewed one track that happens to appear in it" - the second
+        says nothing about the rest of the frame, which is the case the
+        warning has always been for. Every box having a class rules out
+        work abandoned half way, whose unclassified boxes are dropped
+        from the label file. And a background frame is never finished by
+        this definition: claiming a picture is empty over the detector's
+        head is exactly the claim worth saying out loud.
+        """
+        return self.frame.status == "labeled" and bool(self.objects) and self.unclassified_count == 0
+
+
+def _plan(export_frames: list[ExportFrame], class_id_to_index: dict[int, int]) -> list[_PlannedFrame]:
+    """Work out which frames will be written, and with what on them.
+
+    A frame with no exportable box is dataset material only when a human
+    put it there: saving zero boxes is the label "nothing here", and an
+    image with an empty label file is the negative example that teaches
+    it. ``query_export_frames`` has already established that positively -
+    a background frame carries no annotation rows of any kind - so a
+    frame that arrives here with boxes but no *classified* ones is
+    something else entirely: unfinished work. Shipping it as background
+    would train the model to ignore the very vehicles someone was
+    part-way through labelling, so it is left out.
+    """
+    planned: list[_PlannedFrame] = []
+    for entry in export_frames:
+        frame = entry.frame
+        objects = []
+        unclassified = 0
+        for annotation in entry.annotations:
+            class_id = annotation.class_id
+            if class_id is None or class_id not in class_id_to_index:
+                # Not classified, or classified against a class this
+                # project no longer has. Not exportable, not an error.
+                unclassified += 1
+                continue
+            class_index = class_id_to_index[class_id]
+            normalized = normalize_yolo_bbox(tuple(annotation.bbox_json), frame.width, frame.height)
+            objects.append((annotation, class_index, normalized))
+
+        is_background = not entry.annotations
+        if not objects and not is_background:
+            continue
+
+        planned.append(
+            _PlannedFrame(
+                frame=frame,
+                source=entry.source,
+                objects=objects,
+                unclassified_count=unclassified,
+                is_background=is_background,
+            )
+        )
+    return planned
 
 
 def _tracks_by_annotation(db: Session, export_frames: list[ExportFrame]) -> dict[str, str]:
@@ -266,7 +381,8 @@ def _tracks_by_annotation(db: Session, export_frames: list[ExportFrame]) -> dict
 
     Looked up in one batched pass rather than by walking a relationship
     per annotation, which on a fifty-frame export is fifty round trips
-    for a field nothing trains on.
+    for a field nothing trains on. ``chunked`` keeps each ``IN`` clause
+    under SQLite's bound-parameter cap.
     """
     candidate_ids = [
         annotation.frame_candidate_id
@@ -278,8 +394,7 @@ def _tracks_by_annotation(db: Session, export_frames: list[ExportFrame]) -> dict
         return {}
 
     track_by_candidate: dict[str, str] = {}
-    for start in range(0, len(candidate_ids), _STATEMENT_BATCH):
-        chunk = candidate_ids[start : start + _STATEMENT_BATCH]
+    for chunk in chunked(candidate_ids):
         rows = db.execute(
             select(FrameCandidate.id, FrameCandidate.track_id).where(FrameCandidate.id.in_(chunk))
         ).all()

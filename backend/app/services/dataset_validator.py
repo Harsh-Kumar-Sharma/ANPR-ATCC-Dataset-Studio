@@ -7,6 +7,11 @@ from pathlib import Path
 # catching rather than discovering after a wasted training run.
 _FULL_FRAME_BOX_AREA = 0.98
 
+# Background images earn their place - a detector needs to see what
+# "nothing" looks like - but a dataset made mostly of them is a
+# labelling accident far more often than a choice.
+_BACKGROUND_SHARE_WARNING = 0.5
+
 
 @dataclass
 class ValidationResult:
@@ -120,5 +125,32 @@ def validate_export(export_dir: Path, manifest: dict, num_classes: int) -> Valid
     # not accept. A vehicle the detector missed entirely is invisible here
     # and still exported as background - only full-frame human labeling
     # (Phase 11) can catch that case.
+
+    unclassified = manifest.get("frames_with_unclassified_boxes", 0)
+    if unclassified:
+        result.warnings.append(
+            f"{unclassified} exported frame(s) carry a box with no class. Those boxes are not in the "
+            "label file, so the objects they mark are exported as background."
+        )
+
+    skipped = manifest.get("frames_skipped_unclassified", 0)
+    if skipped:
+        result.warnings.append(
+            f"{skipped} labelled frame(s) were left out of this dataset because none of their boxes "
+            "has a class yet."
+        )
+
+    # A handful of background images is good training data. A dataset
+    # made mostly of them is usually a mistake someone wants to hear
+    # about before they spend a night training on it - and re-running
+    # validation on an old export has to be able to say so too, which a
+    # number that only ever appeared in the export response could not.
+    background = manifest.get("background_frames", 0)
+    total_frames = sum(counts.values())
+    if background and total_frames and background / total_frames > _BACKGROUND_SHARE_WARNING:
+        result.warnings.append(
+            f"{background} of {total_frames} exported frame(s) are background images with no objects "
+            f"({background / total_frames:.0%}). A dataset this empty trains a detector to find nothing."
+        )
 
     return result

@@ -14,21 +14,11 @@ from app.ml.yolo_detector import DEFAULT_MODEL_WEIGHTS
 from app.schemas.active_learning import RetrainingHandoffResult
 from app.schemas.dataset import DatasetExportRequest, DatasetExportResult, DatasetVersionRead, ValidationResultRead
 from app.services.dataset_export import export_dataset_version
-from app.services.dataset_split import SPLIT_TEST, SPLIT_TRAIN, SPLIT_VAL
 from app.services.dataset_validator import validate_export
 from app.services.retraining_handoff import write_retraining_handoff
 
 project_datasets_router = APIRouter(prefix="/projects/{project_id}/dataset-versions", tags=["datasets"])
 datasets_router = APIRouter(prefix="/dataset-versions", tags=["datasets"])
-
-
-def _split_counts(counts: dict) -> dict[str, int]:
-    """The per-split totals, defaulted, in a fixed order.
-
-    A manifest omits nothing, but an export with an empty split still has
-    to read as zero rather than as a missing key on the way to the UI.
-    """
-    return {split: int(counts.get(split, 0)) for split in (SPLIT_TRAIN, SPLIT_VAL, SPLIT_TEST, "total")}
 
 
 def _get_dataset_version_or_404(db: Session, dataset_version_id: str) -> DatasetVersion:
@@ -50,7 +40,7 @@ def create_dataset_version(
     accepted annotation. docs/02_IMPLEMENTATION_PLAN.md Phase 6 DoD:
     "a reproducible, validated dataset version can be exported"."""
     project = get_project_or_404(db, project_id)
-    dataset_version, validation = export_dataset_version(
+    dataset_version, validation, summary = export_dataset_version(
         db,
         project,
         Path(project.workspace_path),
@@ -59,18 +49,14 @@ def create_dataset_version(
         test_ratio=payload.test_ratio,
         split_seed=payload.split_seed,
     )
-    # Straight from the manifest the export just wrote, rather than
-    # recounted here. These numbers used to come from a count of
-    # dataset-item rows, which are one per *box* - so a frame with two
-    # vehicles on it reported as two frames, and a frame labelled as
-    # empty (which writes an image and no items) reported as none.
-    manifest = json.loads(_manifest_path(project.workspace_path, dataset_version).read_text(encoding="utf-8"))
+    # Straight from the manifest the export just wrote, handed back by
+    # the exporter rather than re-read from disk - the file carries an
+    # entry per frame and per box, which is a lot of JSON to parse for
+    # five numbers the export already had in memory.
     return DatasetExportResult(
         dataset_version=DatasetVersionRead.model_validate(dataset_version),
-        counts=_split_counts(manifest["counts"]),
-        object_counts=_split_counts(manifest["object_counts"]),
-        background_frames=int(manifest.get("background_frames", 0)),
         validation=ValidationResultRead(valid=validation.valid, errors=validation.errors, warnings=validation.warnings),
+        **summary,
     )
 
 

@@ -25,6 +25,8 @@ function exportResult(overrides: Partial<DatasetExportResult> = {}): DatasetExpo
     counts: { train: 40, val: 5, test: 5, total: 50 },
     object_counts: { train: 60, val: 8, test: 7, total: 75 },
     background_frames: 0,
+    frames_with_unclassified_boxes: 0,
+    frames_skipped_unclassified: 0,
     validation: { valid: true, errors: [], warnings: [] },
     ...overrides,
   };
@@ -49,6 +51,17 @@ describe("DatasetPanel: what an export reports", () => {
     expect(message.textContent).toContain("75 box(es)");
   });
 
+  it("says when work was left out, so a shrinking export is not a mystery", async () => {
+    // Fifty frames labelled, forty-five exported, and nothing anywhere
+    // saying why was the previous behaviour.
+    vi.spyOn(api, "exportDataset").mockResolvedValue(exportResult({ frames_skipped_unclassified: 5 }));
+    render(<DatasetPanel project={project} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /export dataset version/i }));
+
+    expect(await screen.findByText(/5 labelled frame\(s\) left out/)).toBeInTheDocument();
+  });
+
   it("says when frames were labelled as holding nothing", async () => {
     // A background image is deliberate, and a dataset quietly full of
     // them is something the labeller should be able to see.
@@ -57,7 +70,8 @@ describe("DatasetPanel: what an export reports", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /export dataset version/i }));
 
-    expect(await screen.findByText(/6 labelled empty/)).toBeInTheDocument();
+    // Phrased as a subset of the images, not as extra ones.
+    expect(await screen.findByText(/6 full frame\(s\) \(6 labelled empty\)|\(6 labelled empty\)/)).toBeInTheDocument();
   });
 
   it("does not mention empty frames when there are none", async () => {

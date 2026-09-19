@@ -31,13 +31,21 @@ function DatasetPanel({ project }: Props) {
       const result = await api.exportDataset(project.id);
       const warnings = result.validation.warnings ?? [];
       // Images and boxes are different numbers - a frame can carry many
-      // boxes - and a labeller wants to know both went in.
+      // boxes - and a labeller wants to know both went in. The empty
+      // frames are *of* those images, not extra ones, so they are
+      // phrased as a subset; reading them as an addition would make the
+      // dataset look bigger than it is.
       const background = result.background_frames ?? 0;
+      const dropped = result.frames_skipped_unclassified ?? 0;
       setMessage(
-        `v${result.dataset_version.version}: ${result.counts.total} full frame(s), ` +
-          `${result.object_counts?.total ?? 0} box(es)` +
-          (background ? `, ${background} labelled empty` : "") +
+        `v${result.dataset_version.version}: ${result.counts.total} full frame(s)` +
+          (background ? ` (${background} labelled empty)` : "") +
+          `, ${result.object_counts?.total ?? 0} box(es)` +
           `, validation ${result.validation.valid ? "passed" : "FAILED"}.` +
+          // Work that did not make it in. Saying nothing here is how a
+          // user ends up wondering why they labelled fifty frames and
+          // exported forty-five.
+          (dropped ? ` ${dropped} labelled frame(s) left out - no class on their boxes yet.` : "") +
           (warnings.length ? ` ${warnings.length} warning(s).` : ""),
       );
       setWarnings(warnings);

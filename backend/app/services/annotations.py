@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.annotation import Annotation
 from app.db.models.dataset_item import DatasetItem
+from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.track import Track
 
@@ -42,6 +43,14 @@ def delete_annotations(db: Session, annotation_ids: Iterable[str]) -> int:
     exists. Only human: a model prediction is not a review, and removing
     one says nothing about whether the track was looked at - which is
     the same line ``review.py`` draws when it writes review_status.
+
+    A frame left with no human boxes goes back to ``pending`` for the
+    same reason: ``labeled`` would be describing work that is no longer
+    there. It matters more than it looks - the export reads a
+    ``labeled`` frame with no boxes on it as a human saying "nothing
+    here", so a frame whose labels were deleted with their class would
+    otherwise ship as a background image asserting the vehicles in it
+    do not exist.
     """
     ids = list(annotation_ids)
     if not ids:
@@ -49,6 +58,9 @@ def delete_annotations(db: Session, annotation_ids: Iterable[str]) -> int:
 
     # Resolved before the labels go, while the join still holds.
     track_ids: set[str] = set()
+    frame_ids: set[str] = set()
+    for chunk in chunked(ids):
+        frame_ids.update(db.scalars(select(Annotation.frame_id).where(Annotation.id.in_(chunk))))
     for chunk in chunked(ids):
         track_ids.update(
             db.scalars(
@@ -65,5 +77,32 @@ def delete_annotations(db: Session, annotation_ids: Iterable[str]) -> int:
     for chunk in chunked(sorted(track_ids)):
         db.execute(update(Track).where(Track.id.in_(chunk)).values(review_status="unreviewed"))
 
+    _restate_emptied_frames(db, sorted(frame_ids))
+
     db.flush()
     return len(ids)
+
+
+def _restate_emptied_frames(db: Session, frame_ids: list[str]) -> None:
+    """Put a frame back to ``pending`` once its last human box is gone.
+
+    Only ``labeled`` frames are touched. ``rejected`` and ``skipped``
+    are judgements about whether a frame is worth labelling at all, and
+    deleting boxes does not reverse either of them.
+    """
+    if not frame_ids:
+        return
+
+    still_labelled: set[str] = set()
+    for chunk in chunked(frame_ids):
+        still_labelled.update(
+            db.scalars(
+                select(Annotation.frame_id).where(Annotation.frame_id.in_(chunk), Annotation.source == "human")
+            )
+        )
+
+    emptied = [frame_id for frame_id in frame_ids if frame_id not in still_labelled]
+    for chunk in chunked(emptied):
+        db.execute(
+            update(Frame).where(Frame.id.in_(chunk), Frame.status == "labeled").values(status="pending")
+        )

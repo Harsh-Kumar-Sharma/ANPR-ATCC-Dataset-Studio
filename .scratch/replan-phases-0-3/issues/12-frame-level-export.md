@@ -26,25 +26,58 @@ which the mixed-labelling test pins down.
 zero boxes is a real label - it is the negative example a detector needs - and
 dropping it would have made ticket 9's "zero boxes is a real label" true only
 inside the canvas. Counted separately in the manifest as `background_frames`,
-because a dataset that is quietly mostly background is a problem you want to be
-able to see. A frame whose only boxes are *unclassified* is not background: that
-is unfinished work, and shipping it would teach the model to ignore the very
-vehicles someone was part-way through labelling.
+and the validator warns when they pass half the dataset, because a dataset
+quietly made of nothing is a problem you want to see before you train on it.
 
-**The partial-label warning no longer fires on canvas-labelled frames.** It means
-"the detector found a vehicle nobody accepted", which was a fair inference while
-the only way to label was to review one track at a time. On a frame a human went
-through box by box, a detection without a box is one they *declined* - warning
-about it would be telling them off for doing the job. The heuristic now applies
-only to frames still at `pending`.
+**Establishing "background" took two goes, and the first one was wrong.** The
+first version inferred it: frame `labeled`, no *accepted* boxes. Review found
+three ways that inference is false, two of which turn a human's work into a
+training image that contradicts it.
+
+* A box reviewed `hard` is a human saying "this one is difficult". It is not an
+  accepted label, so the frame had none - and the canvas marks a frame
+  `labeled` on save while deliberately leaving a reviewed box's status alone.
+  A frame holding a hard vehicle exported as a picture asserting the vehicle is
+  not there.
+* Deleting a class with its labels emptied frames without restating them, so a
+  frame that held two vehicles a moment ago shipped as background.
+* A frame with one classified box and one the user had not got to yet dropped
+  the second box from the label file and reported nothing.
+
+The rule is now positive rather than inferred: a background frame is one with
+no annotation rows *at all*. Anything on the frame disqualifies it, whatever
+that thing's status. And `delete_annotations` puts a frame back to `pending`
+once its last human box is gone, which is the root fix for the second case and
+is right independently of export - it already resets a track's review status
+for exactly the same reason.
+
+**The partial-label warning is suppressed only for a frame a human finished.**
+"Finished" takes all three of: saved from the canvas, at least one box, and
+every box carrying a class. The first separates "someone went through this
+picture" from "someone reviewed one track that appears in it". The second and
+third were added after review found the gate was `frame.status == "labeled"`
+alone, which silently suppressed the warning on half-finished frames - the
+exact case it exists for. A background frame is never finished by this
+definition either: claiming a picture is empty over the detector's head is
+worth saying out loud.
+
+**The split, the decode pass and the version number now happen after the
+export decides what it will write.** They used to run over everything the query
+returned, including frames dropped later for having no classified box - so a
+requested 80/10/10 over fifty frames could land as 82/8/10 over forty-five,
+with five images decoded for nothing. An export with nothing left to write now
+fails with `nothing_to_export` instead of creating an empty dataset version and
+reporting that validation passed.
 
 **The export response was counting boxes and calling them frames.** Found while
 wiring this up: the API built its counts from `dataset_items`, which are one per
 *box*, so fifty labelled frames holding seventy-five boxes came back as
-seventy-five frames - and a background frame, which writes an image and no items,
-came back as none. The response now reports the manifest the export just wrote,
-and carries images and boxes as the two different numbers they are. The desktop
-panel shows both.
+seventy-five frames. Background frames would have been missed too, since they
+write an image and no item rows - though that was a consequence waiting to
+happen rather than one anyone hit, because before this ticket they were never
+exported. The response now carries the manifest's own numbers, handed back by
+the exporter rather than re-read from a file that holds an entry per box. The
+desktop panel shows images, boxes, and what was left out.
 
 **`_resolve_frame` deleted.** It created a `Frame` row on the fly for
 pre-Phase-10 candidates that had no `frame_id`. Migration `2346228ab587` made
@@ -54,7 +87,24 @@ can no longer reach the database.
 **Evaluation's class distribution still joins through the candidate, and that is
 correct.** It is scoped to a processing *run*, and a canvas box belongs to a
 frame, which belongs to a source that may have several runs - there is no honest
-answer to which run produced it. Same for active learning's disagreement queue,
-which compares a human's class against a *detector's* prediction and so needs a
-detection to compare with. Both now say so in the code rather than looking like
-oversights.
+answer to which run produced it.
+
+**Active learning's disagreement queue is a different story, and my first note
+about it was wrong.** I claimed it needs a detection to compare against and so
+is correctly candidate-scoped. It is not: the frames canvas boxes sit on *do*
+carry candidate rows with their own boxes, so a canvas label could be matched
+to a detection by overlap. The join is a gap, not a law. A project labelled
+entirely on the canvas gets an empty queue that reads as "no problems found".
+The code now says that plainly, and it is ticket 14.
+
+**One claim in the commit message overstates the case** and is corrected here
+rather than by rewriting history: it says a background frame "reported as none"
+under the old per-box counting. True of the counting, but nobody could have hit
+it, because the old exporter skipped every frame with no label lines. The
+per-box bug was real; that particular consequence was not yet reachable.
+
+**Two smaller things review caught.** The counts test used two, one and zero
+boxes across three frames, so images and boxes both totalled three and the
+assertion could not tell them apart - it now uses two, two and zero. And
+`_tracks_by_annotation` had its own copy of the chunking helper that already
+exists in `annotations.py`.

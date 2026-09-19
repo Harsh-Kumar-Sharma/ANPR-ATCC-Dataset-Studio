@@ -126,7 +126,6 @@ def test_fifty_canvas_labeled_frames_export_as_a_valid_dataset(tmp_path):
     created, manifest = _export(project, split_seed=42)
 
     assert created["validation"]["valid"] is True, created["validation"]["errors"]
-    assert created["validation"]["errors"] == []
     assert manifest["counts"]["total"] == 50
     assert manifest["object_counts"]["total"] == 75  # 25 frames x 2 boxes + 25 x 1
 
@@ -143,6 +142,7 @@ def test_the_split_still_applies_to_canvas_labeled_frames(tmp_path):
     """Frame-level export must not quietly bypass the split: every frame
     still gets train/val/test from the same seeded assignment."""
     project, queue = _project_with_queue(tmp_path, "Canvas Split", frame_count=60)
+    assert len(queue) >= 50
     for frame in queue[:50]:
         _draw(frame, [(4, CAR)])
 
@@ -269,13 +269,15 @@ def test_the_export_response_counts_images_not_boxes(tmp_path):
     an image and no items at all."""
     project, queue = _project_with_queue(tmp_path, "Export Counts")
     _draw(queue[0], [(4, CAR), (7, TRUCK)])
-    _draw(queue[1], [(4, CAR)])
+    _draw(queue[1], [(4, CAR), (7, TRUCK)])
     _draw(queue[2], [])
 
     created = client.post(f"/projects/{project['id']}/dataset-versions", json={})
     assert created.status_code == 201, created.text
     created = created.json()
 
+    # Four boxes across three images. The numbers have to differ, or the
+    # test cannot tell a per-box count from a per-image one.
     assert created["counts"]["total"] == 3, "three images were written"
-    assert created["object_counts"]["total"] == 3, "three boxes were written across them"
+    assert created["object_counts"]["total"] == 4, "four boxes were written across them"
     assert sum(created["counts"][s] for s in ("train", "val", "test")) == 3
