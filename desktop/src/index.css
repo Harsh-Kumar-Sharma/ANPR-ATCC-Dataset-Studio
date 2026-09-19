@@ -1874,9 +1874,48 @@ label.toggle {
 .label-canvas__selected {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+/* The attributes wrap onto their own row: there are five of them and
+   they must not push Delete off the end of the line. */
+.label-canvas__attributes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  flex-basis: 100%;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle, var(--border-strong));
+}
+
+.label-canvas__attribute {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.label-canvas__attribute input[type="text"] {
+  padding: 2px 6px;
+  font: inherit;
+  min-width: 160px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.label-canvas__attributes select {
+  padding: 2px 6px;
+  font: inherit;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
 }
 
 .label-canvas__selected select {

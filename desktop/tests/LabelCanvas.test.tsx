@@ -85,6 +85,9 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof LabelCanvas>> =
 describe("LabelCanvas: drawing", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Nothing here is about attributes, but an unmocked call would go
+    // out to a real backend that is not running.
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
     vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
     vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([]);
     drawnAtHalfSize();
@@ -153,6 +156,9 @@ describe("LabelCanvas: drawing", () => {
 describe("LabelCanvas: selecting and cycling", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Nothing here is about attributes, but an unmocked call would go
+    // out to a real backend that is not running.
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
     vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
     vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([
       annotation([10, 10, 50, 50], 1),
@@ -213,6 +219,9 @@ describe("LabelCanvas: selecting and cycling", () => {
 describe("LabelCanvas: classes", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Nothing here is about attributes, but an unmocked call would go
+    // out to a real backend that is not running.
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
     vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
     vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation([10, 10, 50, 50], null)]);
     drawnAtHalfSize();
@@ -281,6 +290,9 @@ describe("LabelCanvas: classes", () => {
 describe("LabelCanvas: editing", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Nothing here is about attributes, but an unmocked call would go
+    // out to a real backend that is not running.
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
     vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
     vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation([100, 100, 200, 150], 1)]);
     drawnAtHalfSize();
@@ -475,6 +487,9 @@ describe("LabelCanvas: editing", () => {
 describe("LabelCanvas: saving", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Nothing here is about attributes, but an unmocked call would go
+    // out to a real backend that is not running.
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
     vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
     vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([]);
     drawnAtHalfSize();

@@ -2,7 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { IconAlert } from "../Icons";
 import { isEditableTarget } from "../keyboard";
-import type { Annotation, Bbox, Frame, FrameAnnotationWrite, Project, ProjectClass } from "../types";
+import type {
+  Annotation,
+  AttributeDefinition,
+  Bbox,
+  Frame,
+  FrameAnnotationWrite,
+  Project,
+  ProjectClass,
+} from "../types";
 
 interface Props {
   project: Project;
@@ -124,6 +132,7 @@ function fromAnnotation(a: Annotation): Box {
 function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChange, onRejected }: Props) {
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [classes, setClasses] = useState<ProjectClass[]>([]);
+  const [attributeDefs, setAttributeDefs] = useState<AttributeDefinition[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -181,6 +190,36 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
       cancelled = true;
     };
   }, [project.id, classesVersion]);
+
+  // Loaded once, not per frame: what a box can carry is a property of
+  // the domain, not of the frame being looked at. A failure here leaves
+  // the list empty and the panel unrendered rather than taking the
+  // canvas down - boxes and classes are the job, attributes are extra.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listAttributeDefinitions()
+      .then((list) => !cancelled && setAttributeDefs(list))
+      .catch(() => !cancelled && setAttributeDefs([]));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Set one attribute on the selected box.
+   *
+   *  `undefined` clears it, and clearing removes the key rather than
+   *  writing a blank - the server stores it that way, so sending it that
+   *  way keeps what is on screen and what is in the database the same
+   *  shape. */
+  function setAttribute(key: string, value: string | boolean | undefined) {
+    updateSelected((b) => {
+      const next = { ...b.attributes };
+      if (value === undefined || value === "") delete next[key];
+      else next[key] = value;
+      return { ...b, attributes: next };
+    });
+  }
 
   /** Mouse position -> full-frame pixels, clamped to the frame. */
   function toFrame(clientX: number, clientY: number): { x: number; y: number } {
@@ -601,6 +640,59 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
           <button aria-label="Delete selected box" onClick={deleteSelected}>
             Delete
           </button>
+
+          {attributeDefs.length > 0 && (
+            <div className="label-canvas__attributes" data-testid="label-attributes">
+              {attributeDefs.map((definition) => {
+                const value = selectedBox.attributes[definition.key];
+                if (definition.type === "boolean") {
+                  return (
+                    <label key={definition.key} className="label-canvas__attribute">
+                      <input
+                        type="checkbox"
+                        aria-label={definition.label}
+                        checked={value === true}
+                        onChange={(e) => setAttribute(definition.key, e.target.checked || undefined)}
+                      />
+                      {definition.label}
+                    </label>
+                  );
+                }
+                if (definition.type === "choice") {
+                  return (
+                    <label key={definition.key} className="label-canvas__attribute">
+                      {definition.label}{" "}
+                      <select
+                        aria-label={definition.label}
+                        value={typeof value === "string" ? value : ""}
+                        onChange={(e) => setAttribute(definition.key, e.target.value || undefined)}
+                      >
+                        <option value="">(none)</option>
+                        {(definition.options ?? []).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                }
+                return (
+                  <label key={definition.key} className="label-canvas__attribute">
+                    {definition.label}{" "}
+                    <input
+                      type="text"
+                      aria-label={definition.label}
+                      value={typeof value === "string" ? value : ""}
+                      maxLength={definition.max_length}
+                      placeholder={definition.placeholder}
+                      onChange={(e) => setAttribute(definition.key, e.target.value)}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

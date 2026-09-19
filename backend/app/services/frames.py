@@ -22,6 +22,7 @@ from app.db.models.annotation import Annotation
 from app.db.models.frame import FRAME_STATUSES, SET_ASIDE_STATUSES, Frame
 from app.db.models.project import Project
 from app.db.models.source import Source
+from app.services.annotation_attributes import InvalidAttributeError, clean_attributes
 from app.services.annotations import delete_annotations
 from app.services.class_definitions import is_valid_class_id
 from app.services.frame_materializer import materialize_frames
@@ -223,8 +224,9 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     Validation runs over every box before anything is touched, so a
     single bad box leaves the previous set exactly as it was.
     """
-    for index, box in enumerate(boxes):
-        _validate(db, project_id, frame, index, box)
+    # Validated - and cleaned - before anything is touched, so one bad
+    # box leaves the previous set exactly as it was, attributes included.
+    cleaned = [_validate(db, project_id, frame, index, box) for index, box in enumerate(boxes)]
 
     existing = {a.id: a for a in list_annotations(db, frame.id)}
 
@@ -237,12 +239,12 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
             f"{len(unknown)} box(es) refer to annotations no longer on this frame. Reload it and try again."
         )
 
-    for box in boxes:
+    for box, attributes in zip(boxes, cleaned):
         if box.id is not None:
             annotation = existing[box.id]
             annotation.class_id = box.class_id
             annotation.bbox_json = [float(v) for v in box.bbox]
-            annotation.attributes = dict(box.attributes)
+            annotation.attributes = attributes
             if annotation.source != "human":
                 # Sending a prediction back is confirming it.
                 annotation.source = "human"
@@ -255,7 +257,7 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
                     source="human",
                     class_id=box.class_id,
                     bbox_json=[float(v) for v in box.bbox],
-                    attributes=dict(box.attributes),
+                    attributes=attributes,
                     # A box a human drew is the human's truth for that frame.
                     status="accepted",
                 )
@@ -269,7 +271,10 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     return list_annotations(db, frame.id)
 
 
-def _validate(db: Session, project_id: str, frame: Frame, index: int, box: BoxInput) -> None:
+def _validate(db: Session, project_id: str, frame: Frame, index: int, box: BoxInput) -> dict:
+    """Check one box, and return the attributes that should be stored
+    for it. Returning rather than mutating keeps the whole check-first
+    pass free of side effects."""
     if len(box.bbox) != 4 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in box.bbox):
         raise InvalidBoxError(f"Box {index}: expected four finite numbers [x1, y1, x2, y2].")
 
@@ -282,3 +287,8 @@ def _validate(db: Session, project_id: str, frame: Frame, index: int, box: BoxIn
 
     if box.class_id is not None and not is_valid_class_id(db, project_id, box.class_id):
         raise InvalidBoxError(f"Box {index}: class {box.class_id} is not one of this project's classes.")
+
+    try:
+        return clean_attributes(box.attributes)
+    except InvalidAttributeError as e:
+        raise InvalidBoxError(f"Box {index}: {e}") from e

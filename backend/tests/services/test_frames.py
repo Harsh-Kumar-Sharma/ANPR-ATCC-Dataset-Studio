@@ -386,7 +386,7 @@ def test_an_echoed_box_is_updated_in_place():
 
     with SessionLocal() as db:
         frames.replace_annotations(
-            db, project.id, db.get(Frame, frame.id), [BoxInput(id=box_id, class_id=2, bbox=[5, 5, 20, 20], attributes={"moved": True})]
+            db, project.id, db.get(Frame, frame.id), [BoxInput(id=box_id, class_id=2, bbox=[5, 5, 20, 20], attributes={"occluded": True})]
         )
         db.commit()
 
@@ -394,7 +394,7 @@ def test_an_echoed_box_is_updated_in_place():
         updated = db.get(Annotation, box_id)
         assert updated.class_id == 2
         assert updated.bbox_json == [5, 5, 20, 20]
-        assert updated.attributes == {"moved": True}
+        assert updated.attributes == {"occluded": True}
 
 
 def test_resaving_an_exported_box_keeps_its_dataset_item():

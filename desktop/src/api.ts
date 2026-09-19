@@ -1,5 +1,6 @@
 import type {
   Annotation,
+  AttributeDefinition,
   ClassDefinition,
   ClassDeleteOutcome,
   ClassUsage,
@@ -148,6 +149,9 @@ export const api = {
     request<Frame>(`/frames/${frameId}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
   /** The full frame, decoded on demand. The canvas's <img> src. */
   fullFrameImageUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/image`,
+  /** What a box can carry besides its class. One list, shared with the
+   *  validation on the way back in. */
+  listAttributeDefinitions: () => request<AttributeDefinition[]>("/annotation-attributes"),
   getFrameAnnotations: (frameId: string) => request<Annotation[]>(`/frames/${frameId}/annotations`),
   /** Whole-set replacement: whatever is not in the list is gone. */
   saveFrameAnnotations: (frameId: string, annotations: FrameAnnotationWrite[]) =>
