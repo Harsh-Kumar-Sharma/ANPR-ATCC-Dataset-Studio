@@ -85,6 +85,7 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof LabelCanvas>> =
 describe("LabelCanvas: drawing", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
     // Nothing here is about attributes, but an unmocked call would go
     // out to a real backend that is not running.
     vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
@@ -156,6 +157,7 @@ describe("LabelCanvas: drawing", () => {
 describe("LabelCanvas: selecting and cycling", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
     // Nothing here is about attributes, but an unmocked call would go
     // out to a real backend that is not running.
     vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
@@ -219,6 +221,7 @@ describe("LabelCanvas: selecting and cycling", () => {
 describe("LabelCanvas: classes", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
     // Nothing here is about attributes, but an unmocked call would go
     // out to a real backend that is not running.
     vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
@@ -290,6 +293,7 @@ describe("LabelCanvas: classes", () => {
 describe("LabelCanvas: editing", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
     // Nothing here is about attributes, but an unmocked call would go
     // out to a real backend that is not running.
     vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
@@ -487,6 +491,7 @@ describe("LabelCanvas: editing", () => {
 describe("LabelCanvas: saving", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
     // Nothing here is about attributes, but an unmocked call would go
     // out to a real backend that is not running.
     vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);

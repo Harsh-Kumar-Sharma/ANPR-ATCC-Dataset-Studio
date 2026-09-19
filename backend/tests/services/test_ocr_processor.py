@@ -1,7 +1,3 @@
-import pytest
-
-from app.core.errors import NotFoundError
-from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.ocr_candidate import OcrCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
@@ -10,7 +6,7 @@ from app.db.models.track import Track
 from app.db.session import SessionLocal
 from app.ml.bytetrack_tracker import ByteTrackTracker
 from app.ml.types import PlateOcrCandidate
-from app.services.ocr_processor import run_ocr_for_track, select_ocr_result
+from app.services.ocr_processor import run_ocr_for_track
 from app.services.track_processor import process_source
 from app.services.workspace import create_project_workspace
 from tests.stub_detector import StubDetector
@@ -97,56 +93,5 @@ def test_ocr_with_no_readable_text_persists_nothing(tmp_path):
         attempts = run_ocr_for_track(db, track, engine)
         assert attempts == []
         assert db.query(OcrCandidate).filter(OcrCandidate.track_id == track.id).count() == 0
-    finally:
-        db.close()
-
-
-def test_select_existing_candidate_swaps_selection(tmp_path):
-    db, track = _make_track_with_ocr_candidates(tmp_path)
-    try:
-        engine = StubOcrEngine(
-            responses=[[PlateOcrCandidate(bbox_xyxy=(0, 0, 10, 5), text="AAA1111", confidence=0.9)]]
-        )
-        run_ocr_for_track(db, track, engine, confident_threshold=1.1)  # never "confident enough", tries all frames
-
-        candidates = db.query(OcrCandidate).filter(OcrCandidate.track_id == track.id).all()
-        assert len(candidates) >= 2
-        currently_selected = next(c for c in candidates if c.selected)
-        other = next(c for c in candidates if not c.selected)
-
-        chosen = select_ocr_result(
-            db, track, ocr_candidate_id=other.id, corrected_text=None, frame_candidate_id=None
-        )
-
-        assert chosen.id == other.id
-        assert chosen.selected is True
-        db.refresh(currently_selected)
-        assert currently_selected.selected is False
-    finally:
-        db.close()
-
-
-def test_select_with_human_correction_creates_new_row(tmp_path):
-    db, track = _make_track_with_ocr_candidates(tmp_path)
-    try:
-        frame = db.query(FrameCandidate).filter(FrameCandidate.track_id == track.id).first()
-
-        chosen = select_ocr_result(
-            db, track, ocr_candidate_id=None, corrected_text="mh 12 ab 1234", frame_candidate_id=frame.id
-        )
-
-        assert chosen.source == "human"
-        assert chosen.text == "mh 12 ab 1234"
-        assert chosen.normalized_text == "MH12AB1234"
-        assert chosen.selected is True
-    finally:
-        db.close()
-
-
-def test_select_unknown_candidate_raises_not_found(tmp_path):
-    db, track = _make_track_with_ocr_candidates(tmp_path)
-    try:
-        with pytest.raises(NotFoundError):
-            select_ocr_result(db, track, ocr_candidate_id="does-not-exist", corrected_text=None, frame_candidate_id=None)
     finally:
         db.close()

@@ -8,6 +8,7 @@ import type {
   Bbox,
   Frame,
   FrameAnnotationWrite,
+  PlateReading,
   Project,
   ProjectClass,
 } from "../types";
@@ -133,6 +134,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [classes, setClasses] = useState<ProjectClass[]>([]);
   const [attributeDefs, setAttributeDefs] = useState<AttributeDefinition[]>([]);
+  const [plateReadings, setPlateReadings] = useState<PlateReading[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -205,6 +207,21 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
       cancelled = true;
     };
   }, []);
+
+  // What the model read on this frame, so a labeller is not retyping a
+  // plate it already has. Per frame, like the image. A failure leaves
+  // the list empty rather than taking the canvas down - suggestions are
+  // a convenience, boxes are the job.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getFramePlateReadings(frame.id)
+      .then((list) => !cancelled && setPlateReadings(list))
+      .catch(() => !cancelled && setPlateReadings([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [frame.id]);
 
   /** Set one attribute on the selected box.
    *
@@ -716,6 +733,25 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
                   </label>
                 );
               })}
+            </div>
+          )}
+
+          {plateReadings.length > 0 && attributeDefs.some((d) => d.key === "plate_text") && (
+            // Every reading on the frame, not only the ones overlapping
+            // this box: matching them would mean a second copy of the
+            // association threshold active-learning owns, and three
+            // lines is a list a person can simply read.
+            <div className="label-canvas__plate-readings" data-testid="plate-readings">
+              <span>Model read:</span>
+              {plateReadings.map((reading) => (
+                <button
+                  key={reading.frame_candidate_id + reading.normalized_text}
+                  onClick={() => setAttribute("plate_text", reading.normalized_text)}
+                  title={`${(reading.confidence * 100).toFixed(0)}% confident`}
+                >
+                  {reading.normalized_text || "(no text)"}
+                </button>
+              ))}
             </div>
           )}
         </div>

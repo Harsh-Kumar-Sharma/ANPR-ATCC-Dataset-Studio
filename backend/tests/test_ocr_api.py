@@ -58,7 +58,12 @@ def test_ocr_run_on_unknown_track_returns_404():
     assert response.status_code == 404
 
 
-def test_select_ocr_candidate_by_id(tmp_path):
+def test_the_ocr_table_holds_only_what_the_model_read(tmp_path):
+    """Ticket 15. A human's reading is a property of the vehicle in the
+    box, so it lives on the annotation; the old human-sourced row here
+    was a second home that no export ever read. `selected` still means
+    "the model's own best attempt", and nothing but the OCR run writes
+    it."""
     ctx = _create_track(tmp_path)
     track_id = ctx["track"]["id"]
 
@@ -67,47 +72,23 @@ def test_select_ocr_candidate_by_id(tmp_path):
     )
     try:
         client.post(f"/tracks/{track_id}/ocr")
-        candidates = client.get(f"/tracks/{track_id}/ocr-candidates").json()
-        assert len(candidates) >= 2
-        not_selected = next(c for c in candidates if not c["selected"])
-
-        response = client.put(f"/tracks/{track_id}/ocr-selection", json={"ocr_candidate_id": not_selected["id"]})
-        assert response.status_code == 200
-        assert response.json()["id"] == not_selected["id"]
-        assert response.json()["selected"] is True
     finally:
         app.dependency_overrides.pop(get_default_ocr_engine, None)
 
+    candidates = client.get(f"/tracks/{track_id}/ocr-candidates").json()
+    assert candidates
+    assert all(c["source"] == "model" for c in candidates)
+    assert sum(1 for c in candidates if c["selected"]) == 1
 
-def test_human_correction_creates_selected_human_row(tmp_path):
+
+def test_the_old_selection_endpoint_is_gone(tmp_path):
+    """It wrote a human reading into the model's table. Replaced by
+    PUT /tracks/{id}/plate-text, which writes the annotation."""
     ctx = _create_track(tmp_path)
-    track_id = ctx["track"]["id"]
-    timeline = client.get(f"/tracks/{track_id}").json()
-    frame_id = timeline["frames"][0]["id"]
 
     response = client.put(
-        f"/tracks/{track_id}/ocr-selection",
-        json={"corrected_text": "dl 3c ab 0007", "frame_candidate_id": frame_id},
+        f"/tracks/{ctx['track']['id']}/ocr-selection",
+        json={"corrected_text": "dl 3c ab 0007", "frame_candidate_id": "whatever"},
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "human"
-    assert body["normalized_text"] == "DL3CAB0007"
-    assert body["selected"] is True
 
-
-def test_selection_requires_exactly_one_of_the_two_options(tmp_path):
-    ctx = _create_track(tmp_path)
-    track_id = ctx["track"]["id"]
-
-    both = client.put(
-        f"/tracks/{track_id}/ocr-selection",
-        json={"ocr_candidate_id": "x", "corrected_text": "y", "frame_candidate_id": "z"},
-    )
-    assert both.status_code == 422
-
-    neither = client.put(f"/tracks/{track_id}/ocr-selection", json={})
-    assert neither.status_code == 422
-
-    missing_frame = client.put(f"/tracks/{track_id}/ocr-selection", json={"corrected_text": "y"})
-    assert missing_frame.status_code == 422
+    assert response.status_code == 404

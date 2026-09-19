@@ -11,7 +11,7 @@ from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
 from app.db.models.source import Source
 from app.db.models.track import Track
-from app.services.ocr_metrics import OcrAttempt, compute_ocr_agreement
+from app.services.ocr_metrics import ModelReading, compute_ocr_agreement
 from app.services.track_metrics import (
     TrackSummary,
     find_duplicate_track_pairs,
@@ -69,17 +69,32 @@ def _compute_class_distribution(db: Session, run_id: str, project_id: str) -> di
 
 
 def _compute_ocr_metrics(db: Session, run_id: str) -> dict:
-    rows = list(
-        db.execute(
-            select(OcrCandidate.track_id, OcrCandidate.source, OcrCandidate.normalized_text, OcrCandidate.confidence, OcrCandidate.selected)
-            .join(Track, OcrCandidate.track_id == Track.id)
-            .where(Track.run_id == run_id)
-        ).all()
-    )
-    attempts_by_track: dict[str, list[OcrAttempt]] = defaultdict(list)
-    for track_id, source, normalized_text, confidence, selected in rows:
-        attempts_by_track[track_id].append(OcrAttempt(source, normalized_text, confidence, selected))
-    return compute_ocr_agreement(attempts_by_track)
+    """What the model read, against what a human wrote down.
+
+    Two sides from two places, which is the point: the readings come
+    from ``ocr_candidates``, which is the model's record, and the plates
+    come from the annotations, which is where a human's reading lives.
+    """
+    readings_by_track: dict[str, list[ModelReading]] = defaultdict(list)
+    for track_id, normalized_text, confidence in db.execute(
+        select(OcrCandidate.track_id, OcrCandidate.normalized_text, OcrCandidate.confidence)
+        .join(Track, OcrCandidate.track_id == Track.id)
+        .where(Track.run_id == run_id, OcrCandidate.source == "model")
+    ).all():
+        readings_by_track[track_id].append(ModelReading(normalized_text, confidence))
+
+    human_plate_by_track: dict[str, str] = {}
+    for track_id, attributes in db.execute(
+        select(FrameCandidate.track_id, Annotation.attributes)
+        .join(Annotation, Annotation.frame_candidate_id == FrameCandidate.id)
+        .join(Track, FrameCandidate.track_id == Track.id)
+        .where(Track.run_id == run_id, Annotation.source == "human")
+    ).all():
+        plate = (attributes or {}).get("plate_text")
+        if plate:
+            human_plate_by_track[track_id] = plate
+
+    return compute_ocr_agreement(readings_by_track, human_plate_by_track)
 
 
 def _build_failure_gallery(db: Session, run_id: str) -> list[dict]:

@@ -64,6 +64,7 @@ function selectFirstBox() {
 describe("LabelCanvas: the attributes panel", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
     vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
     vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue(definitions);
   });

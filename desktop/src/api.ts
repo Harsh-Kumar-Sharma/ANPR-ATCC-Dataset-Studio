@@ -14,6 +14,7 @@ import type {
   JobSubmitted,
   LabelBalance,
   OcrCandidate,
+  PlateReading,
   ProcessingRun,
   Project,
   ProjectClass,
@@ -163,16 +164,18 @@ export const api = {
 
   runOcr: (trackId: string) => request<OcrCandidate[]>(`/tracks/${trackId}/ocr`, { method: "POST" }),
   listOcrCandidates: (trackId: string) => request<OcrCandidate[]>(`/tracks/${trackId}/ocr-candidates`),
-  selectOcrCandidate: (trackId: string, ocrCandidateId: string) =>
-    request<OcrCandidate>(`/tracks/${trackId}/ocr-selection`, {
+  /** Record what a human read off this track's plate. It goes on the
+   *  annotation - the one home for a plate - so the track must have been
+   *  reviewed first. Empty clears it. */
+  setTrackPlateText: (trackId: string, plateText: string) =>
+    request<Annotation>(`/tracks/${trackId}/plate-text`, {
       method: "PUT",
-      body: JSON.stringify({ ocr_candidate_id: ocrCandidateId }),
+      body: JSON.stringify({ plate_text: plateText }),
     }),
-  correctOcr: (trackId: string, correctedText: string, frameCandidateId: string) =>
-    request<OcrCandidate>(`/tracks/${trackId}/ocr-selection`, {
-      method: "PUT",
-      body: JSON.stringify({ corrected_text: correctedText, frame_candidate_id: frameCandidateId }),
-    }),
+  /** What the model read on this frame, most confident first. By frame
+   *  because the labelling canvas has no track. */
+  getFramePlateReadings: (frameId: string) =>
+    request<PlateReading[]>(`/frames/${frameId}/plate-readings`),
 
   listDatasetVersions: (projectId: string) => request<DatasetVersion[]>(`/projects/${projectId}/dataset-versions`),
   exportDataset: (projectId: string) =>

@@ -5,6 +5,8 @@ addressed by its own id - the project is derivable from it, and the
 canvas holds a frame, not a project.
 """
 
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -14,8 +16,10 @@ from app.db.models.annotation import Annotation
 from app.db.models.frame import Frame
 from app.db.session import get_db
 from app.schemas.frame import FrameAnnotationsReplace, FrameRead, FrameStatusWrite, QueueProgress
+from app.schemas.ocr import PlateReadingRead
 from app.schemas.review import AnnotationRead
 from app.services import frames
+from app.services.plate_text import plate_readings_for_frame
 
 project_frames_router = APIRouter(prefix="/projects/{project_id}/frames", tags=["frames"])
 frames_router = APIRouter(prefix="/frames", tags=["frames"])
@@ -64,6 +68,18 @@ def set_frame_status(frame_id: str, payload: FrameStatusWrite, db: Session = Dep
     db.commit()
     db.refresh(frame)
     return frame
+
+
+@frames_router.get("/{frame_id}/plate-readings", response_model=list[PlateReadingRead])
+def list_frame_plate_readings(frame_id: str, db: Session = Depends(get_db)):
+    """What the model read on this frame, best first.
+
+    By frame because the canvas has no track - it holds a picture. Lets
+    a labeller see what the model made of each plate instead of
+    retyping one it already has.
+    """
+    frames.get_frame(db, frame_id)
+    return [PlateReadingRead(**asdict(r)) for r in plate_readings_for_frame(db, frame_id)]
 
 
 @frames_router.get("/{frame_id}/annotations", response_model=list[AnnotationRead])

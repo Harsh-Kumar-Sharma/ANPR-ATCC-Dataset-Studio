@@ -2,7 +2,6 @@ import cv2
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.errors import NotFoundError
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.ocr_candidate import OcrCandidate
 from app.db.models.track import Track
@@ -60,6 +59,10 @@ def run_ocr_for_track(
             break
 
     if attempts:
+        # The model's own best reading, flagged for the UI to lead with.
+        # It is not a human decision and never was: a human's reading
+        # goes on the annotation (see services/plate_text.py), so this
+        # flag means one thing and nothing writes it but this function.
         best = max(attempts, key=lambda a: a.confidence)
         best.selected = True
 
@@ -67,43 +70,3 @@ def run_ocr_for_track(
     for a in attempts:
         db.refresh(a)
     return attempts
-
-
-def select_ocr_result(
-    db: Session,
-    track: Track,
-    *,
-    ocr_candidate_id: str | None,
-    corrected_text: str | None,
-    frame_candidate_id: str | None,
-) -> OcrCandidate:
-    """Human correction: pick an existing attempt, or add a new
-    human-sourced one and pick that. Exactly one row per track is
-    ``selected`` at a time."""
-    db.query(OcrCandidate).filter(OcrCandidate.track_id == track.id).update({"selected": False})
-
-    if ocr_candidate_id is not None:
-        chosen = db.get(OcrCandidate, ocr_candidate_id)
-        if chosen is None or chosen.track_id != track.id:
-            raise NotFoundError(f"OCR candidate not found on this track: {ocr_candidate_id}")
-        chosen.selected = True
-    else:
-        assert corrected_text is not None and frame_candidate_id is not None
-        frame = db.get(FrameCandidate, frame_candidate_id)
-        if frame is None or frame.track_id != track.id:
-            raise NotFoundError(f"Frame candidate not found on this track: {frame_candidate_id}")
-        chosen = OcrCandidate(
-            track_id=track.id,
-            frame_candidate_id=frame_candidate_id,
-            source="human",
-            plate_bbox_json=[0.0, 0.0, 0.0, 0.0],
-            text=corrected_text,
-            normalized_text=normalize_plate_text(corrected_text),
-            confidence=1.0,
-            selected=True,
-        )
-        db.add(chosen)
-
-    db.commit()
-    db.refresh(chosen)
-    return chosen

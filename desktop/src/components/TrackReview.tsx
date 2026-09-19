@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { IconAlert, IconCheck, IconX } from "../Icons";
 import { isEditableTarget } from "../keyboard";
 import type { Bbox, FrameCandidate, OcrCandidate, Project, ProjectClass, Track, TrackTimeline } from "../types";
@@ -28,6 +28,8 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
   const [ocrCandidates, setOcrCandidates] = useState<OcrCandidate[]>([]);
   const [ocrRunning, setOcrRunning] = useState(false);
   const [correctionText, setCorrectionText] = useState("");
+  /** The plate currently on the annotation, as the server has it. */
+  const [plateText, setPlateText] = useState("");
   const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
@@ -42,6 +44,10 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
       .then(([tl, annotation]) => {
         if (cancelled) return;
         setTimeline(tl);
+        // The plate lives on the annotation now, so it arrives with it.
+        const existing = (annotation?.attributes?.plate_text as string | undefined) ?? "";
+        setPlateText(existing);
+        setCorrectionText(existing);
         let initialIndex = tl.frames.findIndex((f) => f.flags_json?.roles.includes("best_detection"));
         if (initialIndex < 0) initialIndex = 0;
         if (annotation) {
@@ -77,23 +83,24 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
     }
   }
 
-  async function handleSelectOcr(candidateId: string) {
-    try {
-      await api.selectOcrCandidate(track.id, candidateId);
-      setOcrCandidates(await api.listOcrCandidates(track.id));
-    } catch (e) {
-      setError(String(e));
-    }
+  /** Take one of the model's readings as the plate. Clicking a
+   *  candidate and typing the same characters are the same act, so
+   *  both end up in the same place - the annotation. */
+  function handleUseReading(text: string) {
+    setCorrectionText(text);
+    void savePlateText(text);
   }
 
-  async function handleCorrectOcr() {
-    if (!correctionText.trim() || !currentFrame) return;
+  async function savePlateText(text: string) {
     try {
-      await api.correctOcr(track.id, correctionText.trim(), currentFrame.id);
-      setCorrectionText("");
-      setOcrCandidates(await api.listOcrCandidates(track.id));
+      await api.setTrackPlateText(track.id, text);
+      setPlateText(text);
+      setError(null);
+      setMessage(text ? `Plate saved: ${text}` : "Plate cleared.");
     } catch (e) {
-      setError(String(e));
+      // The 409 here is "review this track first", which is worth
+      // reading rather than a generic failure.
+      setError(e instanceof ApiError ? e.message : String(e));
     }
   }
 
@@ -315,10 +322,10 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
                   <span className="ocr-meta">
                     {c.source} &middot; {(c.confidence * 100).toFixed(0)}%
                   </span>
-                  {!c.selected && <button onClick={() => handleSelectOcr(c.id)}>Select</button>}
+                  <button onClick={() => handleUseReading(c.normalized_text)}>Use</button>
                   {c.selected && (
                     <span className="badge badge-success">
-                      <IconCheck /> selected
+                      <IconCheck /> best
                     </span>
                   )}
                 </li>
@@ -328,12 +335,14 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
             <div className="ocr-correction">
               <input
                 type="text"
-                placeholder="Correct plate text"
+                aria-label="Plate text"
+                placeholder="e.g. MH12AB1234"
                 value={correctionText}
                 onChange={(e) => setCorrectionText(e.target.value)}
               />
-              <button onClick={handleCorrectOcr}>Save</button>
+              <button onClick={() => savePlateText(correctionText)}>Save</button>
             </div>
+            {plateText && <p className="ocr-recorded">Recorded on this label: {plateText}</p>}
           </div>
         </div>
       </div>

@@ -1924,6 +1924,33 @@ label.toggle {
   border-top: 1px solid var(--border-strong);
 }
 
+.label-canvas__plate-readings {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.label-canvas__plate-readings button {
+  padding: 1px 6px;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.ocr-recorded {
+  margin: 0.3rem 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .label-canvas__attribute {
   display: flex;
   align-items: center;

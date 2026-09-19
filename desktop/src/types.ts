@@ -388,3 +388,16 @@ export interface JobSubmitted {
    *  choosing which frames are worth labelling. */
   run_id: string | null;
 }
+
+/** One plate the model read on a frame, and the vehicle it read it from.
+ *
+ *  `bbox_json` is the *detection's* box in full-frame pixels. The
+ *  plate's own box is relative to a cropped vehicle image, which a
+ *  canvas drawing on the frame cannot use. */
+export interface PlateReading {
+  frame_candidate_id: string;
+  text: string;
+  normalized_text: string;
+  confidence: number;
+  bbox_json: number[];
+}

@@ -12,7 +12,7 @@ done are, for now, wrong.
 
 **Blocked by:** 13 (Record per-object attributes)
 
-**Status:** ready-for-agent
+**Status:** done
 
 The two are not merely duplicated, they behave differently.
 
@@ -38,9 +38,55 @@ did not attempt it:
   table to model predictions changes an evaluation metric, which needs its own
   decision about what the metric should then mean.
 
-- [ ] Human-corrected plate text is stored in one place, and it is the annotation
-- [ ] A correction made before a track is accepted still has somewhere to go, or the UI does not offer it until there is one
-- [ ] The OCR agreement metric states what it measures once human rows are no longer in that table, and its tests say so
-- [ ] Plate text reaches the exported dataset whichever UI recorded it
-- [ ] The canvas shows what the model read, so a labeller is not retyping a plate the model already has
-- [ ] `docs/REPLAN.md` lines about the plate card being replaced are true, or corrected
+- [x] Human-corrected plate text is stored in one place, and it is the annotation
+- [x] A correction made before a track is accepted still has somewhere to go, or the UI does not offer it until there is one
+- [x] The OCR agreement metric states what it measures once human rows are no longer in that table, and its tests say so
+- [x] Plate text reaches the exported dataset whichever UI recorded it
+- [x] The canvas shows what the model read, so a labeller is not retyping a plate the model already has
+- [x] `docs/REPLAN.md` lines about the plate card being replaced are true, or corrected
+
+**`PUT /tracks/{id}/ocr-selection` is gone, replaced by `PUT
+/tracks/{id}/plate-text`.** The old endpoint did two things - pick one of the
+model's readings, or supply your own - and recorded both as a row in the model's
+table. Clicking a candidate and typing the same characters are the same act, so
+there is one field now and it writes the annotation. The client already has the
+candidate's text; the server has no reason to know which way it arrived, and
+keeping a "which one did they pick" flag was how the reading ended up in two
+places.
+
+**A plate before the track is reviewed is refused, not stored somewhere else.**
+409 `no_label_yet`, and the card says to review the track first. The ticket
+allowed either that or finding somewhere for it to go; there is nowhere honest,
+because an annotation is a *label* and the reviewer has not made one yet. The
+old behaviour looked like it worked and lost the work - no export has ever read
+that table.
+
+**`selected` now means one thing: the model's own best attempt.** The OCR run
+sets it and nothing else writes it. It used to mean "the track's chosen result",
+which a human could change, which is what made the agreement metric compare the
+model against itself.
+
+**The agreement metric changed meaning, and the old meaning was misleading.**
+It compared the model's top attempt with whichever row was `selected` - but the
+OCR run selects the model's own best, so a track nobody had looked at scored an
+agreement. The rate was largely a measure of how little reviewing had been done.
+It now compares what the model read with what a person wrote down, and counts
+only tracks where both exist. Expect the number to drop and the denominator to
+shrink; that is the point.
+
+**Plate readings are offered by frame, not by track.** The canvas holds a
+picture and has no track, so `GET /frames/{id}/plate-readings` returns what the
+model read on it, carrying the *detection's* box rather than the plate's - the
+plate box is relative to a cropped vehicle image, which is meaningless on a
+frame. Every reading on the frame is offered rather than only the ones
+overlapping the selected box: matching them would mean a second copy of the
+association threshold `active_learning` owns, and three lines is a list a person
+can read.
+
+**The migration moves what exists and refuses to lose what it cannot place.** A
+human row whose track has no annotation stays where it is, inert, and the
+upgrade prints how many. Losing someone's typing to a migration would be worse
+than leaving a row behind. A plate already on the annotation wins: one typed on
+the canvas is the newer of the two by construction, and a migration cannot see
+which the user meant. The real database has no human rows at all, so this is
+insurance rather than a move.

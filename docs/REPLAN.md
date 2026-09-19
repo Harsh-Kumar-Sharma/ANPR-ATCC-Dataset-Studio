@@ -58,7 +58,7 @@ This exists because the current codebase is what happens without it.
 | `backend/app/ml/factory.py` | `@lru_cache`'d single hardcoded `yolo26n.pt` (`factory.py:13-31`) → loads whichever model the run selected |
 | `backend/app/services/dataset_export.py` | Frame-grouping already exists (`:77-86`) but queries are track-keyed; also must emit crop-derived datasets for the plate model |
 | `backend/app/services/dataset_query.py` | `query_approved_items` joins Annotation→FrameCandidate→Track→Run→Source (`:34-42`). Becomes a frame-level query |
-| `desktop/src/components/TrackReview.tsx` | 4 numeric bbox inputs + read-only SVG (`:223-225`, `:262-278`). Replaced by the labeling canvas; the plate-text card (`:305-338`) survives into the attributes panel |
+| `desktop/src/components/TrackReview.tsx` | 4 numeric bbox inputs + read-only SVG (`:223-225`, `:262-278`). Replaced by the labeling canvas. The plate-text card stays on this screen but writes `Annotation.attributes['plate_text']`, the same place the attributes panel writes - one home, two ways in (ticket 15) |
 
 ### Retire
 

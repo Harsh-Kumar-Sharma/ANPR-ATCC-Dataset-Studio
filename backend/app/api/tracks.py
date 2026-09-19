@@ -13,10 +13,11 @@ from app.db.models.track import Track
 from app.db.session import get_db
 from app.ml.factory import get_default_ocr_engine
 from app.ml.plate_ocr import PlateOcrEngine
-from app.schemas.ocr import OcrCandidateRead, OcrSelectionRequest
+from app.schemas.ocr import OcrCandidateRead, PlateTextWrite
 from app.schemas.review import AnnotationRead, TrackReviewRequest, TrackReviewResult
 from app.schemas.track import FrameCandidateRead, TrackRead, TrackTimeline
-from app.services.ocr_processor import run_ocr_for_track, select_ocr_result
+from app.services.ocr_processor import run_ocr_for_track
+from app.services.plate_text import set_track_plate_text
 from app.services.review import get_human_annotation, submit_review
 
 project_tracks_router = APIRouter(prefix="/projects/{project_id}/tracks", tags=["tracks"])
@@ -118,16 +119,21 @@ def list_track_ocr_candidates(track_id: str, db: Session = Depends(get_db)) -> l
     )
 
 
-@tracks_router.put("/{track_id}/ocr-selection", response_model=OcrCandidateRead)
-def select_track_ocr(track_id: str, payload: OcrSelectionRequest, db: Session = Depends(get_db)) -> OcrCandidate:
-    """Human correction of the track-level OCR result (docs/07_ML_CV_PIPELINE.md
-    OCR step 8): pick a different existing attempt, or supply a
-    corrected reading entirely."""
+@tracks_router.put("/{track_id}/plate-text", response_model=AnnotationRead)
+def set_plate_text(track_id: str, payload: PlateTextWrite, db: Session = Depends(get_db)) -> Annotation:
+    """Record what a human read off this track's plate.
+
+    It goes on the annotation, which is where everything else known
+    about the vehicle in that box already lives. It used to go into
+    ``ocr_candidates`` as a human-sourced row, which no export ever
+    read - so the reading looked saved and never left the database.
+
+    409 when the track has not been reviewed: there is no label to put a
+    plate on yet, and that is worth saying rather than writing the
+    reading somewhere it will be lost.
+    """
     track = _get_track_or_404(db, track_id)
-    return select_ocr_result(
-        db,
-        track,
-        ocr_candidate_id=payload.ocr_candidate_id,
-        corrected_text=payload.corrected_text,
-        frame_candidate_id=payload.frame_candidate_id,
-    )
+    annotation = set_track_plate_text(db, track, payload.plate_text)
+    db.commit()
+    db.refresh(annotation)
+    return annotation

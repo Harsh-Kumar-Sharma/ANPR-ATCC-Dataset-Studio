@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict
 
 
 class OcrCandidateRead(BaseModel):
@@ -18,15 +18,27 @@ class OcrCandidateRead(BaseModel):
     created_at: datetime
 
 
-class OcrSelectionRequest(BaseModel):
-    ocr_candidate_id: str | None = None
-    corrected_text: str | None = None
-    frame_candidate_id: str | None = None
+class PlateTextWrite(BaseModel):
+    """What a human read off the plate. Empty clears it.
 
-    @model_validator(mode="after")
-    def _validate(self) -> "OcrSelectionRequest":
-        if (self.ocr_candidate_id is None) == (self.corrected_text is None):
-            raise ValueError("Provide exactly one of ocr_candidate_id or corrected_text")
-        if self.corrected_text is not None and self.frame_candidate_id is None:
-            raise ValueError("frame_candidate_id is required when providing corrected_text")
-        return self
+    One field, because there is one thing to say. Choosing one of the
+    model's readings is the client sending that reading's text - the
+    server has no reason to know whether it was typed or clicked, and
+    keeping a "which candidate did they pick" flag was how the reading
+    ended up recorded in two places.
+    """
+
+    plate_text: str = ""
+
+
+class PlateReadingRead(BaseModel):
+    """One plate the model read on a frame, and the vehicle it read it
+    from. ``bbox_json`` is the detection's box in full-frame pixels -
+    the plate's own box is relative to a cropped vehicle image, which a
+    canvas drawing on the frame cannot use."""
+
+    frame_candidate_id: str
+    text: str
+    normalized_text: str
+    confidence: float
+    bbox_json: list[float]
