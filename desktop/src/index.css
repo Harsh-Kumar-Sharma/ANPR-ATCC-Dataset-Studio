@@ -1982,3 +1982,24 @@ label.toggle {
   color: var(--text-secondary);
   cursor: pointer;
 }
+
+.label-queue__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.label-queue__restore {
+  margin-top: 2px;
+  padding: 1px 8px;
+  font-size: 11px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}

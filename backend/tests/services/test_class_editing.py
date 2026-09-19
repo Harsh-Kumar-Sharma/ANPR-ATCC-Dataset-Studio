@@ -551,3 +551,25 @@ def test_a_label_on_a_rejected_frame_is_not_dataset_eligible():
     with SessionLocal() as db:
         assert query_approved_items(db, project.id) == []
         assert db.get(Annotation, annotation_id) is not None
+
+
+def test_a_label_on_a_rejected_frame_does_not_block_deleting_its_class():
+    """A rejected frame is out of the dataset, so its labels cannot hold a
+    class hostage that the user is tidying away."""
+    from app.db.models import Frame as FrameModel
+
+    project = _project("Rejected Does Not Block")
+    annotation_id = _label_with(project, class_id=2)
+
+    with SessionLocal() as db:
+        assert class_definitions.count_labels_using(db, project.id, 2) == 1
+        db.get(FrameModel, db.get(Annotation, annotation_id).frame_id).status = "rejected"
+        db.commit()
+
+    with SessionLocal() as db:
+        assert class_definitions.count_labels_using(db, project.id, 2) == 0
+        class_definitions.delete_class(db, project.id, 2)
+        db.commit()
+
+    with SessionLocal() as db:
+        assert class_definitions.is_valid_class_id(db, project.id, 2) is False

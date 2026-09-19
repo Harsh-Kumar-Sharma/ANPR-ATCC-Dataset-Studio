@@ -20,7 +20,7 @@ from app.core.presets import get_preset
 from app.db.models.annotation import Annotation
 from app.db.models.class_definition import ClassDefinition
 from app.services.annotations import chunked, delete_annotations
-from app.services.dataset_query import project_annotations
+from app.services.dataset_query import project_annotations_for_export
 
 
 class InvalidClassNameError(AppError):
@@ -240,6 +240,10 @@ def count_labels_using(db: Session, project_id: str, class_id: int) -> int:
     a count the user cannot see in their accepted work is at least
     explained.
 
+    Labels on a rejected *frame* are not counted: that frame is out of
+    the dataset, so its labels cannot block a class the user is trying
+    to tidy away.
+
     Scoped to the project: another project's labels must not make a class
     undeletable here. This is the number ticket 07's "these 47 labels use
     this class" prompt is built from.
@@ -334,6 +338,8 @@ def _annotation_ids_using(db: Session, project_id: str, class_id: int) -> list[s
     """
     return list(
         db.scalars(
-            project_annotations(project_id).where(Annotation.class_id == class_id).with_only_columns(Annotation.id)
+            project_annotations_for_export(project_id)
+            .where(Annotation.class_id == class_id)
+            .with_only_columns(Annotation.id)
         )
     )

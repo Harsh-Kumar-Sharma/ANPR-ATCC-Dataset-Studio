@@ -99,6 +99,42 @@ describe("LabelQueue", () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "f-1" }));
   });
 
+  it("disables next on the last frame", async () => {
+    renderQueue({ selectedFrameId: "f-2" });
+    await screen.findByRole("button", { name: /frame 2/i });
+
+    expect(screen.getByRole("button", { name: /next frame/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /previous frame/i })).toBeEnabled();
+  });
+
+  it("offers the skipped frames only when there are some", async () => {
+    renderQueue();
+    await screen.findByRole("button", { name: /frame 0/i });
+    expect(screen.queryByLabelText(/show skipped/i)).not.toBeInTheDocument();
+  });
+
+  it("can show what was skipped and put a frame back", async () => {
+    // The claim that skipping is reversible needs somewhere to reverse it.
+    vi.spyOn(api, "getQueueProgress").mockResolvedValue(progress({ pending: 2, rejected: 1, total: 3 }));
+    // Answer by status rather than swapping the mock mid-flight, which
+    // races the refresh the click kicks off.
+    const listFrames = vi
+      .spyOn(api, "listFrames")
+      .mockImplementation(async (_projectId, status) =>
+        status === "rejected" ? [frame(5, "rejected")] : [frame(0), frame(1)],
+      );
+    const setStatus = vi.spyOn(api, "setFrameStatus").mockResolvedValue(frame(5));
+    renderQueue();
+
+    fireEvent.click(await screen.findByLabelText(/show skipped/i));
+
+    await waitFor(() => expect(listFrames).toHaveBeenLastCalledWith("p-1", "rejected"));
+
+    fireEvent.click(await screen.findByRole("button", { name: /put frame 5 back/i }));
+
+    await waitFor(() => expect(setStatus).toHaveBeenCalledWith("f-5", "pending"));
+  });
+
   it("marks which frames are done", async () => {
     vi.spyOn(api, "listFrames").mockResolvedValue([frame(0, "labeled"), frame(1)]);
 

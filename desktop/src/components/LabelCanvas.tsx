@@ -128,6 +128,8 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
   const [drag, setDrag] = useState<Drag | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [skipping, setSkipping] = useState(false);
+  const [confirmingSkip, setConfirmingSkip] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -143,6 +145,10 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
 
   useEffect(() => {
     onDirtyChange?.(dirty);
+    // On the way out the work is gone, so nothing downstream should
+    // still believe this frame has unsaved boxes - it would offer to
+    // discard something that no longer exists.
+    return () => onDirtyChange?.(false);
     // onDirtyChange is a callback prop; re-running on its identity
     // would fire on every parent render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -440,7 +446,14 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
   }
 
   async function reject() {
-    setSaving(true);
+    // Skipping throws away whatever is on the frame, so it asks first
+    // for the same reason walking away from the frame does.
+    if (dirty && !confirmingSkip) {
+      setConfirmingSkip(true);
+      return;
+    }
+    setConfirmingSkip(false);
+    setSkipping(true);
     try {
       const updated = await api.setFrameStatus(frame.id, "rejected");
       setError(null);
@@ -448,7 +461,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
     } catch (e) {
       setError(describe(e));
     } finally {
-      setSaving(false);
+      setSkipping(false);
     }
   }
 
@@ -552,9 +565,14 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
           {dirty && " (unsaved)"}
         </span>
         {unclassified > 0 && <span className="label-canvas__hint">{unclassified} without a class yet</span>}
-        <button onClick={reject} disabled={saving} title="Not worth labelling - skip it">
-          Skip
+        <button onClick={reject} disabled={saving || skipping} title="Not worth labelling - skip it">
+          {confirmingSkip ? "Skip and lose boxes" : "Skip"}
         </button>
+        {confirmingSkip && (
+          <button onClick={() => setConfirmingSkip(false)} title="Keep working on this frame">
+            Cancel
+          </button>
+        )}
         <button className="btn-primary" onClick={save} disabled={saving || !dirty}>
           {saving ? "Saving…" : "Save"}
         </button>

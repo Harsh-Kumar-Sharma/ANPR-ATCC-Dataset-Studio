@@ -135,11 +135,10 @@ function App() {
         onSaved={() => setQueueVersion((v) => v + 1)}
         onDirtyChange={setLabelDirty}
         onRejected={() => {
-          // A skipped frame leaves the queue, so there is nothing
-          // left to look at until the user picks the next one.
+          // The frame leaves the queue, but the user is still labelling -
+          // the queue picks the next one rather than dropping them out.
           setLabelDirty(false);
           setLabelFrame(null);
-          setMainView("review");
           setQueueVersion((v) => v + 1);
         }}
       />

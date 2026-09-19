@@ -24,3 +24,18 @@ than the question.
 **Resume** is per-project in `localStorage`, restored once on arrival and only
 when nothing is already open. It is this machine's view of a shared project, and
 losing it costs a scroll rather than work.
+
+**From review (fixed):** Skip discarded unsaved boxes without asking - the same
+criterion the queue's own navigation guard exists to satisfy. It asks now.
+Putting a skipped frame back left it reporting `pending` even when it was full of
+boxes, which also made the progress counts wrong; status is derived from what is
+actually on the frame. The reversibility these notes claimed had no UI at all -
+there is a "show skipped" toggle and a per-frame "put back" now. Skipping also
+no longer ejects the user out of labelling; the queue moves on.
+
+**Also:** the queue drops stale responses from overlapping refreshes, the canvas
+clears its unsaved-work flag on the way out (it was leaving the queue offering to
+discard boxes that unmounting had already destroyed), queue eligibility is
+written once so the list and the counts cannot disagree, and a label on a
+rejected frame no longer blocks deleting its class - that frame is out of the
+dataset, so its labels should not hold a class hostage.

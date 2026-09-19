@@ -252,7 +252,7 @@ def test_an_unknown_status_filter_is_a_400_not_an_empty_list(tmp_path):
     response = client.get(f"/projects/{project['id']}/frames", params={"status": "done"})
 
     assert response.status_code == 400
-    assert response.json()["code"] == "invalid_filter"
+    assert response.json()["code"] == "unknown_frame_status"
 
 
 # --- what export does with a box nobody has classified yet -----------------------
@@ -340,7 +340,7 @@ def test_an_unknown_status_is_refused(tmp_path):
     response = client.put(f"/frames/{queue[0]['id']}/status", json={"status": "done"})
 
     assert response.status_code == 400
-    assert response.json()["code"] == "invalid_filter"
+    assert response.json()["code"] == "unknown_frame_status"
 
 
 def test_progress_reports_labelled_rejected_and_remaining(tmp_path):
@@ -379,3 +379,17 @@ def test_a_label_on_a_rejected_frame_does_not_reach_the_dataset(tmp_path):
     assert refused.json()["code"] == "nothing_to_export"
     # The label itself survives, so putting the frame back restores it.
     assert client.get(f"/tracks/{track['id']}/annotation").status_code == 200
+
+
+def test_putting_a_labelled_frame_back_reports_it_as_labelled(tmp_path):
+    project, queue = _project_with_frames(tmp_path, "Unreject Labelled API Project")
+    frame = queue[0]
+    client.put(f"/frames/{frame['id']}/annotations", json={"annotations": [_box(1, 0, 0, 10, 10)]})
+    client.put(f"/frames/{frame['id']}/status", json={"status": "rejected"})
+
+    restored = client.put(f"/frames/{frame['id']}/status", json={"status": "pending"})
+
+    assert restored.json()["status"] == "labeled"
+    progress = client.get(f"/projects/{project['id']}/frames/progress").json()
+    assert progress["labeled"] == 1
+    assert progress["rejected"] == 0

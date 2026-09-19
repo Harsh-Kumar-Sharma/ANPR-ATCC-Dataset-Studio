@@ -44,11 +44,12 @@ class StaleBoxError(ConflictError):
     code = "stale_box"
 
 
-class InvalidQueueFilterError(AppError):
-    """An unknown frame status was asked for. Rejected rather than
-    returning an empty queue that reads like "nothing to label"."""
+class UnknownFrameStatusError(AppError):
+    """A frame status that does not exist, asked for as a filter or set
+    on a frame. Rejected rather than quietly returning an empty queue,
+    which reads like "nothing left to label"."""
 
-    code = "invalid_filter"
+    code = "unknown_frame_status"
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,30 @@ class BoxInput:
     id: str | None = None
 
 
+def _require_known_status(status: str) -> None:
+    if status not in FRAME_STATUSES:
+        raise UnknownFrameStatusError(
+            f"Unknown frame status: {status!r}. Expected one of {', '.join(FRAME_STATUSES)}."
+        )
+
+
+def _openable_frames(project_id: str):
+    """Every frame in the project the queue could ever offer.
+
+    "Could ever" excludes a frame from a live RTSP session that has no
+    stored image: there is no video file to decode it from, so it would
+    be a queue entry that errors on click. Written once because the list
+    and the progress counts have to agree - if they drift, the totals
+    stop describing the list.
+    """
+    return (
+        select(Frame)
+        .join(Source, Frame.source_id == Source.id)
+        .where(Source.project_id == project_id)
+        .where(or_(Source.type == "video", Frame.image_path.is_not(None)))
+    )
+
+
 def list_queue(db: Session, project_id: str, status: str | None = None) -> list[Frame]:
     """A project's frames in labelling order.
 
@@ -79,18 +104,10 @@ def list_queue(db: Session, project_id: str, status: str | None = None) -> list[
     capture time there is nothing to show. Offering it would be a queue
     entry that errors on click.
     """
-    if status is not None and status not in FRAME_STATUSES:
-        raise InvalidQueueFilterError(
-            f"Unknown frame status: {status!r}. Expected one of {', '.join(FRAME_STATUSES)}."
-        )
+    if status is not None:
+        _require_known_status(status)
 
-    stmt = (
-        select(Frame)
-        .join(Source, Frame.source_id == Source.id)
-        .where(Source.project_id == project_id)
-        .where(or_(Source.type == "video", Frame.image_path.is_not(None)))
-        .order_by(Frame.source_id, Frame.frame_index)
-    )
+    stmt = _openable_frames(project_id).order_by(Frame.source_id, Frame.frame_index)
     if status is not None:
         stmt = stmt.where(Frame.status == status)
     else:
@@ -106,15 +123,22 @@ def set_status(db: Session, frame: Frame, status: str) -> Frame:
 
     Rejecting says "not worth labelling", not "destroy my work": the
     boxes already on the frame stay exactly where they are, because the
-    judgement can be reversed by setting it back to pending.
+    judgement can be reversed by putting the frame back.
+
+    Putting it back asks for ``pending``, but what it gets is whatever
+    is true of the frame - a frame that was labelled before it was
+    skipped is still labelled, and saying otherwise would both misreport
+    it and leave the progress counts wrong.
     """
-    if status not in FRAME_STATUSES:
-        raise InvalidQueueFilterError(
-            f"Unknown frame status: {status!r}. Expected one of {', '.join(FRAME_STATUSES)}."
-        )
-    frame.status = status
+    _require_known_status(status)
+    frame.status = status if status == "rejected" else _status_from_work(db, frame)
     db.flush()
     return frame
+
+
+def _status_from_work(db: Session, frame: Frame) -> str:
+    """What this frame's status should be, judged by what is on it."""
+    return "labeled" if any(a.source == "human" for a in list_annotations(db, frame.id)) else "pending"
 
 
 def queue_progress(db: Session, project_id: str) -> dict[str, int]:
@@ -124,13 +148,8 @@ def queue_progress(db: Session, project_id: str) -> dict[str, int]:
     "12 of 400, 3 skipped" is the shape of the answer, so the skipped
     ones have to be in the total.
     """
-    rows = db.execute(
-        select(Frame.status, func.count(Frame.id))
-        .join(Source, Frame.source_id == Source.id)
-        .where(Source.project_id == project_id)
-        .where(or_(Source.type == "video", Frame.image_path.is_not(None)))
-        .group_by(Frame.status)
-    ).all()
+    openable = _openable_frames(project_id).subquery()
+    rows = db.execute(select(openable.c.status, func.count()).select_from(openable).group_by(openable.c.status)).all()
     counts = {status: 0 for status in FRAME_STATUSES}
     for status, count in rows:
         counts[status] = count

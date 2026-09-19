@@ -511,7 +511,7 @@ def test_an_unknown_status_filter_is_refused_not_an_empty_queue():
     project, _, _ = _project_with_frame("Bad Status Filter")
 
     with SessionLocal() as db:
-        with pytest.raises(frames.InvalidQueueFilterError):
+        with pytest.raises(frames.UnknownFrameStatusError):
             frames.list_queue(db, project.id, status="done")
 
 
@@ -645,7 +645,7 @@ def test_an_unknown_status_cannot_be_set():
     project, _, frame = _project_with_frame("Bad Status Set")
 
     with SessionLocal() as db:
-        with pytest.raises(frames.InvalidQueueFilterError):
+        with pytest.raises(frames.UnknownFrameStatusError):
             frames.set_status(db, db.get(Frame, frame.id), "done")
 
 
@@ -672,3 +672,36 @@ def test_progress_is_scoped_to_the_project():
 
     with SessionLocal() as db:
         assert frames.queue_progress(db, mine.id)["total"] == 1
+
+
+def test_putting_a_labelled_frame_back_remembers_it_was_labelled():
+    """Status has to say what was actually done. Label, skip, un-skip used
+    to leave a frame full of boxes reporting "pending", which also made
+    the progress counts wrong."""
+    project, _, frame = _project_with_frame("Unreject Keeps Labelled")
+    with SessionLocal() as db:
+        frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[0, 0, 10, 10])])
+        frames.set_status(db, db.get(Frame, frame.id), "rejected")
+        db.commit()
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "pending")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert db.get(Frame, frame.id).status == "labeled"
+        assert frames.queue_progress(db, project.id) == {"pending": 0, "labeled": 1, "rejected": 0, "total": 1}
+
+
+def test_putting_an_untouched_frame_back_leaves_it_pending():
+    project, _, frame = _project_with_frame("Unreject Stays Pending")
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "rejected")
+        db.commit()
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "pending")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert db.get(Frame, frame.id).status == "pending"

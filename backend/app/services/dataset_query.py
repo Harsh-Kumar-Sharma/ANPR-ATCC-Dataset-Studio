@@ -36,6 +36,17 @@ def project_annotations(project_id: str):
     )
 
 
+def project_annotations_for_export(project_id: str):
+    """The project's annotations that a dataset could actually contain.
+
+    A label on a rejected frame is excluded, because rejecting a frame
+    means it is not worth labelling and that has to reach anything
+    reasoning about the dataset - not just the export itself, or the
+    two disagree about what exists.
+    """
+    return project_annotations(project_id).where(Frame.status != "rejected")
+
+
 def query_approved_items(db: Session, project_id: str) -> list[ApprovedItem]:
     """Every human-accepted annotation in a project - the dataset-
     eligible set (docs Track Lifecycle step 10: "Approved annotation

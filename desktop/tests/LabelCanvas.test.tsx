@@ -626,6 +626,75 @@ describe("LabelCanvas: saving", () => {
     expect(geometry(box(0))).toEqual([10, 10, 40, 40]);
   });
 
+  it("skips a frame that has nothing unsaved on it, without asking", async () => {
+    const setStatus = vi
+      .spyOn(api, "setFrameStatus")
+      .mockResolvedValue({ ...frame, status: "rejected" });
+    const onRejected = vi.fn();
+    renderCanvas({ onRejected });
+    await screen.findByText(/0 boxes/);
+
+    fireEvent.click(screen.getByRole("button", { name: /^skip$/i }));
+
+    await waitFor(() => expect(setStatus).toHaveBeenCalledWith("f-1", "rejected"));
+    await waitFor(() => expect(onRejected).toHaveBeenCalled());
+  });
+
+  it("asks before skipping a frame with unsaved boxes", async () => {
+    // Skipping throws the boxes away, so it gets the same courtesy as
+    // walking away from the frame does.
+    const setStatus = vi.spyOn(api, "setFrameStatus").mockResolvedValue({ ...frame, status: "rejected" });
+    renderCanvas();
+    await screen.findByText(/0 boxes/);
+    drag(screen.getByTestId("label-stage"), [10, 10], [50, 40]);
+
+    fireEvent.click(screen.getByRole("button", { name: /^skip$/i }));
+
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /skip and lose boxes/i })).toBeInTheDocument();
+  });
+
+  it("goes through with the skip when told again", async () => {
+    const setStatus = vi.spyOn(api, "setFrameStatus").mockResolvedValue({ ...frame, status: "rejected" });
+    renderCanvas();
+    await screen.findByText(/0 boxes/);
+    drag(screen.getByTestId("label-stage"), [10, 10], [50, 40]);
+    fireEvent.click(screen.getByRole("button", { name: /^skip$/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /skip and lose boxes/i }));
+
+    await waitFor(() => expect(setStatus).toHaveBeenCalledWith("f-1", "rejected"));
+  });
+
+  it("lets the user call off a skip and keep the boxes", async () => {
+    const setStatus = vi.spyOn(api, "setFrameStatus").mockResolvedValue({ ...frame, status: "rejected" });
+    renderCanvas();
+    await screen.findByText(/0 boxes/);
+    drag(screen.getByTestId("label-stage"), [10, 10], [50, 40]);
+    fireEvent.click(screen.getByRole("button", { name: /^skip$/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("label-box")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /^skip$/i })).toBeInTheDocument();
+  });
+
+  it("tells the app when the frame gains and loses unsaved boxes", async () => {
+    const onDirtyChange = vi.fn();
+    const { unmount } = renderCanvas({ onDirtyChange });
+    await screen.findByText(/0 boxes/);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+
+    drag(screen.getByTestId("label-stage"), [10, 10], [50, 40]);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+
+    // On the way out the boxes are gone, so nothing should still think
+    // there is work to lose.
+    unmount();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("lists the shortcuts where the user can see them", async () => {
     renderCanvas();
     await screen.findByText(/0 boxes/);
