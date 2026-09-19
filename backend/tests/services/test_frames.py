@@ -43,14 +43,14 @@ def _add_frame(source: Source, frame_index: int) -> Frame:
         return frame
 
 
-def _legacy_label(source: Source, frame: Frame, class_id: int) -> tuple[str, str]:
-    """A label written the old way, through track review. Returns
-    (annotation_id, track_id)."""
+def _legacy_label(source: Source, frame: Frame, class_id: int, status: str = "accepted") -> tuple[str, str]:
+    """A label written the old way, through track review, with the review
+    decision ``status``. Returns (annotation_id, track_id)."""
     with SessionLocal() as db:
         run = ProcessingRun(source_id=source.id, sampling_config={"target_fps": 5.0}, status="completed")
         db.add(run)
         db.flush()
-        track = Track(run_id=run.id, tracker_track_id=1, start_ts=0, end_ts=100, review_status="accepted")
+        track = Track(run_id=run.id, tracker_track_id=1, start_ts=0, end_ts=100, review_status=status)
         db.add(track)
         db.flush()
         candidate = FrameCandidate(
@@ -71,11 +71,27 @@ def _legacy_label(source: Source, frame: Frame, class_id: int) -> tuple[str, str
             source="human",
             class_id=class_id,
             bbox_json=[1, 1, 11, 11],
-            status="accepted",
+            status=status,
         )
         db.add(annotation)
         db.commit()
         return annotation.id, track.id
+
+
+def _prediction(frame: Frame, class_id: int) -> str:
+    """A box a model drew, not yet looked at by anyone."""
+    with SessionLocal() as db:
+        annotation = Annotation(
+            frame_id=frame.id,
+            frame_candidate_id=None,
+            source="model",
+            class_id=class_id,
+            bbox_json=[5, 5, 15, 15],
+            status="pending",
+        )
+        db.add(annotation)
+        db.commit()
+        return annotation.id
 
 
 def _boxes_on(frame: Frame) -> list[list[float]]:
@@ -497,3 +513,83 @@ def test_an_unknown_status_filter_is_refused_not_an_empty_queue():
     with SessionLocal() as db:
         with pytest.raises(frames.InvalidQueueFilterError):
             frames.list_queue(db, project.id, status="done")
+
+
+def test_one_call_can_keep_one_box_by_id_and_drop_another():
+    """The echo contract in a single save, which is what the canvas really
+    sends: a box sent back with its id stays that row, a box left out is
+    gone."""
+    project, _, frame = _project_with_frame("Mixed Echo")
+    with SessionLocal() as db:
+        saved = frames.replace_annotations(
+            db,
+            project.id,
+            db.get(Frame, frame.id),
+            [BoxInput(class_id=1, bbox=[0, 0, 10, 10]), BoxInput(class_id=2, bbox=[20, 20, 30, 30])],
+        )
+        keep_id, drop_id = saved[0].id, saved[1].id
+        db.commit()
+
+    with SessionLocal() as db:
+        again = frames.replace_annotations(
+            db, project.id, db.get(Frame, frame.id), [BoxInput(id=keep_id, class_id=1, bbox=[0, 0, 10, 10])]
+        )
+        ids_after = [a.id for a in again]
+        db.commit()
+
+    assert ids_after == [keep_id]
+    with SessionLocal() as db:
+        assert db.get(Annotation, drop_id) is None
+
+
+# --- the set includes what a model drew --------------------------------------------
+
+
+def test_a_prediction_sent_back_becomes_the_humans_box():
+    """Pre-annotation is the compounding step: the model draws, the human
+    keeps or fixes. Keeping is just echoing the box - and from then on it
+    is the human's truth, not a prediction."""
+    project, _, frame = _project_with_frame("Confirm Prediction")
+    predicted = _prediction(frame, class_id=2)
+
+    with SessionLocal() as db:
+        frames.replace_annotations(
+            db, project.id, db.get(Frame, frame.id), [BoxInput(id=predicted, class_id=2, bbox=[5, 5, 15, 15])]
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        confirmed = db.get(Annotation, predicted)
+        assert confirmed.source == "human"
+        assert confirmed.status == "accepted"
+
+
+def test_a_prediction_left_out_is_rejected_and_removed():
+    project, _, frame = _project_with_frame("Reject Prediction")
+    predicted = _prediction(frame, class_id=2)
+
+    with SessionLocal() as db:
+        frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[30, 30, 40, 40])])
+        db.commit()
+
+    with SessionLocal() as db:
+        assert db.get(Annotation, predicted) is None
+
+
+def test_editing_a_reviewed_box_keeps_the_decision_it_was_given():
+    """A track reviewed as failed, then nudged on the canvas, is still a
+    failed review. Moving a box is not re-reviewing the track."""
+    project, source, frame = _project_with_frame("Keep Decision")
+    annotation_id, track_id = _legacy_label(source, frame, class_id=2, status="failed")
+
+    with SessionLocal() as db:
+        frames.replace_annotations(
+            db, project.id, db.get(Frame, frame.id), [BoxInput(id=annotation_id, class_id=2, bbox=[2, 2, 12, 12])]
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        edited = db.get(Annotation, annotation_id)
+        assert edited.bbox_json == [2, 2, 12, 12]
+        assert edited.status == "failed"
+        assert db.get(Track, track_id).review_status == "failed"

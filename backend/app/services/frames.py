@@ -136,7 +136,7 @@ def list_annotations(db: Session, frame_id: str) -> list[Annotation]:
 
 
 def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[BoxInput]) -> list[Annotation]:
-    """Make ``boxes`` the complete set of human boxes on this frame.
+    """Make ``boxes`` the complete set of boxes on this frame.
 
     Whole-set replacement is the contract: a box the canvas no longer
     sends is gone, including one that was written the old way through
@@ -150,6 +150,13 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     silently dropped an exported box's dataset item and un-reviewed its
     track on every save.
 
+    "Every box" includes a model's. A prediction the canvas sends back is
+    one the human looked at and kept - it becomes the human's box. One
+    the canvas leaves out was rejected and goes. That is the whole
+    pre-annotation loop, and it needs nothing more than this. A box the
+    human already reviewed keeps the decision it was given: editing its
+    geometry or class is not a re-review.
+
     Zero boxes is a real label. An empty frame teaches "nothing here",
     and the frame reads as labelled, not as still waiting.
 
@@ -159,7 +166,7 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     for index, box in enumerate(boxes):
         _validate(db, project_id, frame, index, box)
 
-    existing = {a.id: a for a in list_annotations(db, frame.id) if a.source == "human"}
+    existing = {a.id: a for a in list_annotations(db, frame.id)}
 
     echoed = [box.id for box in boxes if box.id is not None]
     if len(echoed) != len(set(echoed)):
@@ -176,7 +183,10 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
             annotation.class_id = box.class_id
             annotation.bbox_json = [float(v) for v in box.bbox]
             annotation.attributes = dict(box.attributes)
-            annotation.status = "accepted"
+            if annotation.source != "human":
+                # Sending a prediction back is confirming it.
+                annotation.source = "human"
+                annotation.status = "accepted"
         else:
             db.add(
                 Annotation(

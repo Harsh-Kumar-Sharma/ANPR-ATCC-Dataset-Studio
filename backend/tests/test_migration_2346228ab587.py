@@ -54,17 +54,17 @@ def _insert(conn, table: str, **values) -> str:
     about with a type-appropriate placeholder. Keeps the seed tied to the
     schema *at that revision* rather than to today's models."""
     columns = conn.execute(text(f"PRAGMA table_info({table})")).all()
-    row = {}
+    row = {"id": values.pop("id", str(uuid.uuid4()))}
     for _cid, name, ctype, notnull, default, _pk in columns:
+        if name == "id":
+            continue
         if name in values:
             row[name] = values[name]
             continue
         if not notnull or default is not None:
             continue
         kind = ctype.upper()
-        if name == "id":
-            row[name] = str(uuid.uuid4())
-        elif "INT" in kind:
+        if "INT" in kind:
             row[name] = 0
         elif "FLOAT" in kind or "REAL" in kind or "NUM" in kind:
             row[name] = 0.0
@@ -76,8 +76,6 @@ def _insert(conn, table: str, **values) -> str:
             row[name] = 0
         else:
             row[name] = "x"
-    if "id" not in row:
-        row["id"] = str(uuid.uuid4())
     placeholders = ", ".join(f":{k}" for k in row)
     conn.execute(text(f"INSERT INTO {table} ({', '.join(row)}) VALUES ({placeholders})"), row)
     return row["id"]

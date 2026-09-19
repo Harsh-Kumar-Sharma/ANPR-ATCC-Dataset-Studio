@@ -253,3 +253,42 @@ def test_an_unknown_status_filter_is_a_400_not_an_empty_list(tmp_path):
 
     assert response.status_code == 400
     assert response.json()["code"] == "invalid_filter"
+
+
+# --- what export does with a box nobody has classified yet -----------------------
+
+
+def test_export_skips_a_canvas_box_with_no_class_rather_than_failing(tmp_path):
+    """The exporter drops an annotation whose class it cannot resolve. For
+    a box nobody has classified yet that is the right outcome - but until
+    now nothing pinned it, so a rewrite could turn it into a crash or,
+    worse, a class-0 label. Ticket 12 has to keep this passing."""
+    project, queue = _project_with_frames(tmp_path, "Null Class Export Project")
+
+    # Something exportable, written the legacy way...
+    track = client.get(f"/projects/{project['id']}/tracks").json()[0]
+    frame_id = client.get(f"/tracks/{track['id']}").json()["frames"][0]["id"]
+    client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": 1},
+    )
+    # ...and a canvas box with no class on some frame.
+    unclassified = client.put(
+        f"/frames/{queue[-1]['id']}/annotations",
+        json={"annotations": [{"id": None, "class_id": None, "bbox_json": [0, 0, 10, 10], "attributes": {}}]},
+    ).json()[0]
+
+    created = client.post(f"/projects/{project['id']}/dataset-versions", json={})
+
+    assert created.status_code == 201, created.text
+    import json
+    from pathlib import Path
+
+    manifest = json.loads(
+        (Path(project["workspace_path"]) / "exports" / "v1" / "manifest.json").read_text(encoding="utf-8")
+    )
+    exported = [obj for item in manifest["items"] for obj in item.get("objects", [])]
+    assert all(obj["class_id"] is not None for obj in exported)
+    assert unclassified["id"] not in {obj["annotation_id"] for obj in exported}
+    # Skipped from the export, not deleted from the frame.
+    assert client.get(f"/frames/{queue[-1]['id']}/annotations").json()[0]["id"] == unclassified["id"]

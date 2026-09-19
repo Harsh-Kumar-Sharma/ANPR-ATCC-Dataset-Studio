@@ -20,7 +20,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-log = logging.getLogger("alembic.runtime.migration")
+log = logging.getLogger(__name__)
 
 
 # revision identifiers, used by Alembic.

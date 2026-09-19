@@ -46,3 +46,12 @@ track labels only. Evaluation and active-learning belong to no ticket yet.
 exactly - original id, class, bbox to 0.0000 px, both dataset items, track back
 to accepted - from the v2/v3 export manifests on disk, which is precisely the
 record those manifests exist to be.
+
+**Second round:** the incident took three dataset-item rows, not two - v1's
+manifest records the annotation at item level, which the first recovery did not
+walk. All three are back and every manifest item now has a row. The set a save
+replaces is *every* box on the frame: a prediction echoed back becomes the
+human's box, one left out is removed, and a reviewed box keeps its decision when
+its geometry is edited. The queue's "can be opened" filter is by source type; a
+video source whose file has since gone missing is still listed and errors on
+click with a clear message rather than being hidden.
