@@ -1,7 +1,9 @@
+import logging
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Response
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
@@ -11,14 +13,17 @@ from app.db.models.source import Source
 from app.db.session import get_db
 from app.ml.factory import DetectorProvider, create_tracker, get_detector_provider
 from app.ml.models import DEFAULT_MODEL_ID
-from app.schemas.rtsp import RtspSessionStatusRead, RtspStartRequest, RtspStartResult
+from app.schemas.rtsp import LiveCameraRead, RtspSessionStatusRead, RtspStartRequest, RtspStartResult
 from app.services.rtsp_session import KeepFrames, RtspCaptureSession
 from app.services.live_reconcile import UNFINISHED as UNFINISHED_LIVE, settle as settle_live_run
+from app.services import live_cameras
 from app.services.rtsp_session_registry import get_session, register_session
 from app.services.rtsp_source import ConnectionProvider, RtspSourceAdapter, default_connection_provider
 
 router = APIRouter(prefix="/projects/{project_id}/sources", tags=["rtsp"])
 run_router = APIRouter(prefix="/processing-runs", tags=["rtsp"])
+
+logger = logging.getLogger(__name__)
 
 
 def get_rtsp_connection_provider() -> ConnectionProvider:
@@ -101,6 +106,30 @@ def start_rtsp_session(
         workspace_path=Path(project.workspace_path),
         buffer_maxlen=payload.buffer_maxlen,
     )
+    # Remembered here rather than behind a Save button: the settings
+    # that were just started with are the ones worth keeping, and a
+    # button the user has to remember to press is a button they will
+    # not press.
+    #
+    # And never at the cost of the capture. Remembering is a
+    # convenience; failing to remember must not stop a camera from
+    # starting - including on a database that has not had the
+    # migration for this table yet.
+    try:
+        live_cameras.remember(
+            db,
+            project_id=project.id,
+            rtsp_url=payload.rtsp_url,
+            expected_fps=payload.expected_fps,
+            model_id=payload.model_id,
+            keep_frames=payload.keep_frames,
+            keep_every=payload.keep_every,
+        )
+        db.commit()
+    except SQLAlchemyError:
+        logger.warning("Could not remember this camera's settings", exc_info=True)
+        db.rollback()
+
     register_session(run.id, session)
     session.start()
 
@@ -176,3 +205,26 @@ def get_rtsp_preview(run_id: str) -> Response:
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store", "X-Frame-Sequence": str(frame.sequence)},
     )
+
+
+@router.get("/rtsp/cameras", response_model=list[LiveCameraRead])
+def list_live_cameras(project_id: str, db: Session = Depends(get_db)) -> list[LiveCameraRead]:
+    """This project's cameras, most recently used first.
+
+    That order is the point: the camera stopped a minute ago is the
+    one most likely to be wanted back.
+    """
+    get_project_or_404(db, project_id)
+    return [LiveCameraRead.model_validate(c) for c in live_cameras.list_cameras(db, project_id)]
+
+
+@router.delete("/rtsp/cameras/{camera_id}", status_code=204)
+def forget_live_camera(project_id: str, camera_id: str, db: Session = Depends(get_db)) -> None:
+    """Stop offering this camera.
+
+    Removes the remembered settings only. Anything captured from the
+    camera stays - forgetting a shortcut is not deleting footage.
+    """
+    get_project_or_404(db, project_id)
+    live_cameras.forget(db, camera_id)
+    db.commit()

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import ModelPicker, { useModelChoice } from "./ModelPicker";
+import { sourceLabel } from "../sourceLabel";
 import { IconAlert, IconBroadcast, IconCheck } from "../Icons";
-import type { Project, RtspSessionStatus } from "../types";
+import type { LiveCamera, Project, RtspSessionStatus } from "../types";
 
 interface Props {
   project: Project;
@@ -26,12 +27,61 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Cameras this project has watched before. Starting one again
+  // should be a click, not four fields retyped - and Stop is the
+  // most likely moment to want the same camera back.
+  const [cameras, setCameras] = useState<LiveCamera[]>([]);
 
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listLiveCameras(project.id)
+      .then((known) => {
+        if (cancelled) return;
+        setCameras(known);
+        // The most recent one, filled in and ready. Only when the
+        // field is untouched: overwriting a URL someone is halfway
+        // through typing would be worse than not remembering at all.
+        setUrl((current) => (current === "" && known[0] ? known[0].rtsp_url : current));
+        if (known[0]) applySettings(known[0]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // applySettings only reads setters, which are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
+
+  /** Put a remembered camera's settings back on screen. */
+  function applySettings(camera: LiveCamera) {
+    setExpectedFps(camera.expected_fps);
+    setKeepFrames(camera.keep_frames);
+    setKeepEvery(camera.keep_every);
+    if (camera.model_id) modelChoice.choose(camera.model_id);
+  }
+
+  function useCamera(cameraId: string) {
+    const camera = cameras.find((c) => c.id === cameraId);
+    if (!camera) return;
+    setUrl(camera.rtsp_url);
+    applySettings(camera);
+  }
+
+  async function forgetCamera(camera: LiveCamera) {
+    try {
+      await api.forgetLiveCamera(project.id, camera.id);
+      setCameras((previous) => previous.filter((c) => c.id !== camera.id));
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   async function handleStart(e: React.FormEvent) {
     e.preventDefault();
@@ -43,6 +93,9 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
         keepFrames,
         every: keepEvery,
       });
+      // The backend remembers what was just started; re-read it so
+      // the picker has the camera without waiting for a remount.
+      api.listLiveCameras(project.id).then(setCameras).catch(() => undefined);
       setRunId(result.run.id);
       onShowPreview(result.run.id);
       pollRef.current = setInterval(async () => {
@@ -89,12 +142,47 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
 
       {!isActive && (
         <form onSubmit={handleStart} className="rtsp-start-form">
+          {/* One remembered camera is already in the field below, so
+              a list of one would be a menu with nothing to choose. */}
+          {cameras.length > 1 && (
+            <label className="saved-camera">
+              <span>Camera</span>
+              <select
+                aria-label="Saved camera"
+                value={cameras.find((c) => c.rtsp_url === url)?.id ?? ""}
+                onChange={(e) => useCamera(e.target.value)}
+              >
+                <option value="">Type a new one below</option>
+                {cameras.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {sourceLabel({ type: "rtsp", path_or_uri: c.rtsp_url })}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <input
             type="text"
             placeholder="rtsp://camera/stream"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
+
+          {/* Only for a camera that is actually remembered, so this
+              does not offer to forget something it never knew. */}
+          {cameras.some((c) => c.rtsp_url === url) && (
+            <button
+              type="button"
+              className="forget-camera"
+              onClick={() => {
+                const camera = cameras.find((c) => c.rtsp_url === url);
+                if (camera) forgetCamera(camera);
+              }}
+            >
+              Forget this camera (its footage stays)
+            </button>
+          )}
           <label className="fps-control">
             Camera FPS
             <input

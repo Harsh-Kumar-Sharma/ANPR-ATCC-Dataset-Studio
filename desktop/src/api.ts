@@ -26,6 +26,7 @@ import type {
   RetrainingHandoffResult,
   RtspSessionStatus,
   RtspStartResult,
+  LiveCamera,
   ModelInfo,
   RunEstimate,
   Sweep,
@@ -329,6 +330,14 @@ export const api = {
     request<Sweep>(`/projects/${projectId}/frames/sweep${query({ source_id: sourceId ?? undefined })}`, {
       method: "POST",
     }),
+  /** Cameras this project has watched, most recent first. */
+  listLiveCameras: (projectId: string) =>
+    request<LiveCamera[]>(`/projects/${projectId}/sources/rtsp/cameras`),
+
+  /** Stop offering a camera. Its footage is untouched. */
+  forgetLiveCamera: (projectId: string, cameraId: string) =>
+    request<void>(`/projects/${projectId}/sources/rtsp/cameras/${cameraId}`, { method: "DELETE" }),
+
   getRtspStatus: (runId: string) => request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/status`),
   stopRtspSession: (runId: string) =>
     request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/stop`, { method: "POST" }),

@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.processing_run import ProcessingRunRead
 from app.schemas.source import SourceRead
@@ -41,3 +43,18 @@ class RtspSessionStatusRead(BaseModel):
     frames_saved: int = 0
     stopped: bool
     error: str | None
+
+
+class LiveCameraRead(BaseModel):
+    """A camera this project watches, and how it was last watched."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    rtsp_url: str
+    expected_fps: float
+    model_id: str | None
+    keep_frames: bool
+    keep_every: int
+    last_used_at: datetime

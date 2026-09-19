@@ -534,3 +534,15 @@ export interface Sweep {
   held: number;
   bytes_freed: number;
 }
+
+/** A camera this project watches, and how it was last watched. */
+export interface LiveCamera {
+  id: string;
+  project_id: string;
+  rtsp_url: string;
+  expected_fps: number;
+  model_id: string | null;
+  keep_frames: boolean;
+  keep_every: number;
+  last_used_at: string;
+}

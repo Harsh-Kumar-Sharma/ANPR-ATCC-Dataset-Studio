@@ -2601,3 +2601,31 @@ label.toggle {
   padding: 3px 8px;
   font-size: 11px;
 }
+
+/* --- a camera this project already watches ----------------------------- */
+
+.saved-camera {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.saved-camera select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.forget-camera {
+  align-self: flex-start;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}

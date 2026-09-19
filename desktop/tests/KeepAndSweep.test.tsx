@@ -13,7 +13,7 @@ import { api } from "../src/api";
 import LabelQueue from "../src/components/LabelQueue";
 import RtspPanel from "../src/components/RtspPanel";
 import { useFrameQueue } from "../src/useFrameQueue";
-import type { Frame, Project, QueueProgress, RtspStartResult, Sweep } from "../src/types";
+import type { Frame, LiveCamera, Project, QueueProgress, RtspStartResult, Sweep } from "../src/types";
 
 const project: Project = {
   id: "p-1",
@@ -269,5 +269,136 @@ describe("Deleting the frames nobody labelled", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^delete them$/i }));
 
     await waitFor(() => expect(api.listFrames).toHaveBeenCalled());
+  });
+});
+
+// --- and not retyping the camera every time ---------------------------------
+
+const camera = (over: Partial<LiveCamera> = {}): LiveCamera => ({
+  id: "cam-1",
+  project_id: "p-1",
+  rtsp_url: "rtsp://admin:secret@10.0.0.4:9001/Streaming/channels/1",
+  expected_fps: 25,
+  model_id: null,
+  keep_frames: true,
+  keep_every: 15,
+  last_used_at: "2026-09-19T00:00:00+00:00",
+  ...over,
+});
+
+describe("Starting a camera you have started before", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listModels").mockResolvedValue([]);
+    vi.spyOn(api, "startRtspSession").mockResolvedValue(started);
+    vi.spyOn(api, "getRtspStatus").mockResolvedValue(liveStatus());
+    vi.spyOn(api, "listLiveCameras").mockResolvedValue([camera()]);
+  });
+
+  function panel() {
+    return render(<RtspPanel project={project} onSessionEnded={vi.fn()} onShowPreview={vi.fn()} />);
+  }
+
+  it("fills the whole configuration back in, not just the url", async () => {
+    // Stop is the most likely moment to want the same camera back.
+    panel();
+
+    await waitFor(() => expect(screen.getByPlaceholderText(/rtsp:\/\//i)).toHaveValue(camera().rtsp_url));
+    expect(screen.getByLabelText(/camera fps/i)).toHaveValue(25);
+    expect(screen.getByLabelText(/save captured frames/i)).toBeChecked();
+    expect(screen.getByLabelText(/keep one frame in/i)).toHaveValue(15);
+  });
+
+  it("starts again with one click, and no retyping", async () => {
+    panel();
+    await waitFor(() => expect(screen.getByPlaceholderText(/rtsp:\/\//i)).toHaveValue(camera().rtsp_url));
+
+    fireEvent.click(screen.getByRole("button", { name: /start live capture/i }));
+
+    await waitFor(() =>
+      expect(api.startRtspSession).toHaveBeenCalledWith(project.id, camera().rtsp_url, 25, null, {
+        keepFrames: true,
+        every: 15,
+      }),
+    );
+  });
+
+  it("does not overwrite a url someone is halfway through typing", async () => {
+    // Worse than not remembering at all.
+    let release: (cameras: LiveCamera[]) => void = () => {};
+    vi.mocked(api.listLiveCameras).mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    panel();
+    fireEvent.change(await screen.findByPlaceholderText(/rtsp:\/\//i), {
+      target: { value: "rtsp://a-different-camera/1" },
+    });
+
+    release([camera()]);
+
+    await waitFor(() => expect(api.listLiveCameras).toHaveBeenCalled());
+    expect(screen.getByPlaceholderText(/rtsp:\/\//i)).toHaveValue("rtsp://a-different-camera/1");
+  });
+
+  it("offers no menu for a single camera, which is not a choice", async () => {
+    panel();
+    await waitFor(() => expect(screen.getByPlaceholderText(/rtsp:\/\//i)).toHaveValue(camera().rtsp_url));
+
+    expect(screen.queryByLabelText(/saved camera/i)).not.toBeInTheDocument();
+  });
+
+  it("offers a menu once there are two, named so they can be told apart", async () => {
+    vi.mocked(api.listLiveCameras).mockResolvedValue([
+      camera(),
+      camera({ id: "cam-2", rtsp_url: "rtsp://admin:secret@10.0.0.5:9001/Streaming/channels/2" }),
+    ]);
+    panel();
+
+    const picker = await screen.findByLabelText(/saved camera/i);
+    expect(picker).toHaveTextContent(/10\.0\.0\.4 · ch 1/);
+    expect(picker).toHaveTextContent(/10\.0\.0\.5 · ch 2/);
+    expect(picker).not.toHaveTextContent(/secret/);
+  });
+
+  it("switches the whole configuration when another camera is picked", async () => {
+    vi.mocked(api.listLiveCameras).mockResolvedValue([
+      camera(),
+      camera({
+        id: "cam-2",
+        rtsp_url: "rtsp://admin:secret@10.0.0.5:9001/Streaming/channels/2",
+        expected_fps: 5,
+        keep_frames: false,
+        keep_every: 30,
+      }),
+    ]);
+    panel();
+
+    fireEvent.change(await screen.findByLabelText(/saved camera/i), { target: { value: "cam-2" } });
+
+    expect(screen.getByLabelText(/camera fps/i)).toHaveValue(5);
+    expect(screen.getByLabelText(/save captured frames/i)).not.toBeChecked();
+  });
+
+  it("can forget a camera, and says the footage stays", async () => {
+    const forget = vi.spyOn(api, "forgetLiveCamera").mockResolvedValue(undefined);
+    panel();
+
+    fireEvent.click(await screen.findByRole("button", { name: /forget this camera/i }));
+
+    await waitFor(() => expect(forget).toHaveBeenCalledWith(project.id, "cam-1"));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /forget this camera/i })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("offers nothing to forget when nothing is remembered", async () => {
+    vi.mocked(api.listLiveCameras).mockResolvedValue([]);
+    panel();
+    await screen.findByPlaceholderText(/rtsp:\/\//i);
+
+    expect(screen.queryByRole("button", { name: /forget this camera/i })).not.toBeInTheDocument();
   });
 });
