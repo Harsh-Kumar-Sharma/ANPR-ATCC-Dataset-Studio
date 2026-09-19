@@ -396,3 +396,59 @@ def test_runs_are_listed_most_recent_first(tmp_path, models_dir, fake_training):
     runs = client.get(f"/projects/{project['id']}/training-runs").json()
 
     assert [r["id"] for r in runs][:2] == [second["run"]["id"], first["run"]["id"]]
+
+
+# --- the device the run is given ----------------------------------------------
+
+
+def test_training_is_given_a_device_ultralytics_understands(tmp_path, models_dir, monkeypatch):
+    """"auto" is this app's own word for "use the GPU if there is
+    one". Ultralytics has never heard of it and refuses the run:
+    "Invalid CUDA 'device=auto' requested".
+    """
+    from app.core.config import get_settings
+
+    seen: dict = {}
+
+    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch):
+        seen["device"] = device
+        best = Path(output_dir) / "run" / "weights" / "best.pt"
+        best.parent.mkdir(parents=True, exist_ok=True)
+        best.write_bytes(b"trained weights")
+        return best
+
+    monkeypatch.setattr(handlers, "train", train)
+    monkeypatch.setattr(training, "ensure_weights", lambda model_id, directory: directory / f"{model_id}.pt")
+    monkeypatch.setattr(get_settings(), "device", "auto", raising=False)
+    project, version = _exported_version(tmp_path, "Device Is Resolved")
+
+    with run_jobs_inline():
+        _start(project, version)
+
+    assert seen["device"] != "auto"
+    assert seen["device"] in ("cpu",) or seen["device"].startswith("cuda:")
+
+
+def test_an_explicit_cpu_setting_is_honoured(tmp_path, models_dir, monkeypatch):
+    """"cpu" is an override, not a hint - someone who set it wants
+    the GPU left alone."""
+    from app.core.config import get_settings
+
+    seen: dict = {}
+
+    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch):
+        seen["device"] = device
+        best = Path(output_dir) / "run" / "weights" / "best.pt"
+        best.parent.mkdir(parents=True, exist_ok=True)
+        best.write_bytes(b"trained weights")
+        return best
+
+    monkeypatch.setattr(handlers, "train", train)
+    monkeypatch.setattr(training, "ensure_weights", lambda model_id, directory: directory / f"{model_id}.pt")
+    monkeypatch.setattr(get_settings(), "device", "cpu", raising=False)
+    project, version = _exported_version(tmp_path, "CPU Is Honoured")
+
+    with run_jobs_inline():
+        _start(project, version)
+
+    assert seen["device"] == "cpu"

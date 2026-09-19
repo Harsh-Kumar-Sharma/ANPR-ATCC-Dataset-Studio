@@ -26,6 +26,7 @@ from app.db.models.training_run import TrainingRun
 from app.core.config import get_settings
 from app.ml.factory import create_tracker, get_detector
 from app.ml.models import DEFAULT_MODEL_ID
+from app.ml.device import resolve_device
 from app.ml.weights import ensure_weights
 from app.services import training
 from app.services.training import train_with_ultralytics as train
@@ -200,7 +201,10 @@ def run_train_job(db: Session, params: dict, report: ProgressReporter) -> dict:
             output_dir=training.run_directory(workspace, run.id),
             epochs=run.epochs,
             image_size=run.image_size,
-            device=get_settings().device,
+            # Resolved, not passed through. "auto" is this app's own
+            # word for "use the GPU if there is one"; ultralytics has
+            # never heard of it and refuses the run outright.
+            device=resolve_device(get_settings().device),
             on_epoch=on_epoch,
         )
     except BaseException as exc:
