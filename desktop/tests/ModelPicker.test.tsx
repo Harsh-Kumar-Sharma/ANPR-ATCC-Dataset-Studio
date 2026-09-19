@@ -165,6 +165,7 @@ describe("Choosing the model for a live stream", () => {
       frames_captured: 0,
       frames_dropped: 0,
       tracks_persisted: 0,
+      frames_saved: 0,
       stopped: false,
       error: null,
     });
@@ -184,6 +185,7 @@ describe("Choosing the model for a live stream", () => {
         "rtsp://camera/ch1",
         expect.any(Number),
         "yolo26s",
+        expect.objectContaining({ keepFrames: false }),
       ),
     );
   });

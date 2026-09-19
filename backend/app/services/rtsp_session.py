@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -5,16 +6,55 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from app.db.models.processing_run import ProcessingRun
 from app.db.session import SessionLocal
 from app.ml.detector import Detector
 from app.ml.tracker import Tracker
+from app.services.frame_materializer import frames_root, get_or_create_frame
 from app.services.live_preview import LivePreview, PreviewBox, PreviewFrame
 from app.services.rolling_buffer import RollingFrameBuffer
 from app.services.rtsp_source import RtspSourceAdapter
 from app.services.track_processor import ObservationsByTrack, _Observation, observe_frame, persist_observations
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class KeepFrames:
+    """Whether to keep the frames themselves, and how many.
+
+    A live session that detects nothing leaves nothing to label -
+    2,453 frames captured and not one of them reviewable. Keeping the
+    frames is what makes a session useful when the model is wrong, or
+    when there is no model worth trusting yet.
+
+    Bounded on purpose. Every frame of a long session at 1080p is
+    gigabytes, and this runs on a disk with single-digit gigabytes
+    free, so it keeps one in ``every`` and stops at ``max_frames``.
+    """
+
+    enabled: bool = False
+    #: Keep one frame in this many. Consecutive frames of a camera
+    #: mostly show the same thing, so this costs little and saves a
+    #: lot.
+    every: int = 10
+    #: A ceiling the session cannot talk its way past, however long
+    #: it runs.
+    max_frames: int = 2000
+
+
+@dataclass
+class _SavedFrame:
+    """A frame written to disk, waiting for its database row."""
+
+    frame_index: int
+    timestamp_ms: int
+    width: int
+    height: int
+    path: Path
 
 
 @dataclass
@@ -25,6 +65,8 @@ class RtspSessionStatus:
     frames_captured: int = 0
     frames_dropped: int = 0
     tracks_persisted: int = 0
+    #: How many captured frames were kept for labelling.
+    frames_saved: int = 0
     stopped: bool = False
     error: str | None = None
 
@@ -56,6 +98,8 @@ class RtspCaptureSession:
         buffer_maxlen: int = 300,
         persist_interval_seconds: float = 10.0,
         poll_interval_seconds: float = 0.05,
+        source_id: str | None = None,
+        keep_frames: KeepFrames | None = None,
     ) -> None:
         self._run_id = run_id
         self._adapter = adapter
@@ -65,6 +109,14 @@ class RtspCaptureSession:
         self._buffer: RollingFrameBuffer = RollingFrameBuffer(maxlen=buffer_maxlen)
         self._persist_interval_seconds = persist_interval_seconds
         self._poll_interval_seconds = poll_interval_seconds
+
+        self._source_id = source_id
+        self._keep_frames = keep_frames or KeepFrames()
+        # Frames the camera's own, kept where every other full frame
+        # of this source lives, so deleting the source takes them too.
+        self._frames_dir = frames_root(workspace_path) / source_id if source_id else None
+        self._saved: list[_SavedFrame] = []
+        self._frames_saved = 0
 
         self._observations_by_track: ObservationsByTrack = {}
         self._preview = LivePreview()
@@ -167,6 +219,7 @@ class RtspCaptureSession:
                     # there is no file to cut the crop out of later.
                     keep_crop=True,
                 )
+                self._maybe_keep_frame(item)
                 # Published per processed frame, not once per drained batch.
                 # When detection is slower than capture the buffer backs up and
                 # a single batch can span hundreds of frames, so a batch-level
@@ -188,6 +241,71 @@ class RtspCaptureSession:
                 time.sleep(self._poll_interval_seconds)
 
         self._persist(status="failed" if self._status_snapshot().error else "completed", finalize=True)
+
+    def _maybe_keep_frame(self, item) -> None:
+        """Write one captured frame to disk, if it is one we are keeping.
+
+        Written here in the processing thread rather than at capture:
+        the capture thread's job is to not miss frames, and a JPEG
+        encode in that loop is the kind of thing that makes it miss
+        frames.
+
+        A failure to write is logged and dropped. Losing a frame we
+        were keeping out of interest is not worth ending a live
+        capture over.
+        """
+        keep = self._keep_frames
+        if not keep.enabled or self._frames_dir is None:
+            return
+        if self._frames_saved >= keep.max_frames:
+            return
+        if keep.every > 1 and item.frame_index % keep.every != 0:
+            return
+
+        path = self._frames_dir / f"frame_{item.frame_index:06d}.jpg"
+        try:
+            self._frames_dir.mkdir(parents=True, exist_ok=True)
+            if not cv2.imwrite(str(path), item.payload):
+                raise OSError(f"cv2 could not write {path}")
+        except OSError:
+            logger.warning("Could not keep frame %s of the live session", item.frame_index, exc_info=True)
+            return
+
+        height, width = item.payload.shape[:2]
+        self._saved.append(
+            _SavedFrame(
+                frame_index=item.frame_index,
+                timestamp_ms=item.timestamp_ms,
+                width=width,
+                height=height,
+                path=path,
+            )
+        )
+        self._frames_saved += 1
+        with self._lock:
+            self._status.frames_saved = self._frames_saved
+
+    def _persist_saved_frames(self, db) -> None:
+        """Give the frames written since last time their database rows.
+
+        Rows here rather than at write time because this is the only
+        place the session holds a database session, and because a
+        frame on disk with no row is recoverable while a row with no
+        frame is a broken image in the labelling queue.
+        """
+        if not self._saved:
+            return
+        pending, self._saved = self._saved, []
+        for saved in pending:
+            frame = get_or_create_frame(
+                db,
+                source_id=self._source_id,
+                frame_index=saved.frame_index,
+                timestamp_ms=saved.timestamp_ms,
+                width=saved.width,
+                height=saved.height,
+            )
+            frame.image_path = str(saved.path)
 
     def _publish_preview(self, frame: np.ndarray, tracked: list[tuple[int, _Observation]]) -> None:
         class_names = self._detector.class_names
@@ -213,6 +331,7 @@ class RtspCaptureSession:
             if run is None:
                 return
             tracks = persist_observations(db, run, self._observations_by_track, self._tracks_root, self._detector.class_names)
+            self._persist_saved_frames(db)
             self._observations_by_track.clear()
             with self._lock:
                 self._status.tracks_persisted += len(tracks)

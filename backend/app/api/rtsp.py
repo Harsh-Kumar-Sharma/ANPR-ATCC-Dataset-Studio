@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.ml.factory import DetectorProvider, create_tracker, get_detector_provider
 from app.ml.models import DEFAULT_MODEL_ID
 from app.schemas.rtsp import RtspSessionStatusRead, RtspStartRequest, RtspStartResult
-from app.services.rtsp_session import RtspCaptureSession
+from app.services.rtsp_session import KeepFrames, RtspCaptureSession
 from app.services.live_reconcile import UNFINISHED as UNFINISHED_LIVE, settle as settle_live_run
 from app.services.rtsp_session_registry import get_session, register_session
 from app.services.rtsp_source import ConnectionProvider, RtspSourceAdapter, default_connection_provider
@@ -69,7 +69,13 @@ def start_rtsp_session(
 
     run = ProcessingRun(
         source_id=source.id,
-        sampling_config={"protocol": "rtsp", "expected_fps": payload.expected_fps, "buffer_maxlen": payload.buffer_maxlen},
+        sampling_config={
+            "protocol": "rtsp",
+            "expected_fps": payload.expected_fps,
+            "buffer_maxlen": payload.buffer_maxlen,
+            "keep_frames": payload.keep_frames,
+            "keep_every": payload.keep_every,
+        },
         detector_version=detector.model_version,
         tracker_config={"frame_rate": payload.expected_fps},
         status="running",
@@ -83,6 +89,12 @@ def start_rtsp_session(
     tracker = create_tracker(frame_rate=payload.expected_fps)
     session = RtspCaptureSession(
         run_id=run.id,
+        source_id=source.id,
+        keep_frames=KeepFrames(
+            enabled=payload.keep_frames,
+            every=payload.keep_every,
+            max_frames=payload.keep_max_frames,
+        ),
         adapter=adapter,
         detector=detector,
         tracker=tracker,

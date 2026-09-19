@@ -301,7 +301,7 @@ function App() {
             </>
           )}
           {tab === "label" && (
-            <LabelQueue queue={frameQueue} selectedFrameId={labelFrame?.id ?? null} />
+            <LabelQueue queue={frameQueue} selectedFrameId={labelFrame?.id ?? null} project={project} />
           )}
           {tab === "live" && (
             <RtspPanel project={project} onSessionEnded={refreshTracks} onShowPreview={showLivePreview} />

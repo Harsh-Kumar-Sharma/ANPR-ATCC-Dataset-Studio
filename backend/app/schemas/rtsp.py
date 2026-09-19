@@ -15,6 +15,14 @@ class RtspStartRequest(BaseModel):
     #: a model you trained earns its keep, so this is not the one place
     #: that stays hard-coded.
     model_id: str | None = None
+    #: Keep the captured frames themselves, so there is something to
+    #: label even when detection finds nothing.
+    keep_frames: bool = False
+    #: Keep one frame in this many. Consecutive frames mostly show the
+    #: same thing.
+    keep_every: int = Field(default=10, ge=1)
+    #: A ceiling the session cannot pass, however long it runs.
+    keep_max_frames: int = Field(default=2000, ge=1)
 
 
 class RtspStartResult(BaseModel):
@@ -29,5 +37,7 @@ class RtspSessionStatusRead(BaseModel):
     frames_captured: int
     frames_dropped: int
     tracks_persisted: int
+    #: How many captured frames were kept for labelling.
+    frames_saved: int = 0
     stopped: bool
     error: str | None

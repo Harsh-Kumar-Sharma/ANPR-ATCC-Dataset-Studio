@@ -284,6 +284,8 @@ export interface RtspSessionStatus {
   frames_captured: number;
   frames_dropped: number;
   tracks_persisted: number;
+  /** How many captured frames were kept for labelling. */
+  frames_saved: number;
   stopped: boolean;
   error: string | null;
 }
@@ -522,4 +524,13 @@ export interface RunEstimate {
   free_bytes: number;
   fits: boolean;
   reason: string | null;
+}
+
+/** What deleting the unlabelled frames would take, or took. */
+export interface Sweep {
+  kept: number;
+  deleted: number;
+  /** Held back because a dataset version already names them. */
+  held: number;
+  bytes_freed: number;
 }

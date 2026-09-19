@@ -66,7 +66,7 @@ function Harness({ selectedFrameId = null, dirty = false, sourceId, onSelect, on
     onSelect: onSelect ?? (() => {}),
     onSourceChange,
   });
-  return <LabelQueue queue={queue} selectedFrameId={selectedFrameId} />;
+  return <LabelQueue queue={queue} selectedFrameId={selectedFrameId} project={project} />;
 }
 
 function renderQueue(props: HarnessProps = {}) {

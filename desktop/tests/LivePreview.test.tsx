@@ -20,6 +20,7 @@ const status = (over: Partial<RtspSessionStatus> = {}): RtspSessionStatus => ({
   frames_captured: 0,
   frames_dropped: 0,
   tracks_persisted: 0,
+  frames_saved: 0,
   stopped: false,
   error: null,
   ...over,

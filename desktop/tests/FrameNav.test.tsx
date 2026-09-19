@@ -71,7 +71,7 @@ function Harness({ startAt = null, dirty = false, sourceId, onSelect }: HarnessP
   });
   return (
     <>
-      <LabelQueue queue={queue} selectedFrameId={selected} />
+      <LabelQueue queue={queue} selectedFrameId={selected} project={project} />
       <FrameNav queue={queue} />
     </>
   );

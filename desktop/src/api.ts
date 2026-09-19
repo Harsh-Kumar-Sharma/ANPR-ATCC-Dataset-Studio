@@ -28,6 +28,7 @@ import type {
   RtspStartResult,
   ModelInfo,
   RunEstimate,
+  Sweep,
   Source,
   SourceContents,
   SourceQueue,
@@ -300,10 +301,33 @@ export const api = {
   createRetrainingHandoff: (datasetVersionId: string) =>
     request<RetrainingHandoffResult>(`/dataset-versions/${datasetVersionId}/retraining-handoff`, { method: "POST" }),
 
-  startRtspSession: (projectId: string, rtspUrl: string, expectedFps: number, modelId?: string | null) =>
+  startRtspSession: (
+    projectId: string,
+    rtspUrl: string,
+    expectedFps: number,
+    modelId?: string | null,
+    keep?: { keepFrames: boolean; every: number },
+  ) =>
     request<RtspStartResult>(`/projects/${projectId}/sources/rtsp/start`, {
       method: "POST",
-      body: JSON.stringify({ rtsp_url: rtspUrl, expected_fps: expectedFps, model_id: modelId ?? null }),
+      body: JSON.stringify({
+        rtsp_url: rtspUrl,
+        expected_fps: expectedFps,
+        model_id: modelId ?? null,
+        keep_frames: keep?.keepFrames ?? false,
+        keep_every: keep?.every ?? 10,
+      }),
+    }),
+
+  /** What deleting this project's (or source's) unlabelled frames
+   *  would take. Asked before the button. */
+  previewSweep: (projectId: string, sourceId?: string | null) =>
+    request<Sweep>(`/projects/${projectId}/frames/sweep${query({ source_id: sourceId ?? undefined })}`),
+
+  /** Keep the labelled frames, delete the rest for good. */
+  sweepUnlabelled: (projectId: string, sourceId?: string | null) =>
+    request<Sweep>(`/projects/${projectId}/frames/sweep${query({ source_id: sourceId ?? undefined })}`, {
+      method: "POST",
     }),
   getRtspStatus: (runId: string) => request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/status`),
   stopRtspSession: (runId: string) =>

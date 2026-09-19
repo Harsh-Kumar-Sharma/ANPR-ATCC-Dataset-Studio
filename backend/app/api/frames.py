@@ -24,10 +24,11 @@ from app.schemas.frame import (
     FrameStatusWrite,
     QueueProgress,
     SourceQueueRead,
+    SweepRead,
 )
 from app.schemas.ocr import PlateReadingRead
 from app.schemas.review import AnnotationRead
-from app.services import frame_deletion, frames
+from app.services import frame_deletion, frame_sweep, frames
 from app.services.plate_text import plate_readings_for_frame
 
 project_frames_router = APIRouter(prefix="/projects/{project_id}/frames", tags=["frames"])
@@ -49,6 +50,41 @@ def list_frames(
     get_project_or_404(db, project_id)
     _require_source_of_project(db, project_id, source_id)
     return frames.list_queue(db, project_id, status=status, source_id=source_id)
+
+
+@project_frames_router.get("/sweep", response_model=SweepRead)
+def preview_sweep(project_id: str, source_id: str | None = None, db: Session = Depends(get_db)) -> SweepRead:
+    """What deleting the unlabelled frames would take.
+
+    Asked before the button, because a confirmation that cannot say
+    what is about to go is not one.
+    """
+    get_project_or_404(db, project_id)
+    _require_source_of_project(db, project_id, source_id)
+    return SweepRead(**asdict(frame_sweep.preview(db, project_id, source_id=source_id)))
+
+
+@project_frames_router.post("/sweep", response_model=SweepRead)
+def sweep_unlabelled(project_id: str, source_id: str | None = None, db: Session = Depends(get_db)) -> SweepRead:
+    """Keep the frames that were labelled; delete the rest for good.
+
+    The point of keeping a live session's frames is to have something
+    to label. Once that is done, the ones nobody labelled are a road
+    with nothing on it, one 1080p JPEG at a time.
+
+    Frames a dataset version already names are held back rather than
+    deleted - the version is the record of what a model was trained
+    on, and it has to keep describing real files.
+    """
+    get_project_or_404(db, project_id)
+    _require_source_of_project(db, project_id, source_id)
+    done, images = frame_sweep.sweep(db, project_id, source_id=source_id)
+    db.commit()
+    # After the commit, deliberately: a file left behind can be
+    # deleted later, a row pointing at a file that has gone cannot be
+    # fixed at all.
+    frame_sweep.remove_swept_images(images)
+    return SweepRead(**asdict(done))
 
 
 @project_frames_router.get("/by-source", response_model=list[SourceQueueRead])

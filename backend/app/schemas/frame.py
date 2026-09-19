@@ -90,3 +90,13 @@ class SourceQueueRead(BaseModel):
     labeled: int
     rejected: int
     skipped: int
+
+
+class SweepRead(BaseModel):
+    """What deleting the unlabelled frames would take, or took."""
+
+    kept: int
+    deleted: int
+    #: Held back because a dataset version already names them.
+    held: int
+    bytes_freed: int

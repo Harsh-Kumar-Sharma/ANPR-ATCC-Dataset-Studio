@@ -16,6 +16,11 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
   // The same choice as offline detection: a live stream is where a
   // model you trained yourself earns its keep.
   const modelChoice = useModelChoice(project.id);
+  // Keep the frames themselves, not just what was detected in them.
+  // A session that detects nothing otherwise leaves nothing to label,
+  // which is exactly what happened: 2,453 frames, no tracks.
+  const [keepFrames, setKeepFrames] = useState(false);
+  const [keepEvery, setKeepEvery] = useState(10);
   const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<RtspSessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +39,10 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
     setError(null);
     setStarting(true);
     try {
-      const result = await api.startRtspSession(project.id, url.trim(), expectedFps, modelChoice.modelId);
+      const result = await api.startRtspSession(project.id, url.trim(), expectedFps, modelChoice.modelId, {
+        keepFrames,
+        every: keepEvery,
+      });
       setRunId(result.run.id);
       onShowPreview(result.run.id);
       pollRef.current = setInterval(async () => {
@@ -106,6 +114,38 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
           {/* manage=false: importing and removing belong in one place,
               and both pickers are in the same sidebar. */}
           <ModelPicker choice={modelChoice} id="live-model" disabled={starting} manage={false} />
+
+          <label className="keep-frames">
+            <input
+              type="checkbox"
+              checked={keepFrames}
+              onChange={(e) => setKeepFrames(e.target.checked)}
+            />
+            Save captured frames for labelling
+          </label>
+          {keepFrames ? (
+            <>
+              <label className="fps-control">
+                Keep one frame in
+                <input
+                  type="number"
+                  min={1}
+                  value={keepEvery}
+                  onChange={(e) => setKeepEvery(Math.max(1, Number(e.target.value)))}
+                />
+              </label>
+              <p className="rtsp-hint">
+                Kept frames go straight to the Label tab, whether or not the model found anything in them.
+                Consecutive frames mostly show the same thing, so one in {keepEvery} costs little. Capped at
+                2,000 frames per session, and you can delete the ones you did not label afterwards.
+              </p>
+            </>
+          ) : (
+            <p className="rtsp-hint">
+              Off: only vehicles the model detects and tracks are saved. Turn this on if you want to label
+              frames yourself.
+            </p>
+          )}
           <button type="submit" className="btn-primary btn-block" disabled={!url.trim() || starting}>
             {starting ? "Starting…" : "Start Live Capture"}
           </button>
@@ -141,6 +181,14 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
             <span>Tracks persisted</span>
             <strong>{status.tracks_persisted}</strong>
           </div>
+          {/* Only when it is being done, so the row does not read as
+              "zero frames saved" to someone who did not ask for any. */}
+          {status.frames_saved > 0 && (
+            <div className="stat-row">
+              <span>Frames saved to label</span>
+              <strong>{status.frames_saved}</strong>
+            </div>
+          )}
           {runId && (
             <button className="btn-block" onClick={() => onShowPreview(runId)}>
               <IconBroadcast /> Show live preview
