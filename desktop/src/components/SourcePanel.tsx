@@ -11,6 +11,9 @@ interface Props {
   onWatch: (source: Source) => void;
   /** Open the Label tab already narrowed to this source. */
   onLabel?: (source: Source) => void;
+  /** A source and everything derived from it has gone. Told so the
+   *  rest of the app can stop showing what no longer exists. */
+  onRemoved?: (sourceId: string) => void;
 }
 
 /** Bytes as something a person can weigh a decision against. */
@@ -32,7 +35,7 @@ function readableSize(bytes: number): string {
   return `${shown.toFixed(shown < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
-function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
+function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Props) {
   const [sources, setSources] = useState<Source[]>([]);
   const [path, setPath] = useState("");
   const [targetFps, setTargetFps] = useState(5);
@@ -105,6 +108,10 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
       );
       setDoomed(null);
       setContents(null);
+      // The tracks and frames went with it. Anything still showing
+      // them is showing rows that are not there any more - clicking
+      // one answers "Track not found", which is how this was found.
+      onRemoved?.(doomed.id);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {

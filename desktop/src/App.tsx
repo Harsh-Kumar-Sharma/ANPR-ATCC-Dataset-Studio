@@ -71,6 +71,14 @@ function App() {
 
   useEffect(refreshTracks, [refreshTracks]);
 
+  // A selected track that is no longer in the list has been deleted -
+  // by removing its source, most likely. Holding the selection would
+  // leave the main pane on a track that answers 404. Safe on first
+  // load: nothing is selected until a list has been shown.
+  useEffect(() => {
+    if (selectedTrackId && !tracks.some((t) => t.id === selectedTrackId)) setSelectedTrackId(null);
+  }, [tracks, selectedTrackId]);
+
   // A detect job finishes long after the click that started it, so the
   // track list has to react to the job going terminal rather than to
   // the request returning.
@@ -108,6 +116,27 @@ function App() {
     setLabelDirty(false);
     setTab("label");
     setMainView("review");
+  }
+
+  /** A source was removed, taking its tracks and frames with it.
+   *
+   *  Everything showing them has to be told: the track list was left
+   *  holding six rows that no longer existed, and clicking one
+   *  answered "Track not found". */
+  function handleSourceRemoved(sourceId: string) {
+    refreshTracks();
+    refreshJobs();
+    setQueueVersion((v) => v + 1);
+    if (playerSource?.id === sourceId) {
+      setPlayerSource(null);
+      setMainView("review");
+    }
+    if (labelFrame?.source_id === sourceId) {
+      setLabelFrame(null);
+      setLabelDirty(false);
+      setMainView("review");
+    }
+    if (labelSourceId === sourceId) setLabelSourceId(undefined);
   }
 
   function watchSource(source: Source) {
@@ -259,6 +288,7 @@ function App() {
                 onProcessed={refreshJobs}
                 onWatch={watchSource}
                 onLabel={labelSource}
+                onRemoved={handleSourceRemoved}
               />
               <JobsPanel
                 jobs={jobs}
