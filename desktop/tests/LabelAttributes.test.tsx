@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../src/api";
+import { api, ApiError } from "../src/api";
 import LabelCanvas from "../src/components/LabelCanvas";
 import type { Annotation, AttributeDefinition, Frame, Project } from "../src/types";
 
@@ -285,5 +285,67 @@ describe("LabelCanvas: the attributes panel", () => {
 
     expect(await screen.findByLabelText("Class of selected box")).toBeInTheDocument();
     expect(screen.queryByLabelText("Plate text")).not.toBeInTheDocument();
+  });
+});
+
+describe("LabelCanvas: deleting a frame for good", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
+    vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([]);
+  });
+
+  it("asks before deleting, even with nothing drawn", async () => {
+    // Skipping can be undone by putting the frame back. This cannot be
+    // undone at all, and the two controls sit next to each other.
+    const remove = vi.spyOn(api, "deleteFrame");
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /delete for good/i })).toBeInTheDocument();
+  });
+
+  it("deletes once confirmed and tells the queue to move on", async () => {
+    const onDeleted = vi.fn();
+    const remove = vi.spyOn(api, "deleteFrame").mockResolvedValue({
+      labels: 0,
+      detections: 1,
+      emptied_tracks: 0,
+      image_removed: true,
+    });
+    render(<LabelCanvas project={project} frame={frame} onDeleted={onDeleted} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /delete for good/i }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("f-1"));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("f-1"));
+  });
+
+  it("backing out keeps the frame", async () => {
+    const remove = vi.spyOn(api, "deleteFrame");
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /^delete$/i })).toBeInTheDocument();
+  });
+
+  it("says which dataset version is holding a frame it cannot delete", async () => {
+    vi.spyOn(api, "deleteFrame").mockRejectedValue(
+      new ApiError(409, "frame_exported", "This frame is in dataset version v3, which is immutable."),
+    );
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /delete for good/i }));
+
+    expect(await screen.findByText(/dataset version v3/i)).toBeInTheDocument();
   });
 });

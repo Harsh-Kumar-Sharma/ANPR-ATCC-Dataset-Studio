@@ -2283,3 +2283,11 @@ label.toggle {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
+
+/* Deleting a frame sits next to skipping it and must not look the
+   same: one is reversible and the other removes the image from disk. */
+.label-canvas__bar .label-canvas__delete:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}

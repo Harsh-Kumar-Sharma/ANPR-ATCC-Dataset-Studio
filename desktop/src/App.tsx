@@ -164,6 +164,13 @@ function App() {
           setLabelFrame(null);
           setQueueVersion((v) => v + 1);
         }}
+        onDeleted={() => {
+          // Same move as a skip. The difference is behind it: there is
+          // no frame left to put back.
+          setLabelDirty(false);
+          setLabelFrame(null);
+          setQueueVersion((v) => v + 1);
+        }}
       />
     );
   } else if (mainView === "live" && liveRunId) {

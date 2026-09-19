@@ -15,10 +15,16 @@ from app.api.projects import get_project_or_404
 from app.db.models.annotation import Annotation
 from app.db.models.frame import Frame
 from app.db.session import get_db
-from app.schemas.frame import FrameAnnotationsReplace, FrameRead, FrameStatusWrite, QueueProgress
+from app.schemas.frame import (
+    DeletedFrameRead,
+    FrameAnnotationsReplace,
+    FrameRead,
+    FrameStatusWrite,
+    QueueProgress,
+)
 from app.schemas.ocr import PlateReadingRead
 from app.schemas.review import AnnotationRead
-from app.services import frames
+from app.services import frame_deletion, frames
 from app.services.plate_text import plate_readings_for_frame
 
 project_frames_router = APIRouter(prefix="/projects/{project_id}/frames", tags=["frames"])
@@ -53,6 +59,26 @@ def get_frame_image(frame_id: str, db: Session = Depends(get_db)) -> FileRespons
     # The decode may have recorded image_path on the row.
     db.commit()
     return FileResponse(path, media_type="image/jpeg")
+
+
+@frames_router.delete("/{frame_id}", response_model=DeletedFrameRead)
+def delete_frame(frame_id: str, db: Session = Depends(get_db)) -> DeletedFrameRead:
+    """Remove a frame for good - its boxes, its detections and its image.
+
+    Not the same as skipping. Skipping is a judgement that can be
+    reversed; this is for frames that should never have been offered,
+    and the decoded image it removes is the part that fills a disk.
+
+    Refused for a frame that is in an exported dataset version, because
+    a version is immutable and its manifest names every image in it.
+    """
+    frame = frames.get_frame(db, frame_id)
+    removed, image_path = frame_deletion.delete_frame(db, frame)
+    db.commit()
+    # After the commit: a file left behind can be deleted by hand, a row
+    # pointing at an image that is gone cannot be reasoned about.
+    removed.image_removed = frame_deletion.remove_frame_image(image_path)
+    return DeletedFrameRead(**asdict(removed))
 
 
 @frames_router.put("/{frame_id}/status", response_model=FrameRead)

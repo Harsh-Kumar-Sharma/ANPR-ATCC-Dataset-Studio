@@ -6,6 +6,7 @@ import type {
   ClassUsage,
   DatasetExportResult,
   DatasetVersion,
+  DeletedFrame,
   DisagreementItem,
   EvaluationReport,
   Frame,
@@ -180,6 +181,10 @@ export const api = {
   /** What a box can carry besides its class. One list, shared with the
    *  validation on the way back in. */
   listAttributeDefinitions: () => request<AttributeDefinition[]>("/annotation-attributes"),
+  /** Remove a frame for good - its boxes, its detections and its
+   *  decoded image. Not the same as skipping, which is reversible.
+   *  Refused for a frame in an exported dataset version. */
+  deleteFrame: (frameId: string) => request<DeletedFrame>(`/frames/${frameId}`, { method: "DELETE" }),
   getFrameAnnotations: (frameId: string) => request<Annotation[]>(`/frames/${frameId}/annotations`),
   /** Whole-set replacement: whatever is not in the list is gone. */
   saveFrameAnnotations: (frameId: string, annotations: FrameAnnotationWrite[]) =>

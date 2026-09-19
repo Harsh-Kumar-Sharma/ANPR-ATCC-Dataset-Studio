@@ -24,6 +24,10 @@ interface Props {
   onDirtyChange?: (dirty: boolean) => void;
   /** Called after the frame is skipped, so the queue moves on. */
   onRejected?: (frame: Frame) => void;
+  /** Called after the frame is deleted for good. Separate from
+   *  onRejected because the frame no longer exists - there is nothing
+   *  left to put back. */
+  onDeleted?: (frameId: string) => void;
 }
 
 type Box = FrameAnnotationWrite;
@@ -130,7 +134,15 @@ function fromAnnotation(a: Annotation): Box {
  * position in the project's list, which is what makes a frame with
  * four vehicles labellable without touching the mouse after drawing.
  */
-function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChange, onRejected }: Props) {
+function LabelCanvas({
+  project,
+  frame,
+  classesVersion = 0,
+  onSaved,
+  onDirtyChange,
+  onRejected,
+  onDeleted,
+}: Props) {
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [classes, setClasses] = useState<ProjectClass[]>([]);
   const [attributeDefs, setAttributeDefs] = useState<AttributeDefinition[]>([]);
@@ -141,6 +153,8 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
   const [saving, setSaving] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [confirmingSkip, setConfirmingSkip] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -514,6 +528,29 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
     }
   }
 
+  async function deleteForGood() {
+    // Always asks, even with nothing drawn. Skipping can be undone by
+    // putting the frame back; this cannot be undone at all, and the
+    // two controls sit next to each other.
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
+    setConfirmingDelete(false);
+    setDeleting(true);
+    try {
+      await api.deleteFrame(frame.id);
+      setError(null);
+      onDeleted?.(frame.id);
+    } catch (e) {
+      // The refusal worth reading is "this frame is in dataset version
+      // vN", which names what is holding it.
+      setError(describe(e));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function reject() {
     // Skipping throws away whatever is on the frame, so it asks first
     // for the same reason walking away from the frame does.
@@ -646,9 +683,26 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
           {dirty && " (unsaved)"}
         </span>
         {unclassified > 0 && <span className="label-canvas__hint">{unclassified} without a class yet</span>}
-        <button onClick={reject} disabled={saving || skipping} title="Not worth labelling - skip it">
+        <button
+          onClick={reject}
+          disabled={saving || skipping || deleting}
+          title="Not worth labelling - set it aside. This can be undone."
+        >
           {confirmingSkip ? "Skip and lose boxes" : "Skip"}
         </button>
+        <button
+          className="label-canvas__delete"
+          onClick={deleteForGood}
+          disabled={saving || skipping || deleting}
+          title="Remove this frame and its image from disk. This cannot be undone."
+        >
+          {confirmingDelete ? "Delete for good" : "Delete"}
+        </button>
+        {confirmingDelete && (
+          <button onClick={() => setConfirmingDelete(false)} title="Keep this frame">
+            Cancel
+          </button>
+        )}
         {confirmingSkip && (
           <button onClick={() => setConfirmingSkip(false)} title="Keep working on this frame">
             Cancel

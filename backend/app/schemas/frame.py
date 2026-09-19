@@ -57,3 +57,19 @@ class FrameAnnotationsReplace(BaseModel):
     "nothing here"."""
 
     annotations: list[FrameAnnotationWrite]
+
+
+class DeletedFrameRead(BaseModel):
+    """What went with a deleted frame.
+
+    Reported so the canvas can say what it removed rather than the
+    frame simply vanishing.
+    """
+
+    labels: int
+    detections: int
+    #: Tracks that had no detections left once this frame's were gone.
+    emptied_tracks: int
+    #: Whether a decoded image was on disk and is now not. False when
+    #: the frame had never been opened, which costs nothing to delete.
+    image_removed: bool

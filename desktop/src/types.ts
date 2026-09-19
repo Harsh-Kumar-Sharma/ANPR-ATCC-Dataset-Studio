@@ -432,3 +432,13 @@ export interface SourceContents {
   running_jobs: number;
   files_removed: boolean;
 }
+
+/** What went with a deleted frame. */
+export interface DeletedFrame {
+  labels: number;
+  detections: number;
+  /** Tracks left with no detections once this frame's were gone. */
+  emptied_tracks: number;
+  /** False when the frame had never been opened, so no image existed. */
+  image_removed: boolean;
+}
