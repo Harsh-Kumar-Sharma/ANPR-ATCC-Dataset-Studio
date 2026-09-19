@@ -2224,3 +2224,32 @@ label.toggle {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* --- removing a source -------------------------------------------------- */
+
+.source-list li {
+  position: relative;
+}
+
+.source-remove {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  padding: 2px 6px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.source-remove:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.source-name {
+  padding-right: 1.8rem;
+}

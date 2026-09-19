@@ -1,5 +1,6 @@
 import shutil
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +21,8 @@ from app.schemas.processing_run import (
     ProcessingRunResult,
     SampledFrameRead,
 )
-from app.schemas.source import SourceImportRequest, SourceRead
+from app.schemas.source import SourceContentsRead, SourceImportRequest, SourceRead
+from app.services import source_deletion
 from app.services.frame_sampler import FrameDecodeError, decode_sampled_frames, sample_frame_timestamps
 from app.services.jobs.runner import Launcher, get_launcher, submit_job
 from app.services.video_probe import VideoProbeError, probe_video
@@ -90,6 +92,40 @@ def _get_source_or_404(db: Session, project_id: str, source_id: str) -> Source:
 def get_source(project_id: str, source_id: str, db: Session = Depends(get_db)) -> Source:
     get_project_or_404(db, project_id)
     return _get_source_or_404(db, project_id, source_id)
+
+
+@router.get("/{source_id}/contents", response_model=SourceContentsRead)
+def get_source_contents(project_id: str, source_id: str, db: Session = Depends(get_db)) -> SourceContentsRead:
+    """What deleting this source would destroy.
+
+    Its own endpoint for the same reason the project's is: a
+    confirmation that cannot say what is about to go is not a
+    confirmation, and adding up the files on disk is slow enough that
+    the delete request should not be the first time anyone pays for it.
+    """
+    project = get_project_or_404(db, project_id)
+    source = _get_source_or_404(db, project_id, source_id)
+    contents = source_deletion.summarize(db, source, Path(project.workspace_path))
+    return SourceContentsRead(**asdict(contents))
+
+
+@router.delete("/{source_id}", response_model=SourceContentsRead)
+def remove_source(project_id: str, source_id: str, db: Session = Depends(get_db)) -> SourceContentsRead:
+    """Delete a source and everything derived from it, and say what went.
+
+    Refused while a job or a live capture is running against it. A
+    dataset version already exported is left alone: it is immutable,
+    it belongs to the project rather than to one source, and something
+    may already have trained on it.
+    """
+    project = get_project_or_404(db, project_id)
+    source = _get_source_or_404(db, project_id, source_id)
+    contents, owned = source_deletion.delete_source(db, source, Path(project.workspace_path))
+    db.commit()
+    # Only after the commit. Files left behind can be deleted by hand;
+    # rows pointing at images that are gone cannot be reasoned about.
+    contents.files_removed = source_deletion.remove_source_files(owned)
+    return SourceContentsRead(**asdict(contents))
 
 
 @router.put("/{source_id}/freeze", response_model=SourceRead)

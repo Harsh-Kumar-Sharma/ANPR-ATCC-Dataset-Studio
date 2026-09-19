@@ -1,12 +1,48 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import { IconAlert, IconCheck, IconFilm, IconPlay } from "../Icons";
-import type { Project, Source } from "../types";
+import { IconAlert, IconCheck, IconFilm, IconPlay, IconX } from "../Icons";
+import type { Project, Source, SourceContents } from "../types";
 
 interface Props {
   project: Project;
   onProcessed: () => void;
   onWatch: (source: Source) => void;
+}
+
+/** What to call a source on screen.
+ *
+ *  The filename for a video. For a live stream the last path segment is
+ *  the channel number - both cameras in a real project displayed as
+ *  "1" - so it is named by host and channel instead, with any
+ *  credentials in the URL left out of the UI. */
+function sourceLabel(source: Source): string {
+  if (source.type !== "rtsp") return source.path_or_uri.split(/[\\/]/).pop() ?? source.path_or_uri;
+  try {
+    const url = new URL(source.path_or_uri);
+    const channel = url.pathname.split("/").filter(Boolean).pop();
+    return channel ? `${url.hostname} · ch ${channel}` : url.hostname;
+  } catch {
+    return source.path_or_uri;
+  }
+}
+
+/** Bytes as something a person can weigh a decision against. */
+function readableSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "an unknown amount";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  let shown = Number(value.toFixed(value < 10 ? 1 : 0));
+  if (shown >= 1024 && unit < units.length - 1) {
+    shown = 1;
+    unit += 1;
+  }
+  return `${shown.toFixed(shown < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
 function SourcePanel({ project, onProcessed, onWatch }: Props) {
@@ -17,6 +53,10 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [groundTruthDrafts, setGroundTruthDrafts] = useState<Record<string, string>>({});
+  /** The source the user is being asked to confirm removing, if any. */
+  const [doomed, setDoomed] = useState<Source | null>(null);
+  const [contents, setContents] = useState<SourceContents | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   function refresh() {
     api
@@ -37,6 +77,47 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sources]);
+
+  async function askToRemove(source: Source) {
+    setDoomed(source);
+    setContents(null);
+    setError(null);
+    setStatus(null);
+    try {
+      const loaded = await api.getSourceContents(project.id, source.id);
+      // Only if this is still the source being asked about - clicking
+      // one then another before the first reply lands would otherwise
+      // show the first one's counts under the second one's name.
+      setDoomed((current) => {
+        if (current?.id === source.id) setContents(loaded);
+        return current;
+      });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function confirmRemove() {
+    if (!doomed) return;
+    setRemoving(true);
+    setError(null);
+    try {
+      const removed = await api.deleteSource(project.id, doomed.id);
+      setSources((previous) => previous.filter((s) => s.id !== doomed.id));
+      setStatus(
+        `Removed ${sourceLabel(doomed)}: ${removed.labels} label(s), ${removed.frames} frame(s).` +
+          (removed.files_removed ? "" : " Its files were left on disk - remove that folder by hand."),
+      );
+      setDoomed(null);
+      setContents(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  const removeBusy = (contents?.running_jobs ?? 0) > 0;
 
   async function handleImport(e: React.FormEvent) {
     e.preventDefault();
@@ -133,8 +214,17 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
         {sources.map((s) => (
           <li key={s.id}>
             <span className="source-name" title={s.path_or_uri}>
-              {s.path_or_uri.split(/[\\/]/).pop()}
+              {sourceLabel(s)}
             </span>
+            <button
+              className="source-remove"
+              data-testid="remove-source"
+              aria-label={`Remove ${sourceLabel(s)}`}
+              title="Remove this source and everything found in it"
+              onClick={() => askToRemove(s)}
+            >
+              <IconX />
+            </button>
             <span className="meta">
               {s.width}x{s.height} @ {s.fps}fps · {s.frame_count} frames
             </span>
@@ -144,10 +234,17 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
                   <IconFilm /> Watch
                 </button>
               )}
-              <button disabled={busySourceId === s.id || s.is_processing} onClick={() => handleProcess(s)}>
-                <IconPlay />
-                {busySourceId === s.id || s.is_processing ? "Processing…" : "Detect + Track"}
-              </button>
+              {/* Offline video only. A live stream has no file to decode
+                  and no frame count, so this could only ever fail -
+                  which is exactly what it did, with "frame_count must
+                  be positive", on both RTSP sources in a real project.
+                  Live capture is the Live tab's job. */}
+              {s.type === "video" && (
+                <button disabled={busySourceId === s.id || s.is_processing} onClick={() => handleProcess(s)}>
+                  <IconPlay />
+                  {busySourceId === s.id || s.is_processing ? "Processing…" : "Detect + Track"}
+                </button>
+              )}
               {s.type === "video" && (
                 <button
                   disabled={busySourceId === s.id || s.is_processing}
@@ -178,6 +275,41 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
         ))}
         {sources.length === 0 && <li className="empty">No sources imported yet.</li>}
       </ul>
+
+      {doomed && (
+        <div className="delete-confirm">
+          <p className="delete-confirm-title">
+            Remove <strong>{sourceLabel(doomed)}</strong>?
+          </p>
+          {contents === null ? (
+            <p className="empty">{error ? "Could not read what is in this source." : "Working out what is in it…"}</p>
+          ) : (
+            <>
+              <p className="delete-summary" data-testid="remove-source-summary">
+                This destroys {contents.labels} label(s), {contents.tracks} track(s), {contents.frames} frame(s) and{" "}
+                {readableSize(contents.bytes)} of files. Datasets you have already exported are not touched. It cannot
+                be undone.
+              </p>
+              {removeBusy && (
+                <p className="error">
+                  <IconAlert /> {contents.running_jobs} unfinished job(s) or live capture(s) against this source. Wait
+                  for them to finish, cancel them, or stop the capture first.
+                </p>
+              )}
+            </>
+          )}
+          <div className="delete-confirm-actions">
+            <button onClick={() => { setDoomed(null); setContents(null); }}>Cancel</button>
+            <button
+              className="btn-danger"
+              disabled={contents === null || removeBusy || removing}
+              onClick={confirmRemove}
+            >
+              {removing ? "Removing…" : "Remove this source"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <label className="fps-control">
         Sampling FPS

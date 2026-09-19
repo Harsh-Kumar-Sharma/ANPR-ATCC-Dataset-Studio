@@ -415,3 +415,20 @@ export interface ProjectContents {
    *  delete from where it was. */
   workspace_removed: boolean;
 }
+
+/** What a source holds, in the terms a person would miss it in.
+ *
+ *  Dataset exports are absent on purpose: a version already exported is
+ *  immutable, belongs to the project rather than to one source, and is
+ *  not removed with it. */
+export interface SourceContents {
+  frames: number;
+  tracks: number;
+  /** Human boxes. Predictions are not counted. */
+  labels: number;
+  /** Its copy of the video, its track crops and its decoded frames. */
+  bytes: number;
+  /** Any at all and removal refuses. */
+  running_jobs: number;
+  files_removed: boolean;
+}

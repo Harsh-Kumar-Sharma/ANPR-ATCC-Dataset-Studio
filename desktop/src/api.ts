@@ -25,6 +25,7 @@ import type {
   RtspSessionStatus,
   RtspStartResult,
   Source,
+  SourceContents,
   SourceDetections,
   Track,
   TrackReviewResult,
@@ -103,6 +104,14 @@ export const api = {
       { method: "DELETE" },
     ),
 
+  /** What removing a source would destroy. Its own call, because a
+   *  confirmation that cannot say what is about to go is not one. */
+  getSourceContents: (projectId: string, sourceId: string) =>
+    request<SourceContents>(`/projects/${projectId}/sources/${sourceId}/contents`),
+  /** Irreversible. Refused while a job or a live capture is running
+   *  against the source. */
+  deleteSource: (projectId: string, sourceId: string) =>
+    request<SourceContents>(`/projects/${projectId}/sources/${sourceId}`, { method: "DELETE" }),
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>
     request<Source>(`/projects/${projectId}/sources`, { method: "POST", body: JSON.stringify({ path }) }),

@@ -29,3 +29,22 @@ class SourceRead(BaseModel):
     is_frozen: bool
     ground_truth_vehicle_count: int | None
     is_processing: bool = False
+
+
+class SourceContentsRead(BaseModel):
+    """What a source holds, in the terms a person would miss it in.
+
+    Shown before deleting and returned after, so the confirmation and
+    the outcome can be compared. Dataset exports are absent on purpose:
+    a version already exported is immutable and is not removed.
+    """
+
+    frames: int
+    tracks: int
+    #: Human boxes. Predictions are not counted.
+    labels: int
+    #: Its copy of the video, its track crops and its decoded frames.
+    bytes: int
+    #: Any at all and deletion refuses.
+    running_jobs: int
+    files_removed: bool = False
