@@ -139,6 +139,18 @@ describe("LabelQueue", () => {
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("f-5", "pending"));
   });
 
+  it("shows why a frame is in the queue, when selection has said", async () => {
+    // A bad queue is only fixable if each frame can say how it got in.
+    vi.spyOn(api, "listFrames").mockResolvedValue([
+      { ...frame(0), selection_reason: "quality 0.57, 2 vehicle(s), brightness 0.40" },
+      frame(1),
+    ]);
+
+    renderQueue();
+
+    expect(await screen.findByText(/quality 0\.57, 2 vehicle\(s\)/)).toBeInTheDocument();
+  });
+
   it("marks which frames are done", async () => {
     vi.spyOn(api, "listFrames").mockResolvedValue([frame(0, "labeled"), frame(1)]);
 

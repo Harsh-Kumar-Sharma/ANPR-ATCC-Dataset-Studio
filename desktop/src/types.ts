@@ -293,7 +293,7 @@ export interface OcrCandidate {
   created_at: string;
 }
 
-export type JobType = "detect" | "train" | "export" | "preannotate";
+export type JobType = "detect" | "select" | "train" | "export" | "preannotate";
 export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 
 /** A unit of work running outside the request that asked for it.
@@ -318,5 +318,7 @@ export interface Job {
  *  usable immediately, but the run has not necessarily started. */
 export interface JobSubmitted {
   job: Job;
-  run_id: string;
+  /** Null for work that produces no processing run of its own, such as
+   *  choosing which frames are worth labelling. */
+  run_id: string | null;
 }

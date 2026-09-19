@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { IconAlert, IconCheck, IconFilm, IconPlay } from "../Icons";
 import type { Project, Source } from "../types";
 
@@ -70,6 +70,22 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
     }
   }
 
+  async function handleChooseFrames(source: Source) {
+    setBusySourceId(source.id);
+    setStatus(null);
+    setError(null);
+    try {
+      // Decoding every sampled frame takes minutes, so this returns as
+      // soon as the work is queued; the jobs panel carries it from here.
+      await api.selectFrames(project.id, source.id);
+      setStatus(`${source.path_or_uri.split(/[\\/]/).pop()}: choosing frames, queued. Follow it under Jobs.`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusySourceId(null);
+    }
+  }
+
   async function handleFreeze(source: Source) {
     const count = Number(groundTruthDrafts[source.id]);
     if (!count || count <= 0) {
@@ -132,6 +148,15 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
                 <IconPlay />
                 {busySourceId === s.id || s.is_processing ? "Processing…" : "Detect + Track"}
               </button>
+              {s.type === "video" && (
+                <button
+                  disabled={busySourceId === s.id || s.is_processing}
+                  onClick={() => handleChooseFrames(s)}
+                  title="Set aside near-duplicate and poor frames so the labelling queue is worth working through"
+                >
+                  Choose frames
+                </button>
+              )}
             </div>
             {s.is_frozen ? (
               <span className="frozen-badge">

@@ -18,6 +18,7 @@ const STATUS_LABEL: Record<Job["status"], string> = {
 
 const TYPE_LABEL: Record<Job["type"], string> = {
   detect: "Detect + track",
+  select: "Choosing frames",
   train: "Training",
   export: "Export",
   preannotate: "Pre-annotation",

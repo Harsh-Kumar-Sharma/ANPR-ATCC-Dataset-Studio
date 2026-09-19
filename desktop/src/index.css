@@ -2003,3 +2003,15 @@ label.toggle {
   color: var(--text-secondary);
   cursor: pointer;
 }
+
+/* Why a frame is (or is not) in the queue. The whole reason selection
+   records a reason at all is that a bad queue should be debuggable from
+   the app rather than from the database. */
+.label-queue__reason {
+  margin: 0 0 4px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

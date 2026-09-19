@@ -5,6 +5,8 @@ from app.services.frame_selection import (
     DEFAULT_SELECTION_CONFIG,
     FrameSignals,
     SelectionConfig,
+    brightness_of,
+    frame_quality,
     hamming_distance,
     perceptual_hash,
     select_frames,
@@ -65,7 +67,7 @@ def test_the_hash_only_reads_left_to_right_changes():
     flat = np.full((48, 64, 3), 128, dtype=np.uint8)
     darkening = np.repeat((np.arange(64, dtype=np.uint8) * 4)[None, ::-1, None], 48, axis=0).repeat(3, axis=2)
 
-    assert perceptual_hash(flat) == perceptual_hash(darkening) == 0
+    assert hamming_distance(perceptual_hash(flat), perceptual_hash(darkening)) == 0
 
 
 def test_a_flat_image_is_handled_without_blowing_up():
@@ -226,3 +228,68 @@ def test_any_sane_threshold_still_decides_every_frame(threshold):
     result = select_frames([signals(i, phash=i) for i in range(6)], SelectionConfig(hamming_threshold=threshold))
 
     assert len(result) == 6
+
+
+# --- the signals the job feeds in ------------------------------------------------
+
+
+class _Candidate:
+    """Just the fields frame_quality reads off a frame-candidate row."""
+
+    def __init__(self, confidence=0.9, blur=0.1, area=0.4, truncated=False):
+        self.detector_confidence = confidence
+        self.blur_score = blur
+        self.area_ratio = area
+        self.flags_json = {"truncated": truncated}
+
+
+def test_a_frame_is_worth_as_much_as_its_best_detection():
+    """One sharp vehicle makes a frame worth labelling even if everything
+    else on it is a blur."""
+    blurred = _Candidate(confidence=0.3, blur=0.95, area=0.02)
+    sharp = _Candidate(confidence=0.95, blur=0.05, area=0.6)
+
+    assert frame_quality([blurred, sharp]) == frame_quality([sharp])
+    assert frame_quality([blurred, sharp]) > frame_quality([blurred])
+
+
+def test_a_frame_with_nothing_on_it_scores_zero():
+    assert frame_quality([]) == 0.0
+
+
+def test_a_truncated_detection_scores_below_the_same_one_whole():
+    whole = _Candidate(truncated=False)
+    cut_off = _Candidate(truncated=True)
+
+    assert frame_quality([cut_off]) < frame_quality([whole])
+
+
+def test_unmeasured_signals_are_treated_as_middling_not_as_bad():
+    """Candidates from before quality signals existed have nulls. "We did
+    not measure this" is not the same as "this is bad"."""
+    unmeasured = _Candidate(blur=None, area=None)
+
+    assert 0.2 < frame_quality([unmeasured]) < 1.0
+
+
+def test_the_quality_floor_can_still_reject_something():
+    """It rarely fires on real footage - the detector's own confidence
+    gate gets there first - but it is not inert by construction."""
+    hopeless = _Candidate(confidence=0.01, blur=1.0, area=0.0, truncated=True)
+
+    assert frame_quality([hopeless]) < DEFAULT_SELECTION_CONFIG.min_quality
+
+
+def test_brightness_reads_zero_to_one():
+    assert brightness_of(np.zeros((8, 8, 3), dtype=np.uint8)) == 0.0
+    assert brightness_of(np.full((8, 8, 3), 255, dtype=np.uint8)) == 1.0
+    assert 0.4 < brightness_of(np.full((8, 8, 3), 128, dtype=np.uint8)) < 0.6
+
+
+def test_a_hash_survives_an_image_smaller_than_its_own_grid():
+    """The hand-rolled block average produced empty slices and silent
+    NaNs here, which read as an all-zero hash."""
+    tiny = np.array([[[10, 10, 10], [200, 200, 200]], [[30, 30, 30], [90, 90, 90]]], dtype=np.uint8)
+
+    assert isinstance(perceptual_hash(tiny), int)
+    assert perceptual_hash(tiny) != 0, "a tiny image that does brighten rightwards should not hash to nothing"

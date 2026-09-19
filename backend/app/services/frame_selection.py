@@ -11,18 +11,36 @@ sampling - "show me the frames the model finds confusing" - is the
 version that actually compounds, and it needs a custom model to be
 uncertain, which does not exist yet.
 
-Quality is not recomputed. Detection already scored every observation
-with ``frame_ranking.compute_composite_score``, and those scores are on
-the frame-candidate rows; a frame is as good as its best detection.
+Quality reuses the existing scoring rather than inventing another one:
+detection stored the signals (blur, area, confidence, truncation) on
+each frame-candidate row, and this feeds them back through
+``frame_ranking.compute_composite_score``. A frame is as good as its
+best detection.
 
-Brightness and vehicle count are not filters. They decide what counts
-as a duplicate: two frames that hash alike are only the same scene if
-they also hold the same number of vehicles under similar light. A lane
-at noon and the same lane at night are two training examples, not one.
+Brightness and vehicle count are mostly not filters - they decide what
+counts as a *duplicate*: two frames that hash alike are the same scene
+only if they hold the same number of vehicles under similar light. A
+lane at noon and the same lane at night are two training examples. The
+one exception is a frame with nothing detected on it at all, which is
+dropped outright.
+
+Measured on real gantry footage (3,842 frames of ``atcc1.mp4``, see
+``scripts/selection_report.py``):
+
+* consecutive frames differ by a median of 0 bits, p90 of 2;
+* any two frames of the clip differ by a median of only 6, p10 of 3.
+
+That narrow gap is the whole difficulty. The camera is fixed, so the
+static background dominates the hash and two completely different
+vehicles can be 6 bits apart. The default threshold sits between those
+two distributions - above the consecutive p90, below the any-two p10 -
+which is why it is 2 and not something rounder. At 2 that clip offers
+338 of its 3,842 frames; at 6 it offered 43, which is not a dataset.
 """
 
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
 from app.services.frame_ranking import DEFAULT_RANKING_CONFIG, RankingConfig, compute_composite_score
@@ -57,14 +75,22 @@ class SelectionConfig:
     """Thresholds. Starting points, not calibrated against real gantry
     footage - the same caveat the ranking config carries."""
 
-    #: Below this a frame is too poor to be worth drawing on.
+    #: Below this a frame is too poor to be worth drawing on. Rarely
+    #: fires in practice: the detector's own confidence gate has already
+    #: thrown out the worst observations before they reach here, and the
+    #: real footage measured spans 0.22-0.65. It is a floor against
+    #: genuinely broken frames, not the main filter.
     min_quality: float = 0.2
-    #: Hashes within this many bits are the same scene.
-    hamming_threshold: int = 6
+    #: Hashes within this many bits are the same scene. Measured, not
+    #: guessed - see the module docstring.
+    hamming_threshold: int = 2
     #: Vehicle counts further apart than this make two frames different
     #: scenes however alike they look.
     vehicle_count_tolerance: int = 0
-    #: Brightness further apart than this does the same.
+    #: Brightness further apart than this does the same. On a fixed
+    #: camera under steady light this never discriminates (the footage
+    #: measured spans 0.39-0.45); it earns its keep on a source that
+    #: runs into dusk.
     brightness_tolerance: float = 0.15
 
 
@@ -101,10 +127,13 @@ def frame_quality(candidates: list, config: RankingConfig = DEFAULT_RANKING_CONF
             blur_score=candidate.blur_score if candidate.blur_score is not None else 0.5,
             area_ratio=candidate.area_ratio if candidate.area_ratio is not None else 0.5,
             confidence=candidate.detector_confidence,
-            # Stability compares a detection with its neighbours in the
-            # same track, which is a per-track question; at frame level
-            # the neutral value is the honest one.
-            temporal_stability=0.5,
+            # Stability compares a detection with its neighbours inside
+            # one track, which is not a question a single frame can
+            # answer. 1.0 is the neutral value - it is what
+            # compute_temporal_stability returns for an isolated or
+            # perfectly steady detection - so a frame is not quietly
+            # penalised for being judged on its own.
+            temporal_stability=1.0,
             truncated=bool((candidate.flags_json or {}).get("truncated")),
             config=config,
         )
@@ -125,11 +154,13 @@ def perceptual_hash(image: np.ndarray) -> int:
     survives compression noise and small exposure shifts but changes
     when the scene does.
     """
-    grey = image.mean(axis=2) if image.ndim == 3 else image
-    # Block-average down to the hash grid. Cheaper than a resize and it
-    # keeps this module free of an image library.
-    rows = np.array_split(grey, _HASH_HEIGHT, axis=0)
-    small = np.array([[block[:, cols].mean() for cols in np.array_split(np.arange(grey.shape[1]), _HASH_WIDTH)] for block in rows])
+    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    # INTER_AREA is an area average, which is the block average this
+    # wants - and roughly seven times faster than doing it by hand in
+    # numpy, which matters when it runs on every frame of a source. It
+    # also handles sizes smaller than the grid, where hand-rolled block
+    # splitting produced empty slices and silent NaNs.
+    small = cv2.resize(grey, (_HASH_WIDTH, _HASH_HEIGHT), interpolation=cv2.INTER_AREA).astype(np.int32)
     bits = small[:, 1:] > small[:, :-1]
     value = 0
     for bit in bits.flatten():

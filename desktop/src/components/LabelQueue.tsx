@@ -184,6 +184,11 @@ function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, o
                   <span>frame {frame.frame_index}</span>
                   <span className={`label-queue__status label-queue__status--${frame.status}`}>{frame.status}</span>
                 </button>
+                {frame.selection_reason && (
+                  <p className="label-queue__reason" title={frame.selection_reason}>
+                    {frame.selection_reason}
+                  </p>
+                )}
                 {(frame.status === "rejected" || frame.status === "skipped") && (
                   <button
                     className="label-queue__restore"

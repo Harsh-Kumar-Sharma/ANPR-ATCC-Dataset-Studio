@@ -225,9 +225,7 @@ def _decode(frames: list[Frame], source: Source):
     by_index = {frame.frame_index: frame for frame in frames}
     sampled = [SampledFrame(frame_index=f.frame_index, timestamp_ms=f.timestamp_ms) for f in frames]
     for sampled_frame, image in decode_sampled_frames(Path(source.path_or_uri), sampled):
-        frame = by_index.get(sampled_frame.frame_index)
-        if frame is not None:
-            yield frame, image
+        yield by_index[sampled_frame.frame_index], image
 
 
 HANDLERS: dict[str, JobHandler] = {
