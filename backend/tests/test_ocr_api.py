@@ -83,12 +83,21 @@ def test_the_ocr_table_holds_only_what_the_model_read(tmp_path):
 
 def test_the_old_selection_endpoint_is_gone(tmp_path):
     """It wrote a human reading into the model's table. Replaced by
-    PUT /tracks/{id}/plate-text, which writes the annotation."""
+    PUT /tracks/{id}/plate-text, which writes the annotation.
+
+    The request is made with a *valid* frame candidate, because the old
+    endpoint answered 404 for an unknown one - so a 404 alone could not
+    tell "route removed" from "bad id". The body distinguishes them:
+    FastAPI's routing 404 has a `detail`, this app's has a `code`.
+    """
     ctx = _create_track(tmp_path)
+    track_id = ctx["track"]["id"]
+    frame_id = client.get(f"/tracks/{track_id}").json()["frames"][0]["id"]
 
     response = client.put(
-        f"/tracks/{ctx['track']['id']}/ocr-selection",
-        json={"corrected_text": "dl 3c ab 0007", "frame_candidate_id": "whatever"},
+        f"/tracks/{track_id}/ocr-selection",
+        json={"corrected_text": "dl 3c ab 0007", "frame_candidate_id": frame_id},
     )
 
     assert response.status_code == 404
+    assert "code" not in response.json(), "this is routing saying no such path, not the app saying no such row"

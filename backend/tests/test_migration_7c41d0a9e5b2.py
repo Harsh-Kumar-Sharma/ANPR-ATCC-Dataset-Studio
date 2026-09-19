@@ -194,3 +194,139 @@ def test_an_empty_database_migrates_cleanly(migrated_db):
 
     with engine.connect() as connection:
         assert connection.execute(text("SELECT count(*) FROM ocr_candidates")).scalar() == 0
+
+
+def _human_row(connection, ids, *, text, normalized, selected=0):
+    return _insert(
+        connection,
+        "ocr_candidates",
+        track_id=ids["track"],
+        frame_candidate_id=ids["candidate"],
+        source="human",
+        plate_bbox_json="[0,0,0,0]",
+        text=text,
+        normalized_text=normalized,
+        confidence=1.0,
+        selected=selected,
+    )
+
+
+def _plate(connection, annotation_id):
+    raw = connection.execute(
+        text("SELECT attributes FROM annotations WHERE id = :id"), {"id": annotation_id}
+    ).scalar()
+    return json.loads(raw or "{}").get("plate_text")
+
+
+def _human_rows_left(connection) -> int:
+    return connection.execute(text("SELECT count(*) FROM ocr_candidates WHERE source = 'human'")).scalar()
+
+
+def test_the_reading_the_old_ui_showed_as_current_is_the_one_that_moves(migrated_db):
+    """Correcting a plate twice left two human rows on one track. Taking
+    whichever the database returned first moved the superseded one and
+    deleted the current one - so the plate on screen was the one thrown
+    away."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True)
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="mh 12 ab 1234", normalized="MH12AB1234", selected=0)
+        _human_row(connection, ids, text="mh 12 ab 9999", normalized="MH12AB9999", selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "MH12AB9999", "the current reading, not the superseded one"
+        assert _human_rows_left(connection) == 0, "both are versions of the same field; the current one survives"
+
+
+def test_a_conflicting_reading_is_kept_rather_than_deleted(migrated_db):
+    """The annotation's plate wins - it is the newer of the two - but the
+    reading it beat is a different value somebody typed, and deleting it
+    is exactly the loss this migration promises not to cause."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True, attributes={"plate_text": "DL3C1234"})
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "DL3C1234"
+        assert _human_rows_left(connection) == 1, "the reading it beat is still there to look at"
+
+
+def test_a_reading_that_agrees_with_the_annotation_is_cleared_away(migrated_db):
+    """Nothing is lost, so nothing is kept."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True, attributes={"plate_text": "MH12AB1234"})
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "MH12AB1234"
+        assert _human_rows_left(connection) == 0
+
+
+def test_a_reading_too_long_to_be_a_plate_is_not_written(migrated_db):
+    """The old endpoint had no length limit and the attribute validator
+    does. Writing one past it would leave a frame nothing could save -
+    the same lockout the previous commit existed to remove, through a
+    path that skips the validator."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True)
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="X" * 40, normalized="X" * 40, selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) is None
+        assert _human_rows_left(connection) == 1, "left where it is rather than written somewhere it breaks things"
+
+
+def test_a_reading_with_only_raw_text_is_canonicalised_the_way_the_app_would(migrated_db):
+    """`str.isalnum` is Unicode-aware and the app's normaliser is not, so
+    a hand-rolled one writes values the app could never produce and that
+    never compare equal to anything."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True)
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="mhé-12", normalized="", selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "MH12"
+
+
+def test_the_migrations_copies_of_the_apps_rules_have_not_drifted():
+    """It inlines the normaliser and the length limit so it keeps
+    working when the code moves on. Inlining is only safe if something
+    notices when the original changes."""
+    from app.services.annotation_attributes import PLATE_TEXT_MAX_LENGTH
+    from app.services.text_normalization import normalize_plate_text
+
+    module = _load_migration()
+
+    assert module._PLATE_TEXT_MAX_LENGTH == PLATE_TEXT_MAX_LENGTH
+    for raw in ("mh 12 ab 1234", "MHé-12", "१२३", "", "dl3c 9999"):
+        assert module._normalize(raw) == normalize_plate_text(raw), raw
+
+
+def _load_migration():
+    import importlib.util
+
+    path = BACKEND / "alembic" / "versions" / "7c41d0a9e5b2_move_human_plate_text_onto_annotations.py"
+    spec = importlib.util.spec_from_file_location("_plate_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

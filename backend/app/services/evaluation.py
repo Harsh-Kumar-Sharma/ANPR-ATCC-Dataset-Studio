@@ -73,7 +73,15 @@ def _compute_ocr_metrics(db: Session, run_id: str) -> dict:
 
     Two sides from two places, which is the point: the readings come
     from ``ocr_candidates``, which is the model's record, and the plates
-    come from the annotations, which is where a human's reading lives.
+    come from the annotations.
+
+    From the annotations *that a track review produced*, specifically.
+    The join runs through the frame candidate, so a plate typed on a
+    canvas-drawn box is not here - that box belongs to a frame and to no
+    track, and this metric is per track. Scoring a canvas plate against
+    a detection would mean matching them by overlap, which is a
+    different question with its own threshold, and it is not one this
+    number claims to answer.
     """
     readings_by_track: dict[str, list[ModelReading]] = defaultdict(list)
     for track_id, normalized_text, confidence in db.execute(

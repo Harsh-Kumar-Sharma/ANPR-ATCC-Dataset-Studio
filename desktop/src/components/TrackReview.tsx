@@ -30,6 +30,9 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
   const [correctionText, setCorrectionText] = useState("");
   /** The plate currently on the annotation, as the server has it. */
   const [plateText, setPlateText] = useState("");
+  /** Whether this track has a label yet. A plate is an attribute of one,
+   *  so there is nowhere to put a reading until the track is reviewed. */
+  const [hasLabel, setHasLabel] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
@@ -48,6 +51,7 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
         const existing = (annotation?.attributes?.plate_text as string | undefined) ?? "";
         setPlateText(existing);
         setCorrectionText(existing);
+        setHasLabel(annotation !== null);
         let initialIndex = tl.frames.findIndex((f) => f.flags_json?.roles.includes("best_detection"));
         if (initialIndex < 0) initialIndex = 0;
         if (annotation) {
@@ -93,13 +97,18 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
 
   async function savePlateText(text: string) {
     try {
-      await api.setTrackPlateText(track.id, text);
-      setPlateText(text);
+      // What comes back, not what was typed. The server canonicalises -
+      // "mh 12 ab 1234" is stored as MH12AB1234 and "!!!" clears the
+      // field entirely - so echoing the input reported a save that did
+      // not happen, and in the "!!!" case announced a plate it had just
+      // wiped.
+      const saved = await api.setTrackPlateText(track.id, text);
+      const stored = (saved.attributes?.plate_text as string | undefined) ?? "";
+      setPlateText(stored);
+      setCorrectionText(stored);
       setError(null);
-      setMessage(text ? `Plate saved: ${text}` : "Plate cleared.");
+      setMessage(stored ? `Plate saved: ${stored}` : "Plate cleared.");
     } catch (e) {
-      // The 409 here is "review this track first", which is worth
-      // reading rather than a generic failure.
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
@@ -129,6 +138,8 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
         bbox_json: bbox,
       });
       setMessage(`Saved as ${decision}.`);
+      // An accepted or hard review creates the label a plate hangs off.
+      setHasLabel(decision !== "failed");
       onReviewed(result.track);
       onNavigateTrack(1);
     } catch (e) {
@@ -319,10 +330,10 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
               {ocrCandidates.map((c) => (
                 <li key={c.id} className={c.selected ? "selected" : ""}>
                   <span className="ocr-text">{c.normalized_text || "(no text)"}</span>
-                  <span className="ocr-meta">
-                    {c.source} &middot; {(c.confidence * 100).toFixed(0)}%
-                  </span>
-                  <button onClick={() => handleUseReading(c.normalized_text)}>Use</button>
+                  <span className="ocr-meta">{(c.confidence * 100).toFixed(0)}% confident</span>
+                  <button disabled={!hasLabel} onClick={() => handleUseReading(c.normalized_text)}>
+                    Use
+                  </button>
                   {c.selected && (
                     <span className="badge badge-success">
                       <IconCheck /> best
@@ -333,15 +344,26 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
               {ocrCandidates.length === 0 && <li className="empty">No OCR attempts yet.</li>}
             </ul>
             <div className="ocr-correction">
+              {/* Disabled rather than refused on save. A plate belongs to
+                  a label and there is none yet, and the old behaviour -
+                  accept the typing, then 409 with "review it first" -
+                  sent the user to a control that navigates to the next
+                  track, losing what they had just read off the image. */}
               <input
                 type="text"
                 aria-label="Plate text"
-                placeholder="e.g. MH12AB1234"
+                placeholder={hasLabel ? "e.g. MH12AB1234" : "Review this track first"}
                 value={correctionText}
+                disabled={!hasLabel}
                 onChange={(e) => setCorrectionText(e.target.value)}
               />
-              <button onClick={() => savePlateText(correctionText)}>Save</button>
+              <button disabled={!hasLabel} onClick={() => savePlateText(correctionText)}>
+                Save
+              </button>
             </div>
+            {!hasLabel && (
+              <p className="ocr-recorded">Accept or flag this track to record a plate against it.</p>
+            )}
             {plateText && <p className="ocr-recorded">Recorded on this label: {plateText}</p>}
           </div>
         </div>

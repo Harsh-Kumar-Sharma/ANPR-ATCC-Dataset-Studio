@@ -18,11 +18,21 @@ def _utcnow() -> datetime:
 class OcrCandidate(Base):
     """One OCR attempt on a frame candidate. See docs/05_DATABASE_DESIGN.md.
 
-    Every attempt is stored (traceable), never overwritten - a re-run
-    or a human correction adds a new row. ``source`` mirrors
-    ``Annotation.source`` (D-003: human truth is separate from and
-    overrides model output). Exactly one row per track has
-    ``selected=True`` at a time - the track-level chosen OCR result.
+    The model's record, and only the model's. A human's plate reading is
+    a property of the vehicle in the box and lives on the annotation
+    (``services/plate_text.py``); it used to be written here as a
+    ``source='human'`` row, which meant the same reading existed in two
+    places, in two different forms, with only one of them reaching an
+    exported dataset.
+
+    Every attempt is stored and never overwritten - a re-run adds rows.
+    ``source`` is therefore always ``model`` on anything written since
+    ticket 15; older human rows the migration could not safely move are
+    left in place and read by nothing.
+
+    Exactly one row per track has ``selected=True``: the model's own
+    best attempt, set by ``run_ocr_for_track`` and written nowhere else.
+    It is not a human decision and no longer pretends to be one.
     """
 
     __tablename__ = "ocr_candidates"

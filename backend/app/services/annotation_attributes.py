@@ -178,6 +178,14 @@ def clean_attributes(attributes: dict | None, stored: dict | None = None) -> dic
             continue
         max_length = definition.get("max_length")
         if max_length is not None and len(text) > max_length:
+            # Echoed values are excused here too, not only for unknown
+            # keys and retired options. A value already in the database
+            # that is too long for today's limit - written before the
+            # limit existed, or by a migration - would otherwise make
+            # every save of its frame fail over something the panel
+            # cannot shorten because it never showed it.
+            if _is_echo(key, value, stored):
+                continue
             raise InvalidAttributeError(f"attribute {key!r} is {len(text)} characters; the most allowed is {max_length}.")
         cleaned[key] = text
 

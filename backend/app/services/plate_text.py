@@ -22,7 +22,8 @@ from app.db.models.annotation import Annotation
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.ocr_candidate import OcrCandidate
 from app.db.models.track import Track
-from app.services.annotation_attributes import InvalidAttributeError, clean_attributes
+from app.services.annotation_attributes import clean_attributes
+from app.services.review import get_human_annotation
 
 
 class NoLabelYetError(ConflictError):
@@ -47,7 +48,7 @@ def set_track_plate_text(db: Session, track: Track, plate_text: str) -> Annotati
     Only ``plate_text`` is touched. The class, the box and every other
     attribute on the annotation are none of this function's business.
     """
-    annotation = _human_annotation(db, track.id)
+    annotation = get_human_annotation(db, track.id)
     if annotation is None:
         raise NoLabelYetError(
             "This track has no label to put a plate on yet. Review it first - accept it, or flag it hard."
@@ -55,39 +56,22 @@ def set_track_plate_text(db: Session, track: Track, plate_text: str) -> Annotati
 
     attributes = dict(annotation.attributes or {})
     attributes["plate_text"] = plate_text
-    try:
-        annotation.attributes = clean_attributes(attributes, stored=annotation.attributes or {})
-    except InvalidAttributeError as e:
-        raise InvalidAttributeError(str(e)) from e
+    # Not wrapped: InvalidAttributeError is already an AppError carrying
+    # a 400 and a message naming the attribute, and there is no context
+    # to add here - unlike frames._validate, which adds which box.
+    annotation.attributes = clean_attributes(attributes, stored=annotation.attributes or {})
 
     db.flush()
     return annotation
 
 
-def _human_annotation(db: Session, track_id: str) -> Annotation | None:
-    return db.scalar(
-        select(Annotation)
-        .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)
-        .where(FrameCandidate.track_id == track_id, Annotation.source == "human")
-    )
-
-
 @dataclass
 class PlateReading:
-    """One plate the model read, and the vehicle it read it from.
+    """One plate the model read on a frame, and how sure it was."""
 
-    ``bbox_json`` is the *detection's* box in full-frame pixels, not the
-    plate's. The plate box is relative to a cropped vehicle image, which
-    is meaningless to a canvas drawing on the frame - and the question a
-    labeller is asking is "which vehicle is this reading about", which
-    the detection answers.
-    """
-
-    frame_candidate_id: str
     text: str
     normalized_text: str
     confidence: float
-    bbox_json: list[float]
 
 
 def plate_readings_for_frame(db: Session, frame_id: str) -> list[PlateReading]:
@@ -101,22 +85,30 @@ def plate_readings_for_frame(db: Session, frame_id: str) -> list[PlateReading]:
     Every reading on the frame is offered rather than only the ones
     overlapping the selected box. Matching them to a box would mean a
     second copy of the association threshold that ``active_learning``
-    owns, and on a frame with three vehicles the list is three lines a
-    person can simply read.
+    owns, and a handful of lines is a list a person can simply read.
+
+    ``source == "model"`` is not decoration. The migration leaves a
+    human row behind when it has nowhere safe to put it, and those were
+    written with confidence 1.0 - so without this filter somebody's own
+    typing would sort to the top of a list headed "Model read:".
+
+    Deduplicated by reading, because frames outlive runs: re-running
+    detection and OCR piles more rows onto the same frame, and the same
+    plate read four times is one suggestion, not four.
     """
-    rows = db.execute(
-        select(OcrCandidate, FrameCandidate.bbox_json)
+    rows = db.scalars(
+        select(OcrCandidate)
         .join(FrameCandidate, OcrCandidate.frame_candidate_id == FrameCandidate.id)
-        .where(FrameCandidate.frame_id == frame_id)
+        .where(FrameCandidate.frame_id == frame_id, OcrCandidate.source == "model")
         .order_by(OcrCandidate.confidence.desc(), OcrCandidate.id)
-    ).all()
-    return [
-        PlateReading(
-            frame_candidate_id=reading.frame_candidate_id,
-            text=reading.text,
-            normalized_text=reading.normalized_text,
-            confidence=reading.confidence,
-            bbox_json=list(bbox),
+    )
+
+    best: dict[str, PlateReading] = {}
+    for row in rows:
+        # Ordered most confident first, so the first of a repeated
+        # reading is the one worth keeping.
+        best.setdefault(
+            row.normalized_text,
+            PlateReading(text=row.text, normalized_text=row.normalized_text, confidence=row.confidence),
         )
-        for reading, bbox in rows
-    ]
+    return list(best.values())

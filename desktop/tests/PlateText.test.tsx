@@ -28,20 +28,8 @@ const definitions: AttributeDefinition[] = [
 ];
 
 const readings: PlateReading[] = [
-  {
-    frame_candidate_id: "fc-1",
-    text: "MH 12 AB 1234",
-    normalized_text: "MH12AB1234",
-    confidence: 0.92,
-    bbox_json: [20, 20, 80, 70],
-  },
-  {
-    frame_candidate_id: "fc-2",
-    text: "dl3c9999",
-    normalized_text: "DL3C9999",
-    confidence: 0.41,
-    bbox_json: [200, 200, 300, 300],
-  },
+  { text: "MH 12 AB 1234", normalized_text: "MH12AB1234", confidence: 0.92 },
+  { text: "dl3c9999", normalized_text: "DL3C9999", confidence: 0.41 },
 ];
 
 function annotation(id: string, attributes: Record<string, unknown> = {}): Annotation {

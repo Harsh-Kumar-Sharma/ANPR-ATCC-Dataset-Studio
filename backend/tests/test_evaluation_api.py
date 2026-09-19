@@ -80,19 +80,28 @@ def test_evaluation_failure_gallery_includes_failed_tracks(tmp_path):
     assert body["failure_gallery"][0]["representative_frame_id"] == frame_id
 
 
-def test_evaluation_ocr_metrics_reflect_review(tmp_path):
+def test_evaluation_ocr_metrics_need_both_sides(tmp_path):
+    """A plate a human recorded with no model reading to compare it
+    against says nothing about the model, so it is not counted. This
+    used to call the removed ocr-selection endpoint, ignore its status,
+    and then assert a zero that was true because nothing had happened."""
     ctx = _setup_run(tmp_path, "OCR Metrics Project")
     track, run = ctx["track"], ctx["run"]
     frame_id = client.get(f"/tracks/{track['id']}").json()["frames"][0]["id"]
 
-    client.put(
-        f"/tracks/{track['id']}/ocr-selection",
-        json={"corrected_text": "MH12AB1234", "frame_candidate_id": frame_id},
+    reviewed = client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": frame_id, "decision": "accepted", "class_id": 4},
     )
+    assert reviewed.status_code == 200, reviewed.text
+    recorded = client.put(f"/tracks/{track['id']}/plate-text", json={"plate_text": "MH12AB1234"})
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["attributes"]["plate_text"] == "MH12AB1234"
 
     body = client.get(f"/processing-runs/{run['id']}/evaluation").json()
-    # A human-only selection with no model attempts is excluded from the metric.
-    assert body["ocr_metrics"]["tracks_with_ocr"] == 0
+
+    assert body["ocr_metrics"]["tracks_with_ocr"] == 0, "no OCR was ever run on this track"
+    assert body["ocr_metrics"]["agreement_rate"] is None
 
 
 def test_evaluation_for_unknown_run_returns_404():

@@ -54,12 +54,15 @@ candidate's text; the server has no reason to know which way it arrived, and
 keeping a "which one did they pick" flag was how the reading ended up in two
 places.
 
-**A plate before the track is reviewed is refused, not stored somewhere else.**
-409 `no_label_yet`, and the card says to review the track first. The ticket
-allowed either that or finding somewhere for it to go; there is nowhere honest,
-because an annotation is a *label* and the reviewer has not made one yet. The
-old behaviour looked like it worked and lost the work - no export has ever read
-that table.
+**A plate before the track is reviewed is not offered, and that took two goes.**
+The first version accepted the typing and refused it on save with a 409 saying
+"review it first". Review pointed out that the remedy throws the plate away: the
+accept control navigates to the next track and the component is keyed by track
+id, so the reading the user had just taken off the image is gone. The field is
+disabled now, with the reason on screen, and becomes usable the moment the track
+is reviewed. The server still refuses - it has to - but nobody should reach it.
+There is nowhere honest for a plate before there is a label, because an
+annotation is the label.
 
 **`selected` now means one thing: the model's own best attempt.** The OCR run
 sets it and nothing else writes it. It used to mean "the track's chosen result",
@@ -90,3 +93,64 @@ than leaving a row behind. A plate already on the annotation wins: one typed on
 the canvas is the newer of the two by construction, and a migration cannot see
 which the user meant. The real database has no human rows at all, so this is
 insurance rather than a move.
+
+## Review found five ways this could lose data, and it was right about all of them
+
+**The migration deleted readings it had not moved.** Three separate paths.
+Several human rows on one track - which the old flow produced every time someone
+corrected a plate twice - moved the first and deleted the rest, and because the
+survivor was chosen by row order rather than by `selected`, the one the old UI
+showed as current was usually the one thrown away. A reading the annotation's
+own plate disagreed with was deleted too, so "the annotation wins" quietly meant
+"the other value is destroyed". And the count it printed was of *deleted* rows,
+so the one number an operator saw was wrong in exactly the cases that mattered.
+
+It now picks the reading the old UI showed as current, deletes a row only once
+its text is safely on the annotation or the annotation already says the same
+thing, and leaves everything else alone: no label to attach to, a disagreeing
+plate, or a reading too long to store. Those are counted apart and reported.
+
+**It could also write a plate the app then refuses.** The old endpoint had no
+length limit and the attribute validator has one, so a long reading written
+straight onto the annotation made every save of that frame fail - the same
+lockout the previous commit existed to remove, through a path that skips the
+validator. Such a reading is now left where it is, and `clean_attributes` treats
+an over-long *echo* the way it already treated retired keys, so a value already
+in the database can never lock the frame carrying it.
+
+**`plate-readings` read the rows the migration promised nothing reads.** Human
+rows were written with confidence 1.0 and the query sorts by confidence, so a
+leftover would have sorted first under a heading that says "Model read:". It
+filters on `source == "model"` now, and deduplicates: frames outlive runs, so a
+second OCR pass piles more rows onto the same frame and the same plate read four
+times is one suggestion.
+
+**`selected` could be true on two rows.** Removing human selection removed the
+only code that cleared it, so a second OCR run left the previous run's best
+flagged as well - which the model's own docstring forbids. The run clears the
+track's rows before flagging its best. That docstring was also still describing
+the world before this ticket, in three separate claims, and now describes this
+one.
+
+**Track review reported saves that had not happened.** It echoed the typed text
+rather than what came back, so "mh 12 ab 1234" displayed lowercase while
+`MH12AB1234` was stored, and typing `!!!` over a plate wiped it while announcing
+"Plate saved: !!!". It shows what the server stored.
+
+**Smaller things.** The inlined normaliser used `str.isalnum`, which is
+Unicode-aware where the app's is ASCII-only, so it could write values the app
+could never produce - a test now compares the two on real inputs, and the same
+test pins the inlined length limit. `plate_text` was defaulted to empty, so a
+request that forgot the field silently cleared a reading; it is required. The
+`try/except` in `set_track_plate_text` re-raised the same error unchanged. The
+duplicate `_human_annotation` now uses `review.get_human_annotation`. The
+reading payload carried a detection bbox that three docstrings defended and
+nothing read, so it is gone. And `TrackReview.tsx` had no tests at all - the
+screen this ticket is actually about - which is how the stale display shipped.
+
+**One claim of mine overstated the metric.** Its docstring said the plates come
+from the annotations, "which is where a human's reading lives". They come from
+the annotations a *track review* produced: the join runs through the frame
+candidate, so a plate typed on a canvas-drawn box is not counted. That is
+inherent to a per-track metric, and the docstring says so now instead of
+implying coverage it does not have.

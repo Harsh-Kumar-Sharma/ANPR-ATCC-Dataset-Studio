@@ -63,6 +63,12 @@ def run_ocr_for_track(
         # It is not a human decision and never was: a human's reading
         # goes on the annotation (see services/plate_text.py), so this
         # flag means one thing and nothing writes it but this function.
+        #
+        # Earlier runs are cleared first. Frames and tracks outlive a
+        # run, so a second OCR pass used to leave two rows flagged best
+        # on one track - which the model's own docstring forbids, and
+        # which nothing was left to fix once human selection went away.
+        db.query(OcrCandidate).filter(OcrCandidate.track_id == track.id).update({"selected": False})
         best = max(attempts, key=lambda a: a.confidence)
         best.selected = True
 

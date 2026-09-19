@@ -745,7 +745,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
               <span>Model read:</span>
               {plateReadings.map((reading) => (
                 <button
-                  key={reading.frame_candidate_id + reading.normalized_text}
+                  key={reading.normalized_text}
                   onClick={() => setAttribute("plate_text", reading.normalized_text)}
                   title={`${(reading.confidence * 100).toFixed(0)}% confident`}
                 >

@@ -21,6 +21,10 @@ class OcrCandidateRead(BaseModel):
 class PlateTextWrite(BaseModel):
     """What a human read off the plate. Empty clears it.
 
+    Required rather than defaulted: with a default, a client that
+    forgot the field would silently wipe a reading, and a malformed
+    request would be indistinguishable from a deliberate clear.
+
     One field, because there is one thing to say. Choosing one of the
     model's readings is the client sending that reading's text - the
     server has no reason to know whether it was typed or clicked, and
@@ -28,17 +32,12 @@ class PlateTextWrite(BaseModel):
     ended up recorded in two places.
     """
 
-    plate_text: str = ""
+    plate_text: str
 
 
 class PlateReadingRead(BaseModel):
-    """One plate the model read on a frame, and the vehicle it read it
-    from. ``bbox_json`` is the detection's box in full-frame pixels -
-    the plate's own box is relative to a cropped vehicle image, which a
-    canvas drawing on the frame cannot use."""
+    """One plate the model read on a frame, and how sure it was."""
 
-    frame_candidate_id: str
     text: str
     normalized_text: str
     confidence: float
-    bbox_json: list[float]

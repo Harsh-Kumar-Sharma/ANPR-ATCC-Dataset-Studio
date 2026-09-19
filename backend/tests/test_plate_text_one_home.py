@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from sqlalchemy import select
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -198,7 +199,7 @@ def test_a_frame_offers_the_plates_the_model_read_on_it(tmp_path):
     assert body, "the model read a plate on this frame"
     assert body[0]["normalized_text"] == "MH12AB1234"
     assert body[0]["confidence"] == 0.9
-    assert body[0]["bbox_json"], "the detection it was read from, so a user can tell which vehicle"
+    assert body[0]["text"] == "MH12AB1234", "what it actually read, before canonicalising"
 
 
 def test_a_frame_with_no_ocr_run_offers_nothing_rather_than_failing(tmp_path):
@@ -274,3 +275,81 @@ def test_a_plate_recorded_in_track_review_reaches_the_exported_dataset(tmp_path)
     export_dir = Path(project["workspace_path"]) / "exports" / "v1"
     manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["items"][0]["objects"][0]["attributes"]["plate_text"] == "RJ14CV0002"
+
+
+def test_a_plate_read_on_every_frame_of_a_track_is_one_suggestion(tmp_path):
+    """Frames outlive runs, so re-running OCR piles more rows onto the
+    same frame. The same plate read four times is one suggestion."""
+    project, track = _project_with_track(tmp_path, "Deduped Readings")
+    annotation = _accept(track)
+    _run_ocr(track)
+    _run_ocr(track)
+
+    readings = client.get(f"/frames/{annotation['frame_id']}/plate-readings").json()
+
+    assert len(readings) == 1, readings
+
+
+def test_a_human_row_the_migration_left_behind_is_not_offered_as_the_models(tmp_path):
+    """Those were written with confidence 1.0, so without a source
+    filter somebody's own typing sorts to the top of a list headed
+    "Model read:"."""
+    from app.db.models import OcrCandidate
+    from app.db.session import SessionLocal
+
+    project, track = _project_with_track(tmp_path, "Orphan Human Row")
+    annotation = _accept(track)
+    _run_ocr(track)
+
+    with SessionLocal() as db:
+        candidate_id = db.scalar(
+            select(OcrCandidate.frame_candidate_id).where(OcrCandidate.track_id == track["id"])
+        )
+        db.add(
+            OcrCandidate(
+                track_id=track["id"],
+                frame_candidate_id=candidate_id,
+                source="human",
+                plate_bbox_json=[0.0, 0.0, 0.0, 0.0],
+                text="TYPEDBYAPERSON",
+                normalized_text="TYPEDBYAPERSON",
+                confidence=1.0,
+            )
+        )
+        db.commit()
+
+    readings = client.get(f"/frames/{annotation['frame_id']}/plate-readings").json()
+
+    assert [r["normalized_text"] for r in readings] == ["MH12AB1234"]
+
+
+def test_running_ocr_twice_leaves_one_best_attempt(tmp_path):
+    """The model's row says exactly one per track, and once human
+    selection went away nothing was left to clear the previous run's."""
+    from app.db.models import OcrCandidate
+    from app.db.session import SessionLocal
+
+    project, track = _project_with_track(tmp_path, "One Best Attempt")
+    _accept(track)
+    _run_ocr(track)
+    _run_ocr(track)
+
+    with SessionLocal() as db:
+        selected = db.scalars(
+            select(OcrCandidate).where(OcrCandidate.track_id == track["id"], OcrCandidate.selected.is_(True))
+        ).all()
+
+    assert len(selected) == 1
+
+
+def test_a_request_that_forgets_the_field_does_not_wipe_a_plate(tmp_path):
+    """A default would make a malformed request indistinguishable from a
+    deliberate clear."""
+    project, track = _project_with_track(tmp_path, "Missing Field")
+    _accept(track)
+    _set_plate(track, "MH 12 AB 1234")
+
+    response = client.put(f"/tracks/{track['id']}/plate-text", json={})
+
+    assert response.status_code == 422
+    assert _annotation(track)["attributes"]["plate_text"] == "MH12AB1234"
