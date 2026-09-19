@@ -75,7 +75,9 @@ def run_jobs_inline(detector=None, monkeypatch=None):
         handlers.ensure_weights = original_ensure
 
 
-def process_source_sync(client, project_id: str, source_id: str, detector, target_fps: float = 5.0) -> dict:
+def process_source_sync(
+    client, project_id: str, source_id: str, detector, target_fps: float = 5.0, every_frame: bool = False
+) -> dict:
     """Post to ``/process`` and return once the work has actually happened.
 
     Returns the submission body (``job`` and ``run_id``). Tracks are read
@@ -84,7 +86,7 @@ def process_source_sync(client, project_id: str, source_id: str, detector, targe
     with run_jobs_inline(detector=detector):
         response = client.post(
             f"/projects/{project_id}/sources/{source_id}/process",
-            json={"sampling_config": {"target_fps": target_fps}},
+            json={"sampling_config": {"target_fps": target_fps, "every_frame": every_frame}},
         )
     response.raise_for_status()
     return response.json()

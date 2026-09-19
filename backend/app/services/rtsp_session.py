@@ -157,7 +157,15 @@ class RtspCaptureSession:
 
             for item in drained:
                 tracked = observe_frame(
-                    self._observations_by_track, item.payload, item.frame_index, item.timestamp_ms, self._detector, self._tracker
+                    self._observations_by_track,
+                    item.payload,
+                    item.frame_index,
+                    item.timestamp_ms,
+                    self._detector,
+                    self._tracker,
+                    # A live frame is gone once it has been processed:
+                    # there is no file to cut the crop out of later.
+                    keep_crop=True,
                 )
                 # Published per processed frame, not once per drained batch.
                 # When detection is slower than capture the buffer backs up and

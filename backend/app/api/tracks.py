@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.models.track import Track
 from app.db.session import get_db
+from app.services.crops import crop_jpeg
 from app.ml.factory import get_default_ocr_engine
 from app.ml.plate_ocr import PlateOcrEngine
 from app.schemas.ocr import OcrCandidateRead, PlateTextWrite
@@ -62,13 +63,19 @@ def get_track_timeline(track_id: str, db: Session = Depends(get_db)) -> TrackTim
 
 
 @tracks_router.get("/frames/{frame_candidate_id}/image")
-def get_frame_image(frame_candidate_id: str, db: Session = Depends(get_db)) -> FileResponse:
-    """Serve a frame candidate's saved crop - the review UI's <img> src.
-    Frame images live on the backend's local disk, not in the renderer."""
+def get_frame_image(frame_candidate_id: str, db: Session = Depends(get_db)) -> Response:
+    """Serve a frame candidate's crop - the review UI's <img> src.
+
+    Cut out of the source video on request rather than written during
+    detection: a full-rate pass over a long video would otherwise
+    write one JPEG per vehicle per frame and fill the disk before
+    anything had been reviewed. A live capture's crop is a file,
+    because those pixels cannot be decoded a second time.
+    """
     frame = db.get(FrameCandidate, frame_candidate_id)
     if frame is None:
         raise NotFoundError(f"Frame candidate not found: {frame_candidate_id}")
-    return FileResponse(frame.image_path, media_type="image/jpeg")
+    return Response(content=crop_jpeg(db, frame), media_type="image/jpeg")
 
 
 @tracks_router.put("/{track_id}/review", response_model=TrackReviewResult)

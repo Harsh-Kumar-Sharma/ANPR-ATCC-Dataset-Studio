@@ -79,8 +79,11 @@ def test_process_source_persists_track_with_frame_candidates(tmp_path):
         assert first.detector_confidence == pytest.approx(0.9, abs=1e-6)
         assert first.bbox_json[2] > first.bbox_json[0]
         assert first.bbox_json[3] > first.bbox_json[1]
-        assert Path(first.image_path).is_file()
-        assert str(track.id) in first.image_path
+        # No crop file: an offline run leaves the pixels in the video
+        # and cuts them out again when something asks to look. At two
+        # vehicles a frame over a long clip, writing them all is
+        # gigabytes before anything has been reviewed.
+        assert first.image_path is None
 
         # Phase 3 quality signals are populated for every frame.
         for frame in frames:

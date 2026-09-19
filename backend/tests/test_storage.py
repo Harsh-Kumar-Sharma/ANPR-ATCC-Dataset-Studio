@@ -70,7 +70,10 @@ def test_storage_breaks_a_project_down_by_kind(tmp_path):
 
     assert usage["name"] == "Storage Breakdown"
     assert usage["source_videos_bytes"] > 0, "the copy made at import"
-    assert usage["track_crops_bytes"] > 0, "one crop per detection"
+    # Zero, and correctly so: an offline run writes no crops at all
+    # now. The category stays because a live capture still writes them -
+    # its frames cannot be decoded a second time.
+    assert usage["track_crops_bytes"] == 0
     assert usage["frame_images_bytes"] > 0, "decoded because the canvas asked for it"
     assert usage["total_bytes"] >= usage["source_videos_bytes"]
 

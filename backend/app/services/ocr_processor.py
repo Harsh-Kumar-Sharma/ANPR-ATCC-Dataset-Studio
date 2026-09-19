@@ -1,11 +1,12 @@
-import cv2
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.ocr_candidate import OcrCandidate
 from app.db.models.track import Track
+from app.core.errors import AppError
 from app.ml.plate_ocr import PlateOcrEngine
+from app.services.crops import crop_array
 from app.services.text_normalization import normalize_plate_text
 
 #: A confidence at or above this stops trying further candidate
@@ -38,7 +39,13 @@ def run_ocr_for_track(
 
     attempts: list[OcrCandidate] = []
     for frame in frames:
-        image = cv2.imread(frame.image_path)
+        # Through the crop service rather than straight off disk: an
+        # offline run writes no crop file, the pixels are cut out of
+        # the source video on demand.
+        try:
+            image = crop_array(db, frame)
+        except AppError:
+            continue
         if image is None:
             continue
         candidates = engine.read_plate(image)

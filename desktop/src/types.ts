@@ -505,3 +505,19 @@ export interface ModelInfo {
   bytes: number;
   note: string;
 }
+
+/** What a detection run would process, and what it would cost.
+ *
+ *  Every number is an estimate. `bytes_now` is what the run writes
+ *  while it runs; `bytes_if_every_frame_reviewed` is what it comes to
+ *  if all of it is later opened for labelling, which is the number
+ *  that actually fills a disk. */
+export interface RunEstimate {
+  frames_to_process: number;
+  rows_expected: number;
+  bytes_now: number;
+  bytes_if_every_frame_reviewed: number;
+  free_bytes: number;
+  fits: boolean;
+  reason: string | null;
+}

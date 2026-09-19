@@ -12,7 +12,7 @@ class FrameCandidateRead(BaseModel):
     track_id: str
     frame_index: int
     timestamp_ms: int
-    image_path: str
+    image_path: str | None
     bbox_json: list[float]
     detector_class: str
     detector_confidence: float

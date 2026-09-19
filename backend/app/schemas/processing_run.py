@@ -5,6 +5,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class SamplingConfig(BaseModel):
     target_fps: float = Field(gt=0)
+    #: Walk the source at its own rate instead, keeping every frame
+    #: the model found something in. ``target_fps`` is then ignored,
+    #: and kept in the config so the request is still readable.
+    every_frame: bool = False
 
 
 class ProcessingRunCreate(BaseModel):
@@ -37,3 +41,21 @@ class ProcessingRunRead(BaseModel):
 class ProcessingRunResult(BaseModel):
     run: ProcessingRunRead
     sampled_frames: list[SampledFrameRead]
+
+
+class RunEstimateRead(BaseModel):
+    """What a run would process, and what it would cost.
+
+    Every number is an estimate. ``bytes_now`` is what the run writes
+    while it runs; ``bytes_if_every_frame_reviewed`` is what it comes
+    to if all of it is later opened for labelling, which is the number
+    that actually fills a disk.
+    """
+
+    frames_to_process: int
+    rows_expected: int
+    bytes_now: int
+    bytes_if_every_frame_reviewed: int
+    free_bytes: int
+    fits: bool
+    reason: str | None = None

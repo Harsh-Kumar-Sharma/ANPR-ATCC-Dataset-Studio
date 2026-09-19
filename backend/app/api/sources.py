@@ -14,11 +14,13 @@ from app.core.errors import ConflictError, NotFoundError
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.session import get_db
+from app.services.run_estimate import estimate_run
 from app.ml.models import DEFAULT_MODEL_ID, get_model
 from app.schemas.evaluation import FreezeSourceRequest
 from app.schemas.job import JobRead, JobSubmitted
 from app.schemas.processing_run import (
     ProcessingRunCreate,
+    RunEstimateRead,
     ProcessingRunRead,
     ProcessingRunResult,
     SampledFrameRead,
@@ -199,6 +201,27 @@ def sample_source(
     )
 
 
+@router.get("/{source_id}/process/estimate", response_model=RunEstimateRead)
+def estimate_process_run(
+    project_id: str,
+    source_id: str,
+    target_fps: float = 5.0,
+    every_frame: bool = False,
+    db: Session = Depends(get_db),
+) -> RunEstimateRead:
+    """What a run over this source would process and cost.
+
+    Asked before the button is pressed, because the alternative is
+    finding out at 80% on a disk that has run out.
+    """
+    project = get_project_or_404(db, project_id)
+    source = _get_source_or_404(db, project_id, source_id)
+    estimate = estimate_run(
+        source, Path(project.workspace_path), target_fps=target_fps, every_frame=every_frame
+    )
+    return RunEstimateRead(**asdict(estimate))
+
+
 @router.post("/{source_id}/process", response_model=JobSubmitted, status_code=202)
 def process_source_endpoint(
     project_id: str,
@@ -236,6 +259,17 @@ def process_source_endpoint(
     # failed job is a poor way to report a typo.
     model_id = payload.model_id or DEFAULT_MODEL_ID
     get_model(model_id, get_settings().resolved_model_weights_dir())
+
+    # Refused here rather than discovered at 80% with the disk full
+    # and a half-written run to clean up.
+    estimate = estimate_run(
+        source,
+        Path(project.workspace_path),
+        target_fps=payload.sampling_config.target_fps,
+        every_frame=payload.sampling_config.every_frame,
+    )
+    if not estimate.fits:
+        raise ConflictError(estimate.reason or "Not enough space for this run.", code="not_enough_space")
 
     run = ProcessingRun(
         source_id=source.id,

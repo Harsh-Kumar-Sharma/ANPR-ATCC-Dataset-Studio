@@ -27,6 +27,7 @@ import type {
   RtspSessionStatus,
   RtspStartResult,
   ModelInfo,
+  RunEstimate,
   Source,
   SourceContents,
   SourceQueue,
@@ -123,11 +124,30 @@ export const api = {
   /** Queues a detect+track run and returns immediately. Follow it with
    *  getJob or listJobs - the work is not done when this
    *  resolves. */
-  processSource: (projectId: string, sourceId: string, targetFps: number, modelId?: string | null) =>
+  processSource: (
+    projectId: string,
+    sourceId: string,
+    targetFps: number,
+    modelId?: string | null,
+    everyFrame = false,
+  ) =>
     request<JobSubmitted>(`/projects/${projectId}/sources/${sourceId}/process`, {
       method: "POST",
-      body: JSON.stringify({ sampling_config: { target_fps: targetFps }, model_id: modelId ?? null }),
+      body: JSON.stringify({
+        sampling_config: { target_fps: targetFps, every_frame: everyFrame },
+        model_id: modelId ?? null,
+      }),
     }),
+
+  /** What a run would process and cost, asked before the button is
+   *  pressed rather than found out at 80% on a full disk. */
+  estimateRun: (projectId: string, sourceId: string, targetFps: number, everyFrame: boolean) =>
+    request<RunEstimate>(
+      `/projects/${projectId}/sources/${sourceId}/process/estimate${query({
+        target_fps: targetFps,
+        every_frame: everyFrame,
+      })}`,
+    ),
 
   /** Everything that can detect: the built-ins, and your own. */
   listModels: () => request<ModelInfo[]>("/models"),

@@ -3,7 +3,7 @@ import { api, ApiError } from "../api";
 import { IconAlert, IconCheck, IconFilm, IconPlay, IconX } from "../Icons";
 import ModelPicker, { useModelChoice } from "./ModelPicker";
 import { sourceLabel } from "../sourceLabel";
-import type { Project, Source, SourceContents } from "../types";
+import type { Project, RunEstimate, Source, SourceContents } from "../types";
 
 interface Props {
   project: Project;
@@ -39,6 +39,11 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
   // Which model detects. Remembered per project: a project is one
   // kind of footage, and what suited it last time suits it now.
   const modelChoice = useModelChoice(project.id);
+  // Walk the whole clip instead of sampling it. The expensive option,
+  // so what it costs is shown before it is taken.
+  const [everyFrame, setEveryFrame] = useState(false);
+  const [estimate, setEstimate] = useState<RunEstimate | null>(null);
+  const [estimateFor, setEstimateFor] = useState<string | null>(null);
   const [busySourceId, setBusySourceId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +127,23 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
     }
   }
 
+  /** What this run would cost, asked when the settings change.
+   *
+   *  Shown rather than enforced here: the backend refuses a run that
+   *  will not fit, and a second opinion in the UI would be one more
+   *  thing to keep in step with it. */
+  async function askForEstimate(source: Source) {
+    setEstimateFor(source.id);
+    setEstimate(null);
+    try {
+      setEstimate(await api.estimateRun(project.id, source.id, targetFps, everyFrame));
+    } catch {
+      // An estimate that cannot be had is not worth an error message:
+      // the run itself still reports honestly.
+      setEstimate(null);
+    }
+  }
+
   async function handleProcess(source: Source) {
     setBusySourceId(source.id);
     setStatus(null);
@@ -130,7 +152,7 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
       // Returns as soon as the run is queued - there are no tracks to
       // count yet. Progress is followed in the jobs panel and the
       // global indicator; this tab just confirms the hand-off.
-      await api.processSource(project.id, source.id, targetFps, modelChoice.modelId);
+      await api.processSource(project.id, source.id, targetFps, modelChoice.modelId, everyFrame);
       setStatus(`${source.path_or_uri.split(/[\\/]/).pop()}: queued. Follow it under Jobs.`);
       refresh();
       onProcessed();
@@ -237,7 +259,12 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
                   be positive", on both RTSP sources in a real project.
                   Live capture is the Live tab's job. */}
               {s.type === "video" && (
-                <button disabled={busySourceId === s.id || s.is_processing} onClick={() => handleProcess(s)}>
+                <button
+                  disabled={busySourceId === s.id || s.is_processing}
+                  onClick={() => handleProcess(s)}
+                  onMouseEnter={() => askForEstimate(s)}
+                  onFocus={() => askForEstimate(s)}
+                >
                   <IconPlay />
                   {busySourceId === s.id || s.is_processing ? "Processing…" : "Detect + Track"}
                 </button>
@@ -309,6 +336,34 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
       )}
 
       <ModelPicker choice={modelChoice} id="detect-model" />
+
+      <label className="every-frame">
+        <input
+          type="checkbox"
+          checked={everyFrame}
+          onChange={(e) => {
+            setEveryFrame(e.target.checked);
+            setEstimate(null);
+          }}
+        />
+        Every frame with a vehicle
+      </label>
+      <p className="every-frame__note">
+        {everyFrame
+          ? "Walks the whole clip at its own rate and keeps every frame the model finds something in."
+          : "Samples at the rate below. Faster, and enough for a survey."}
+      </p>
+
+      {/* The numbers, before the button rather than at 80% with the
+          disk full. */}
+      {estimate && estimateFor && (
+        <p className={`run-estimate${estimate.fits ? "" : " run-estimate--no"}`} data-testid="run-estimate">
+          About {estimate.frames_to_process.toLocaleString()} frames &middot; {readableSize(estimate.bytes_now)}{" "}
+          now, up to {readableSize(estimate.bytes_if_every_frame_reviewed)} if you label all of it &middot;{" "}
+          {readableSize(estimate.free_bytes)} free
+          {!estimate.fits && estimate.reason ? ` — ${estimate.reason}` : ""}
+        </p>
+      )}
 
       <label className="fps-control">
         Sampling FPS

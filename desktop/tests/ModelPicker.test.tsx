@@ -92,7 +92,7 @@ describe("Choosing the detection model", () => {
     fireEvent.click(screen.getByRole("button", { name: /detect \+ track/i }));
 
     await waitFor(() =>
-      expect(api.processSource).toHaveBeenCalledWith(project.id, source.id, expect.any(Number), "yolo26s"),
+      expect(api.processSource).toHaveBeenCalledWith(project.id, source.id, expect.any(Number), "yolo26s", false),
     );
   });
 

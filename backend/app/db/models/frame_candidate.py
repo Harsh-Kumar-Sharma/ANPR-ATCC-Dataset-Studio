@@ -34,7 +34,10 @@ class FrameCandidate(Base):
     frame_id: Mapped[str | None] = mapped_column(ForeignKey("frames.id"), nullable=True, index=True)
     frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
     timestamp_ms: Mapped[int] = mapped_column(Integer, nullable=False)
-    image_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    #: Null for an offline run: the crop is cut out of the source
+    #: video on demand instead of being written during detection. Set
+    #: for a live capture, whose pixels cannot be recovered.
+    image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     bbox_json: Mapped[list] = mapped_column(JSON, nullable=False)
     detector_class: Mapped[str] = mapped_column(String(64), nullable=False)
     detector_confidence: Mapped[float] = mapped_column(Float, nullable=False)

@@ -22,8 +22,9 @@ use a model you trained yourself.
 **Notes:**
 
 - A model id becomes a file path, so it is checked before it gets near
-  one: no separators, no `..`. A bad id is its own error from a typo,
-  which is a 404.
+  one: no separators, no `..`. That refusal is its own error, separate
+  from the 404 a typo gets: one is a mistake, the other is an attempt
+  to reach outside the models directory.
 - An unknown model is refused at submission rather than in the worker.
   Answering a typo two minutes later through a failed job is a poor
   way to report a typo.

@@ -24,6 +24,7 @@ from app.services.frame_ranking import (
 )
 from app.services.frame_sampler import decode_sampled_frames, sample_frame_timestamps
 from app.services.quality_signals import compute_area_ratio, compute_sharpness, is_truncated, sharpness_to_blur_score
+from app.services.run_estimate import STOP_BELOW_BYTES, free_bytes_for
 
 
 #: Called with (fraction, message). Reporting is best-effort telemetry:
@@ -38,6 +39,10 @@ DETECTION_SHARE_OF_PROGRESS = 0.9
 #: file the bottleneck on a fast GPU.
 PROGRESS_REPORT_EVERY_FRAMES = 10
 
+#: How often the run looks at how much disk is left. A stat call is
+#: cheap but not free, and space does not disappear between frames.
+SPACE_CHECK_EVERY_FRAMES = 500
+
 
 @dataclass
 class _Observation:
@@ -46,7 +51,12 @@ class _Observation:
     bbox: tuple[float, float, float, float]
     class_id: int
     confidence: float
-    crop: np.ndarray
+    #: The pixels, and only when they cannot be recovered - see
+    #: ``observe_frame``'s ``keep_crop``. Held in memory until the
+    #: track is persisted, so an offline run leaves it None: at two
+    #: vehicles a frame over 90,003 frames it is gigabytes of RAM
+    #: before it is gigabytes of JPEG.
+    crop: np.ndarray | None
     sharpness_score: float
     blur_score: float
     area_ratio: float
@@ -67,6 +77,7 @@ def observe_frame(
     timestamp_ms: int,
     detector: Detector,
     tracker: Tracker,
+    keep_crop: bool = False,
 ) -> list[tuple[int, _Observation]]:
     """Run detect -> track on one frame and accumulate its
     observations by track id, in place.
@@ -96,7 +107,7 @@ def observe_frame(
             bbox=tracked.bbox_xyxy,
             class_id=tracked.class_id,
             confidence=tracked.confidence,
-            crop=crop,
+            crop=crop if keep_crop else None,
             sharpness_score=sharpness,
             blur_score=sharpness_to_blur_score(sharpness),
             area_ratio=compute_area_ratio(tracked.bbox_xyxy, frame_width, frame_height),
@@ -144,6 +155,7 @@ def process_source(
     tracker: Tracker,
     ranking_config: RankingConfig = DEFAULT_RANKING_CONFIG,
     on_progress: ProgressReporter | None = None,
+    every_frame: bool = False,
 ) -> ProcessingRun:
     """Sample, detect and track vehicles across an offline source
     video, then persist the resulting tracks, their frame candidates,
@@ -154,20 +166,48 @@ def process_source(
     detection becomes a frame_candidates row regardless of how it
     ranks; HARD/FAILED tracks are labeled, not discarded.
 
+    ``every_frame`` walks the source at its own rate instead of
+    sampling, keeping every frame the model found something in. That
+    is the mode for building a dataset out of a whole clip rather than
+    a survey of it.
+
     ``on_progress`` is optional and reports decode/detect progress as a
     0.0-1.0 fraction. Persisting is deliberately reported as a single
     step near the end rather than interleaved: it is fast relative to
     detection, and a bar that stalls at 90% for a second is more honest
     than one that claims finer resolution than it has.
     """
-    sampled = sample_frame_timestamps(frame_count=source.frame_count, native_fps=source.fps, target_fps=target_fps)
+    rate = source.fps if every_frame else target_fps
+    sampled = sample_frame_timestamps(frame_count=source.frame_count, native_fps=source.fps, target_fps=rate)
 
     observations_by_track: ObservationsByTrack = {}
+    frames_kept: set[int] = set()
+    stopped_early = None
     total = len(sampled)
     for processed, (sampled_frame, image) in enumerate(decode_sampled_frames(Path(source.path_or_uri), sampled), start=1):
-        observe_frame(observations_by_track, image, sampled_frame.frame_index, sampled_frame.timestamp_ms, detector, tracker)
+        found = observe_frame(
+            observations_by_track, image, sampled_frame.frame_index, sampled_frame.timestamp_ms, detector, tracker
+        )
+        if found:
+            frames_kept.add(sampled_frame.frame_index)
+
+        # Stopped, not crashed. A run that fills the disk takes the
+        # rest of the app down with it, and the frames already found
+        # are real observations worth keeping.
+        if processed % SPACE_CHECK_EVERY_FRAMES == 0:
+            free = free_bytes_for(workspace_path)
+            if free < STOP_BELOW_BYTES:
+                stopped_early = (
+                    f"Stopped at frame {processed} of {total}: only {free // 1024**2} MB left on disk. "
+                    f"The {len(frames_kept)} frames found so far are kept."
+                )
+                break
+
         if on_progress is not None and total and (processed % PROGRESS_REPORT_EVERY_FRAMES == 0 or processed == total):
-            on_progress(DETECTION_SHARE_OF_PROGRESS * processed / total, f"Frame {processed} of {total}")
+            on_progress(
+                DETECTION_SHARE_OF_PROGRESS * processed / total,
+                f"Frame {processed} of {total} · {len(frames_kept)} kept",
+            )
 
     if on_progress is not None:
         on_progress(DETECTION_SHARE_OF_PROGRESS, "Saving tracks")
@@ -176,7 +216,11 @@ def process_source(
     persist_observations(db, run, observations_by_track, tracks_root, detector.class_names, ranking_config)
 
     run.status = "completed"
-    run.sampled_frame_count = len(sampled)
+    # What it actually looked at, which is not what it planned to look
+    # at if it ran out of disk on the way.
+    run.sampled_frame_count = len(sampled) if stopped_early is None else processed
+    if stopped_early is not None:
+        run.error_message = stopped_early
     db.commit()
     db.refresh(run)
     return run
@@ -217,12 +261,17 @@ def _persist_track(
     db.add(track)
     db.flush()  # assign track.id
 
+    # Made only if something is going to be put in it. A run over an
+    # offline video writes no crops at all, so it leaves no directory.
     track_dir = tracks_root / track.id
-    track_dir.mkdir(parents=True, exist_ok=True)
+    if any(o.crop is not None for o in observations):
+        track_dir.mkdir(parents=True, exist_ok=True)
 
     for obs, score, roles in zip(observations, composite_scores, roles_by_frame):
-        image_path = track_dir / f"frame_{obs.frame_index:06d}.jpg"
-        cv2.imwrite(str(image_path), obs.crop)
+        image_path = None
+        if obs.crop is not None:
+            image_path = track_dir / f"frame_{obs.frame_index:06d}.jpg"
+            cv2.imwrite(str(image_path), obs.crop)
 
         frame = frames_by_index.get(obs.frame_index)
         if frame is None:
@@ -242,7 +291,7 @@ def _persist_track(
                 frame_id=frame.id,
                 frame_index=obs.frame_index,
                 timestamp_ms=obs.timestamp_ms,
-                image_path=str(image_path),
+                image_path=str(image_path) if image_path is not None else None,
                 bbox_json=list(obs.bbox),
                 detector_class=class_names.get(obs.class_id, str(obs.class_id)),
                 detector_confidence=obs.confidence,

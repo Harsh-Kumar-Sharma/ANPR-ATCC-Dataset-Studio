@@ -64,6 +64,7 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
         raise NotFoundError(f"Project not found: {source.project_id}")
 
     target_fps = float(run.sampling_config["target_fps"])
+    every_frame = bool(run.sampling_config.get("every_frame", False))
 
     # The model the request asked for, or the default for a request
     # written before there was a choice.
@@ -80,7 +81,10 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
 
     report(0.0, "Loading detector")
     detector = get_detector(model_id)
-    tracker = create_tracker(frame_rate=target_fps)
+    # At the source's own rate the tracker's lost-track buffer has to
+    # be sized for that rate too, or it forgets a vehicle after a
+    # fraction of a second.
+    tracker = create_tracker(frame_rate=source.fps if every_frame else target_fps)
 
     # Recorded here rather than at submission: the worker is what
     # actually loads a model, so it is the only thing that can honestly
@@ -99,6 +103,7 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
             detector=detector,
             tracker=tracker,
             on_progress=report,
+            every_frame=every_frame,
         )
     except BaseException as exc:
         # The run and the job both have to reflect the failure: the job
