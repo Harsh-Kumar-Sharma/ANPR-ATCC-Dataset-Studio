@@ -35,6 +35,17 @@ class ValidationResultRead(BaseModel):
 
 
 class DatasetExportResult(BaseModel):
+    """What an export produced, as the manifest recorded it.
+
+    ``counts`` is images and ``object_counts`` is boxes, and they are
+    different numbers now that a frame can hold many boxes - conflating
+    them is how "50 labelled frames" came back as 75.
+    """
+
     dataset_version: DatasetVersionRead
     counts: dict[str, int]
+    object_counts: dict[str, int]
+    #: Images exported with an empty label file because a human labelled
+    #: the frame as holding nothing. Deliberate negative examples.
+    background_frames: int = 0
     validation: ValidationResultRead

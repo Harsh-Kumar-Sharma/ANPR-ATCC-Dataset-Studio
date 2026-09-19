@@ -30,9 +30,14 @@ function DatasetPanel({ project }: Props) {
     try {
       const result = await api.exportDataset(project.id);
       const warnings = result.validation.warnings ?? [];
+      // Images and boxes are different numbers - a frame can carry many
+      // boxes - and a labeller wants to know both went in.
+      const background = result.background_frames ?? 0;
       setMessage(
         `v${result.dataset_version.version}: ${result.counts.total} full frame(s), ` +
-          `validation ${result.validation.valid ? "passed" : "FAILED"}.` +
+          `${result.object_counts?.total ?? 0} box(es)` +
+          (background ? `, ${background} labelled empty` : "") +
+          `, validation ${result.validation.valid ? "passed" : "FAILED"}.` +
           (warnings.length ? ` ${warnings.length} warning(s).` : ""),
       );
       setWarnings(warnings);

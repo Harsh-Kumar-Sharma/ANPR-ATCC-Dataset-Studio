@@ -43,6 +43,15 @@ def _build_track_summaries(db: Session, run_id: str) -> list[TrackSummary]:
 
 
 def _compute_class_distribution(db: Session, run_id: str, project_id: str) -> dict[str, int]:
+    """What classes this processing *run* produced.
+
+    Reached through the frame candidate on purpose, and not a gap left
+    over from track-keyed export: the question is scoped to a run, and a
+    box drawn on the labelling canvas belongs to a frame, which belongs
+    to a source that may have several runs. There is no honest answer to
+    "which run did this canvas box come from", so it is not counted here
+    rather than attributed to a run at random.
+    """
     stmt = (
         select(Annotation.class_id, func.count(Annotation.id))
         .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)

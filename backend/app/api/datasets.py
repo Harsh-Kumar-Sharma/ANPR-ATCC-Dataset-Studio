@@ -2,19 +2,19 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
 from app.services.class_definitions import class_schema_for
 from app.core.errors import NotFoundError
-from app.db.models.dataset_item import DatasetItem
 from app.db.models.dataset_version import DatasetVersion
 from app.db.session import get_db
 from app.ml.yolo_detector import DEFAULT_MODEL_WEIGHTS
 from app.schemas.active_learning import RetrainingHandoffResult
 from app.schemas.dataset import DatasetExportRequest, DatasetExportResult, DatasetVersionRead, ValidationResultRead
 from app.services.dataset_export import export_dataset_version
+from app.services.dataset_split import SPLIT_TEST, SPLIT_TRAIN, SPLIT_VAL
 from app.services.dataset_validator import validate_export
 from app.services.retraining_handoff import write_retraining_handoff
 
@@ -22,15 +22,13 @@ project_datasets_router = APIRouter(prefix="/projects/{project_id}/dataset-versi
 datasets_router = APIRouter(prefix="/dataset-versions", tags=["datasets"])
 
 
-def _counts_for_version(db: Session, dataset_version_id: str) -> dict[str, int]:
-    rows = db.execute(
-        select(DatasetItem.split, func.count(DatasetItem.id))
-        .where(DatasetItem.dataset_version_id == dataset_version_id)
-        .group_by(DatasetItem.split)
-    ).all()
-    counts = {split: count for split, count in rows}
-    counts["total"] = sum(counts.values())
-    return counts
+def _split_counts(counts: dict) -> dict[str, int]:
+    """The per-split totals, defaulted, in a fixed order.
+
+    A manifest omits nothing, but an export with an empty split still has
+    to read as zero rather than as a missing key on the way to the UI.
+    """
+    return {split: int(counts.get(split, 0)) for split in (SPLIT_TRAIN, SPLIT_VAL, SPLIT_TEST, "total")}
 
 
 def _get_dataset_version_or_404(db: Session, dataset_version_id: str) -> DatasetVersion:
@@ -61,9 +59,17 @@ def create_dataset_version(
         test_ratio=payload.test_ratio,
         split_seed=payload.split_seed,
     )
+    # Straight from the manifest the export just wrote, rather than
+    # recounted here. These numbers used to come from a count of
+    # dataset-item rows, which are one per *box* - so a frame with two
+    # vehicles on it reported as two frames, and a frame labelled as
+    # empty (which writes an image and no items) reported as none.
+    manifest = json.loads(_manifest_path(project.workspace_path, dataset_version).read_text(encoding="utf-8"))
     return DatasetExportResult(
         dataset_version=DatasetVersionRead.model_validate(dataset_version),
-        counts=_counts_for_version(db, dataset_version.id),
+        counts=_split_counts(manifest["counts"]),
+        object_counts=_split_counts(manifest["object_counts"]),
+        background_frames=int(manifest.get("background_frames", 0)),
         validation=ValidationResultRead(valid=validation.valid, errors=validation.errors, warnings=validation.warnings),
     )
 

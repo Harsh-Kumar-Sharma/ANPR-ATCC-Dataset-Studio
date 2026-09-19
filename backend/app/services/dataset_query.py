@@ -1,22 +1,31 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models.annotation import Annotation
 from app.db.models.frame import Frame
-from app.db.models.frame_candidate import FrameCandidate
-from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
-from app.db.models.track import Track
 
 
 @dataclass
-class ApprovedItem:
-    annotation: Annotation
-    frame_candidate: FrameCandidate
-    track: Track
+class ExportFrame:
+    """One image's worth of dataset: a frame, its source, and every
+    accepted box on it.
+
+    The frame is the unit, not the track. Two vehicles in one frame are
+    one image with two boxes; a track that runs across forty frames
+    contributes a box to whichever of those frames a human labelled. A
+    track-keyed result could express neither.
+
+    ``annotations`` is empty for a frame a human labelled as holding
+    nothing. That is a real label - the negative example a detector
+    needs - and it is not the same as a frame nobody has opened.
+    """
+
+    frame: Frame
     source: Source
+    annotations: list[Annotation] = field(default_factory=list)
 
 
 def project_annotations(project_id: str):
@@ -47,41 +56,81 @@ def project_annotations_for_export(project_id: str):
     return project_annotations(project_id).where(Frame.status != "rejected")
 
 
-def query_approved_items(db: Session, project_id: str) -> list[ApprovedItem]:
-    """Every human-accepted annotation in a project - the dataset-
-    eligible set (docs Track Lifecycle step 10: "Approved annotation
-    becomes dataset-eligible"). ``hard``/``failed`` tracks are
-    preserved in the DB but excluded from export by design - they
-    remain available for Phase 8 active learning, just not shipped in
-    a training dataset yet.
+def _accepted_annotations(project_id: str):
+    """Human truth, on frames a dataset may contain.
 
-    A label on a rejected frame is excluded: rejecting a frame means it
-    is not worth labelling, and that has to reach the dataset or the
-    judgement is decorative. The label itself survives, so putting the
-    frame back restores it.
-
-    Still track-keyed: it joins through the frame candidate, so it sees
-    only labels written through track review. Boxes drawn on the canvas
-    have no candidate and are invisible here until export is rewritten
-    onto frames (ticket 12). Evaluation's class distribution and the
-    active-learning queue share the same limitation.
+    ``model`` annotations are predictions a human has not confirmed, and
+    a ``pending`` or ``hard`` one is a decision not yet made; neither is
+    label data. Tracks reviewed ``hard`` or ``failed`` fall out here for
+    the same reason - they never produced an accepted annotation - which
+    keeps them in the database for Phase 8 active learning without
+    shipping them in a dataset.
     """
-    stmt = (
-        select(Annotation, FrameCandidate, Track, Source)
-        .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)
-        .join(Track, FrameCandidate.track_id == Track.id)
-        .join(ProcessingRun, Track.run_id == ProcessingRun.id)
-        .join(Source, ProcessingRun.source_id == Source.id)
-        .join(Frame, Annotation.frame_id == Frame.id)
+    return project_annotations_for_export(project_id).where(
+        Annotation.source == "human",
+        Annotation.status == "accepted",
+    )
+
+
+def query_export_frames(db: Session, project_id: str) -> list[ExportFrame]:
+    """Every frame of a project that belongs in a dataset, each with its
+    complete set of accepted boxes.
+
+    Frame-level, deliberately. The export used to ask this question
+    through the annotation's frame *candidate* - annotation to candidate
+    to track to run to source - which is track-keyed and could only ever
+    see labels written by track review. A box drawn on the labelling
+    canvas has no candidate, so an afternoon's labelling exported as
+    nothing at all. Joining through ``Annotation.frame_id`` instead sees
+    both, because both are boxes on a frame.
+
+    A frame qualifies two ways:
+
+    * it carries at least one accepted human box, or
+    * a human labelled it and saved nothing, which says "no vehicles
+      here" and is a background image rather than an absence of work.
+
+    Rejected frames are excluded whichever way they would have
+    qualified: rejecting means "not worth labelling", and if that did
+    not reach the dataset it would be a judgement with no effect. The
+    labels themselves survive, so putting the frame back restores them.
+
+    Frames nobody has opened are excluded by both clauses - they are
+    ``pending`` with no boxes.
+    """
+    frame_stmt = (
+        select(Frame, Source)
+        .join(Source, Frame.source_id == Source.id)
         .where(
             Source.project_id == project_id,
-            Annotation.source == "human",
-            Annotation.status == "accepted",
             Frame.status != "rejected",
+            or_(
+                Frame.status == "labeled",
+                # Not scoped to the project or to frame status: the outer
+                # query already is, and repeating the frame join inside a
+                # subquery is how you end up correlating it by accident.
+                Frame.id.in_(
+                    select(Annotation.frame_id).where(
+                        Annotation.source == "human",
+                        Annotation.status == "accepted",
+                    )
+                ),
+            ),
         )
-        .order_by(Track.id)
+        .order_by(Frame.source_id, Frame.frame_index)
     )
-    return [
-        ApprovedItem(annotation=row[0], frame_candidate=row[1], track=row[2], source=row[3])
-        for row in db.execute(stmt).all()
-    ]
+    by_frame = {
+        frame.id: ExportFrame(frame=frame, source=source) for frame, source in db.execute(frame_stmt).all()
+    }
+    if not by_frame:
+        return []
+
+    # Ordered by id so a frame's boxes land in the label file in a stable
+    # order - a dataset that reshuffles its own lines between exports is
+    # not reproducible, whatever the split seed says.
+    for annotation in db.scalars(_accepted_annotations(project_id).order_by(Annotation.id)):
+        entry = by_frame.get(annotation.frame_id)
+        if entry is not None:
+            entry.annotations.append(annotation)
+
+    return list(by_frame.values())

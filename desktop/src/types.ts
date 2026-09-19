@@ -182,7 +182,12 @@ export interface DatasetVersion {
 
 export interface DatasetExportResult {
   dataset_version: DatasetVersion;
+  /** Images, per split plus `total`. One per exported frame. */
   counts: Record<string, number>;
+  /** Boxes, per split plus `total`. A frame can hold many. */
+  object_counts: Record<string, number>;
+  /** Images exported with an empty label file, labelled as holding nothing. */
+  background_frames: number;
   validation: { valid: boolean; errors: string[]; warnings: string[] };
 }
 
