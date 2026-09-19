@@ -8,6 +8,32 @@ interface Props {
   onSelect: (project: Project) => void;
 }
 
+/** "3 labels", "1 source" - plural only when it needs to be. */
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+/** What deleting destroys, as a sentence rather than a row of zeros.
+ *
+ *  Only what is actually there: a project with no labels and no exports
+ *  should not make the reader parse "0 label(s), 0 exported dataset
+ *  version(s)" to find the one number that matters. */
+function describeContents(contents: ProjectContents): string {
+  const parts = [
+    contents.labels > 0 ? count(contents.labels, "label") : null,
+    contents.tracks > 0 ? count(contents.tracks, "track") : null,
+    contents.frames > 0 ? count(contents.frames, "frame") : null,
+    contents.sources > 0 ? count(contents.sources, "source") : null,
+    contents.dataset_versions > 0 ? count(contents.dataset_versions, "exported dataset version") : null,
+    contents.workspace_bytes > 0 ? `${readableSize(contents.workspace_bytes)} of files` : null,
+  ].filter((part): part is string => part !== null);
+
+  if (parts.length === 0) return "There is nothing in this project yet.";
+  const last = parts.pop() as string;
+  const list = parts.length ? `${parts.join(", ")} and ${last}` : last;
+  return `This destroys ${list}. It cannot be undone.`;
+}
+
 /** Bytes as something a person can weigh a decision against. */
 function readableSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -127,9 +153,11 @@ function ProjectPicker({ onSelect }: Props) {
           <ul className="project-list">
             {projects.map((p) => (
               <li key={p.id}>
-                <button onClick={() => onSelect(p)}>
-                  {p.name}
-                  <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>Open →</span>
+                <button className="project-open" onClick={() => onSelect(p)}>
+                  <span className="project-open-name" title={p.name}>
+                    {p.name}
+                  </span>
+                  <span className="project-open-hint">Open →</span>
                 </button>
                 {/* Its own button rather than anything inside the one
                     that opens the project: a click that reached both
@@ -165,9 +193,7 @@ function ProjectPicker({ onSelect }: Props) {
             ) : (
               <>
                 <p className="delete-summary" data-testid="delete-summary">
-                  This destroys {contents.labels} label(s), {contents.tracks} track(s), {contents.frames} frame(s)
-                  across {contents.sources} source(s), {contents.dataset_versions} exported dataset version(s), and{" "}
-                  {readableSize(contents.workspace_bytes)} of files. It cannot be undone.
+                  {describeContents(contents)}
                 </p>
                 {busy && (
                   <p className="error">

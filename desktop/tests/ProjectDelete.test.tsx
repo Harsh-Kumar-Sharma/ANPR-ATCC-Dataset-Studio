@@ -169,3 +169,55 @@ describe("ProjectPicker: deleting a project", () => {
     expect(await screen.findByText(/files were left on disk/i)).toBeInTheDocument();
   });
 });
+
+describe("ProjectPicker: what the confirmation says", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listProjects").mockResolvedValue(projects);
+  });
+
+  it("lists only what is actually there", async () => {
+    // A row of zeros makes the reader hunt for the one number that
+    // matters.
+    vi.spyOn(api, "getProjectContents").mockResolvedValue(
+      contents({ labels: 0, frames: 0, dataset_versions: 0, tracks: 3, sources: 1, workspace_bytes: 51_000_000 }),
+    );
+    render(<ProjectPicker onSelect={vi.fn()} />);
+    await screen.findByText("Gantry North");
+
+    openDeleteFor("Gantry North");
+
+    const summary = await screen.findByTestId("delete-summary");
+    expect(summary.textContent).toContain("3 tracks");
+    expect(summary.textContent).toContain("1 source");
+    expect(summary.textContent).not.toContain("0 ");
+    expect(summary.textContent).toContain("cannot be undone");
+  });
+
+  it("says so when there is nothing in the project", async () => {
+    vi.spyOn(api, "getProjectContents").mockResolvedValue(
+      contents({ sources: 0, frames: 0, tracks: 0, labels: 0, dataset_versions: 0, workspace_bytes: 0 }),
+    );
+    render(<ProjectPicker onSelect={vi.fn()} />);
+    await screen.findByText("Gantry North");
+
+    openDeleteFor("Gantry North");
+
+    expect((await screen.findByTestId("delete-summary")).textContent).toMatch(/nothing in this project/i);
+  });
+
+  it("uses singular and plural correctly", async () => {
+    vi.spyOn(api, "getProjectContents").mockResolvedValue(
+      contents({ labels: 1, tracks: 2, frames: 0, sources: 1, dataset_versions: 0, workspace_bytes: 0 }),
+    );
+    render(<ProjectPicker onSelect={vi.fn()} />);
+    await screen.findByText("Gantry North");
+
+    openDeleteFor("Gantry North");
+
+    const summary = await screen.findByTestId("delete-summary");
+    expect(summary.textContent).toContain("1 label");
+    expect(summary.textContent).toContain("2 tracks");
+    expect(summary.textContent).not.toContain("1 labels");
+  });
+});
