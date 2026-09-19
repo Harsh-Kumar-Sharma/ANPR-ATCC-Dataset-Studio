@@ -49,9 +49,15 @@ def run_jobs_inline(detector=None, monkeypatch=None):
     non-deterministic, and the process boundary hides it from the usual
     FastAPI dependency override.
     """
-    original = handlers.get_default_detector
+    original_get = handlers.get_detector
+    original_ensure = handlers.ensure_weights
     if detector is not None:
-        handlers.get_default_detector = lambda: detector
+        # The model id is accepted and ignored: what a test wants is
+        # its own stub, whichever model the request named.
+        handlers.get_detector = lambda model_id=None: detector
+        # And nothing goes near the network to fetch weights for a
+        # model that is never loaded.
+        handlers.ensure_weights = lambda *args, **kwargs: None
 
     launcher = _InlineLauncher()
 
@@ -65,7 +71,8 @@ def run_jobs_inline(detector=None, monkeypatch=None):
         yield launcher
     finally:
         app.dependency_overrides.pop(runner.get_launcher, None)
-        handlers.get_default_detector = original
+        handlers.get_detector = original_get
+        handlers.ensure_weights = original_ensure
 
 
 def process_source_sync(client, project_id: str, source_id: str, detector, target_fps: float = 5.0) -> dict:

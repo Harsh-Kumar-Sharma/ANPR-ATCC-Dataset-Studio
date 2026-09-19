@@ -149,6 +149,10 @@ def evaluate_run(db: Session, run: ProcessingRun, source: Source, project: Proje
     return {
         "run_id": run.id,
         "source_id": source.id,
+        # Which model produced these numbers. Comparing two runs is the
+        # whole point of being able to choose one, and a report that
+        # does not say cannot be compared with another.
+        "detector_version": run.detector_version,
         "is_frozen_validation_clip": source.is_frozen,
         "ground_truth_vehicle_count": source.ground_truth_vehicle_count,
         "track_counts": {

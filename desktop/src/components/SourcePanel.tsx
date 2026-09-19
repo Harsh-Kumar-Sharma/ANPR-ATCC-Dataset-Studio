@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { IconAlert, IconCheck, IconFilm, IconPlay, IconX } from "../Icons";
+import ModelPicker, { useModelChoice } from "./ModelPicker";
 import { sourceLabel } from "../sourceLabel";
 import type { Project, Source, SourceContents } from "../types";
 
@@ -35,6 +36,9 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
   const [sources, setSources] = useState<Source[]>([]);
   const [path, setPath] = useState("");
   const [targetFps, setTargetFps] = useState(5);
+  // Which model detects. Remembered per project: a project is one
+  // kind of footage, and what suited it last time suits it now.
+  const modelChoice = useModelChoice(project.id);
   const [busySourceId, setBusySourceId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +130,7 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
       // Returns as soon as the run is queued - there are no tracks to
       // count yet. Progress is followed in the jobs panel and the
       // global indicator; this tab just confirms the hand-off.
-      await api.processSource(project.id, source.id, targetFps);
+      await api.processSource(project.id, source.id, targetFps, modelChoice.modelId);
       setStatus(`${source.path_or_uri.split(/[\\/]/).pop()}: queued. Follow it under Jobs.`);
       refresh();
       onProcessed();
@@ -303,6 +307,8 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
           </div>
         </div>
       )}
+
+      <ModelPicker choice={modelChoice} id="detect-model" />
 
       <label className="fps-control">
         Sampling FPS

@@ -21,7 +21,10 @@ from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
 from app.db.models.source import Source
-from app.ml.factory import create_tracker, get_default_detector
+from app.core.config import get_settings
+from app.ml.factory import create_tracker, get_detector
+from app.ml.models import DEFAULT_MODEL_ID
+from app.ml.weights import ensure_weights
 from app.services.frame_sampler import SampledFrame, decode_sampled_frames
 from app.services.frame_selection import FrameSignals, brightness_of, frame_quality, perceptual_hash, select_frames
 from app.services.track_processor import ProgressReporter, process_source
@@ -62,8 +65,21 @@ def run_detect_job(db: Session, params: dict, report: ProgressReporter) -> dict:
 
     target_fps = float(run.sampling_config["target_fps"])
 
+    # The model the request asked for, or the default for a request
+    # written before there was a choice.
+    model_id = params.get("model_id") or run.detector_version or DEFAULT_MODEL_ID
+
+    # Fetched before loading, and reported: a first run on a model that
+    # is not on disk yet otherwise sits silent for a minute with no
+    # indication that anything is happening.
+    ensure_weights(
+        model_id,
+        get_settings().resolved_model_weights_dir(),
+        report=lambda message: report(0.0, message),
+    )
+
     report(0.0, "Loading detector")
-    detector = get_default_detector()
+    detector = get_detector(model_id)
     tracker = create_tracker(frame_rate=target_fps)
 
     # Recorded here rather than at submission: the worker is what

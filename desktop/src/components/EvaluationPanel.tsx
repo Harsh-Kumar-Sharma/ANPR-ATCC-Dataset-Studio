@@ -52,6 +52,12 @@ function EvaluationPanel({ tracks }: Props) {
 
       {report && (
         <div className="card evaluation-report" style={{ marginTop: "0.8rem" }}>
+          {/* First, because it is what makes two of these reports
+              comparable rather than just readable. */}
+          <div className="stat-row">
+            <span>Model</span>
+            <strong>{report.detector_version ?? "not recorded"}</strong>
+          </div>
           <div className="stat-row">
             <span>Confirmed / failed / unreviewed</span>
             <strong>

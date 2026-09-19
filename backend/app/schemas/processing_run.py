@@ -9,6 +9,9 @@ class SamplingConfig(BaseModel):
 
 class ProcessingRunCreate(BaseModel):
     sampling_config: SamplingConfig
+    #: Which model detects. Omitted means the default, so every caller
+    #: written before there was a choice keeps working.
+    model_id: str | None = None
 
 
 class SampledFrameRead(BaseModel):

@@ -2426,3 +2426,39 @@ label.toggle {
 .frame-nav__prompt {
   margin-top: 10px;
 }
+
+/* --- choosing which model detects -------------------------------------- */
+
+.model-picker {
+  margin-bottom: 0.6rem;
+}
+
+.model-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.model-picker__row select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.model-picker__note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.model-picker__note--fetch {
+  color: var(--text-secondary);
+}

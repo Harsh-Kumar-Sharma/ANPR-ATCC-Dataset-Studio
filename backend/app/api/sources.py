@@ -9,10 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
+from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.session import get_db
+from app.ml.models import DEFAULT_MODEL_ID, get_model
 from app.schemas.evaluation import FreezeSourceRequest
 from app.schemas.job import JobRead, JobSubmitted
 from app.schemas.processing_run import (
@@ -229,10 +231,20 @@ def process_source_endpoint(
             code="processing_already_running",
         )
 
+    # Checked here rather than in the worker: an unknown model is the
+    # caller's mistake, and answering it two minutes later through a
+    # failed job is a poor way to report a typo.
+    model_id = payload.model_id or DEFAULT_MODEL_ID
+    get_model(model_id, get_settings().resolved_model_weights_dir())
+
     run = ProcessingRun(
         source_id=source.id,
         sampling_config=payload.sampling_config.model_dump(),
         tracker_config={"frame_rate": payload.sampling_config.target_fps},
+        # Written now so the run says which model it *asked* for even
+        # if the worker never gets to load it. The worker overwrites it
+        # with what actually ran.
+        detector_version=model_id,
         status="pending",
     )
     db.add(run)
@@ -243,7 +255,7 @@ def process_source_endpoint(
         db,
         type="detect",
         project_id=project.id,
-        params={"run_id": run.id},
+        params={"run_id": run.id, "model_id": model_id},
         launcher=launcher,
     )
 

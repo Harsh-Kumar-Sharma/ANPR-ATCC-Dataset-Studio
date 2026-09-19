@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import ModelPicker, { useModelChoice } from "./ModelPicker";
 import { IconAlert, IconBroadcast, IconCheck } from "../Icons";
 import type { Project, RtspSessionStatus } from "../types";
 
@@ -12,6 +13,9 @@ interface Props {
 function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
   const [url, setUrl] = useState("");
   const [expectedFps, setExpectedFps] = useState(10);
+  // The same choice as offline detection: a live stream is where a
+  // model you trained yourself earns its keep.
+  const modelChoice = useModelChoice(project.id);
   const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<RtspSessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +34,7 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
     setError(null);
     setStarting(true);
     try {
-      const result = await api.startRtspSession(project.id, url.trim(), expectedFps);
+      const result = await api.startRtspSession(project.id, url.trim(), expectedFps, modelChoice.modelId);
       setRunId(result.run.id);
       onShowPreview(result.run.id);
       pollRef.current = setInterval(async () => {
@@ -92,6 +96,7 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
               onChange={(e) => setExpectedFps(Number(e.target.value))}
             />
           </label>
+          <ModelPicker choice={modelChoice} id="live-model" disabled={starting} />
           <button type="submit" className="btn-primary btn-block" disabled={!url.trim() || starting}>
             {starting ? "Starting…" : "Start Live Capture"}
           </button>

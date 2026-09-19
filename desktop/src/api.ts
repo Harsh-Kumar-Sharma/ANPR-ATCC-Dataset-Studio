@@ -26,6 +26,7 @@ import type {
   RetrainingHandoffResult,
   RtspSessionStatus,
   RtspStartResult,
+  ModelInfo,
   Source,
   SourceContents,
   SourceQueue,
@@ -122,11 +123,14 @@ export const api = {
   /** Queues a detect+track run and returns immediately. Follow it with
    *  getJob or listJobs - the work is not done when this
    *  resolves. */
-  processSource: (projectId: string, sourceId: string, targetFps: number) =>
+  processSource: (projectId: string, sourceId: string, targetFps: number, modelId?: string | null) =>
     request<JobSubmitted>(`/projects/${projectId}/sources/${sourceId}/process`, {
       method: "POST",
-      body: JSON.stringify({ sampling_config: { target_fps: targetFps } }),
+      body: JSON.stringify({ sampling_config: { target_fps: targetFps }, model_id: modelId ?? null }),
     }),
+
+  /** Everything that can detect: the built-ins, and your own. */
+  listModels: () => request<ModelInfo[]>("/models"),
   getProcessingRun: (runId: string) => request<ProcessingRun>(`/processing-runs/${runId}`),
 
   listJobs: (params: { projectId?: string; status?: string; type?: string } = {}) =>
@@ -264,10 +268,10 @@ export const api = {
   createRetrainingHandoff: (datasetVersionId: string) =>
     request<RetrainingHandoffResult>(`/dataset-versions/${datasetVersionId}/retraining-handoff`, { method: "POST" }),
 
-  startRtspSession: (projectId: string, rtspUrl: string, expectedFps: number) =>
+  startRtspSession: (projectId: string, rtspUrl: string, expectedFps: number, modelId?: string | null) =>
     request<RtspStartResult>(`/projects/${projectId}/sources/rtsp/start`, {
       method: "POST",
-      body: JSON.stringify({ rtsp_url: rtspUrl, expected_fps: expectedFps }),
+      body: JSON.stringify({ rtsp_url: rtspUrl, expected_fps: expectedFps, model_id: modelId ?? null }),
     }),
   getRtspStatus: (runId: string) => request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/status`),
   stopRtspSession: (runId: string) =>

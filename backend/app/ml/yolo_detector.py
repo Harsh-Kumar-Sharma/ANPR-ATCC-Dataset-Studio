@@ -26,6 +26,7 @@ class YoloDetector:
         confidence_threshold: float = 0.25,
         class_allowlist: frozenset[str] | None = DEFAULT_VEHICLE_CLASS_NAMES,
         device: str | None = None,
+        name: str | None = None,
     ) -> None:
         self._model = YOLO(weights)
         self._confidence_threshold = confidence_threshold
@@ -34,7 +35,10 @@ class YoloDetector:
         # fixed for the life of the detector, and re-deciding it every frame
         # would re-log it every frame. ``None`` means "ask the config".
         self.device = resolve_device(device if device is not None else get_settings().device)
-        self.model_version = weights
+        # The model id when the caller has one, because that is what
+        # gets written onto the run and compared between runs. A path
+        # says where the file was that day, not which model ran.
+        self.model_version = name or weights
         self.class_names: dict[int, str] = dict(self._model.names)
 
     def detect(self, frame: np.ndarray) -> list[Detection]:

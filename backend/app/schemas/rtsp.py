@@ -11,6 +11,10 @@ class RtspStartRequest(BaseModel):
     #: lost-track-buffer sizing, not a measured value.
     expected_fps: float = Field(default=10.0, gt=0)
     buffer_maxlen: int = Field(default=300, gt=0)
+    #: Which model detects on the live stream. A live session is where
+    #: a model you trained earns its keep, so this is not the one place
+    #: that stays hard-coded.
+    model_id: str | None = None
 
 
 class RtspStartResult(BaseModel):

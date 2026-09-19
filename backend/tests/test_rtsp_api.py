@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.api.rtsp import get_rtsp_connection_provider
 from app.main import app
-from app.ml.factory import get_default_detector
+from app.ml.factory import get_detector_provider
 from tests.stub_detector import StubDetector
 
 client = TestClient(app)
@@ -49,7 +49,7 @@ def _create_project(name: str) -> dict:
 
 def test_start_creates_source_and_run_with_sentinel_fields(tmp_path):
     project = _create_project("RTSP Start Project")
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
+    app.dependency_overrides[get_detector_provider] = lambda: (lambda model_id: StubDetector())
     app.dependency_overrides[get_rtsp_connection_provider] = lambda: (lambda url: _NeverOpensConnection(url))
     try:
         response = client.post(
@@ -90,13 +90,13 @@ def test_start_creates_source_and_run_with_sentinel_fields(tmp_path):
 
         client.post(f"/processing-runs/{run_id}/rtsp/stop")
     finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+        app.dependency_overrides.pop(get_detector_provider, None)
         app.dependency_overrides.pop(get_rtsp_connection_provider, None)
 
 
 def test_full_start_status_stop_lifecycle(tmp_path):
     project = _create_project("RTSP Lifecycle Project")
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
+    app.dependency_overrides[get_detector_provider] = lambda: (lambda model_id: StubDetector())
     app.dependency_overrides[get_rtsp_connection_provider] = lambda: (lambda url: _InstantFrameConnection(url))
     try:
         started = client.post(
@@ -130,7 +130,7 @@ def test_full_start_status_stop_lifecycle(tmp_path):
         run_detail = client.get(f"/dataset-versions/{run_id}")  # wrong resource on purpose: 404 not 500
         assert run_detail.status_code == 404
     finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+        app.dependency_overrides.pop(get_detector_provider, None)
         app.dependency_overrides.pop(get_rtsp_connection_provider, None)
 
 
@@ -156,7 +156,7 @@ def test_live_preview_serves_the_latest_processed_frame_and_keeps_advancing(tmp_
     import cv2
 
     project = _create_project("RTSP Preview Project")
-    app.dependency_overrides[get_default_detector] = lambda: StubDetector()
+    app.dependency_overrides[get_detector_provider] = lambda: (lambda model_id: StubDetector())
     app.dependency_overrides[get_rtsp_connection_provider] = lambda: (lambda url: _InstantFrameConnection(url))
     try:
         started = client.post(
@@ -197,7 +197,7 @@ def test_live_preview_serves_the_latest_processed_frame_and_keeps_advancing(tmp_
                 break
             time.sleep(0.05)
     finally:
-        app.dependency_overrides.pop(get_default_detector, None)
+        app.dependency_overrides.pop(get_detector_provider, None)
         app.dependency_overrides.pop(get_rtsp_connection_provider, None)
 
 

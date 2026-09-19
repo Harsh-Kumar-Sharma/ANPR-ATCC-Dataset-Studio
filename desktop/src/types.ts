@@ -335,6 +335,9 @@ export interface FailureGalleryItem {
 export interface EvaluationReport {
   run_id: string;
   source_id: string;
+  /** Which model produced these numbers. Comparing two runs is the
+   *  point of being able to choose one. */
+  detector_version: string | null;
   is_frozen_validation_clip: boolean;
   ground_truth_vehicle_count: number | null;
   track_counts: { total: number; confirmed: number; failed: number; unreviewed: number };
@@ -488,4 +491,17 @@ export interface SourceQueue {
   labeled: number;
   rejected: number;
   skipped: number;
+}
+
+/** One model the app can be asked to detect with. */
+export interface ModelInfo {
+  id: string;
+  label: string;
+  /** "builtin" or "custom" - a custom one is a model you trained or brought. */
+  kind: string;
+  weights_file: string;
+  /** False for a built-in whose weights have not been fetched yet. */
+  present: boolean;
+  bytes: number;
+  note: string;
 }

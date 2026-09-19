@@ -29,6 +29,9 @@ class FailureGalleryItem(BaseModel):
 class EvaluationReport(BaseModel):
     run_id: str
     source_id: str
+    #: Which model produced these numbers, so two reports can be
+    #: compared rather than just read.
+    detector_version: str | None
     is_frozen_validation_clip: bool
     ground_truth_vehicle_count: int | None
     track_counts: TrackCounts

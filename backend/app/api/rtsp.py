@@ -9,8 +9,8 @@ from app.core.errors import NotFoundError
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.session import get_db
-from app.ml.detector import Detector
-from app.ml.factory import create_tracker, get_default_detector
+from app.ml.factory import DetectorProvider, create_tracker, get_detector_provider
+from app.ml.models import DEFAULT_MODEL_ID
 from app.schemas.rtsp import RtspSessionStatusRead, RtspStartRequest, RtspStartResult
 from app.services.rtsp_session import RtspCaptureSession
 from app.services.rtsp_session_registry import get_session, register_session
@@ -31,7 +31,7 @@ def start_rtsp_session(
     project_id: str,
     payload: RtspStartRequest,
     db: Session = Depends(get_db),
-    detector: Detector = Depends(get_default_detector),
+    detector_provider: DetectorProvider = Depends(get_detector_provider),
     connection_provider: ConnectionProvider = Depends(get_rtsp_connection_provider),
 ) -> RtspStartResult:
     """Start a live RTSP capture-and-track session
@@ -47,6 +47,11 @@ def start_rtsp_session(
     value.
     """
     project = get_project_or_404(db, project_id)
+    # A live session is where a model you trained earns its keep, so
+    # this is not the one place that stays hard-coded. Resolved before
+    # anything is written: an unknown model should not leave a source
+    # and a run behind.
+    detector = detector_provider(payload.model_id or DEFAULT_MODEL_ID)
 
     source = Source(
         project_id=project.id,
