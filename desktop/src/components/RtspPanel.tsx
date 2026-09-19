@@ -88,7 +88,7 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
             onChange={(e) => setUrl(e.target.value)}
           />
           <label className="fps-control">
-            Expected FPS
+            Camera FPS
             <input
               type="number"
               min={1}
@@ -96,6 +96,13 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
               onChange={(e) => setExpectedFps(Number(e.target.value))}
             />
           </label>
+          {/* It reads like a speed setting and is not one. Saying so
+              here is cheaper than the question it otherwise prompts:
+              "I asked for 30 and it is running at 6". */}
+          <p className="rtsp-hint">
+            Roughly what the camera sends, so the tracker knows how long to wait before giving up on a
+            vehicle. It does not set the speed - capture runs as fast as the camera delivers.
+          </p>
           {/* manage=false: importing and removing belong in one place,
               and both pickers are in the same sidebar. */}
           <ModelPicker choice={modelChoice} id="live-model" disabled={starting} manage={false} />

@@ -11,12 +11,21 @@ interface Props {
 // Each poll waits for the previous frame to arrive before scheduling the
 // next, so a slow backend is never flooded with overlapping requests.
 const POLL_DELAY_MS = 100;
-const FPS_WINDOW_MS = 2000;
+/** Long enough that a one-frame wobble does not move the number. */
+const RATE_WINDOW_MS = 5000;
 
 function LivePreview({ runId, onClose }: Props) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<RtspSessionStatus | null>(null);
-  const [fps, setFps] = useState(0);
+  // How fast frames are actually arriving from the camera, measured
+  // from the session's own counter. The rate the preview refreshes at
+  // is not this number and never was: the backend throttles rendering
+  // to about 8 a second so it is not JPEG-encoding every frame, and
+  // the poll here adds its own ceiling. Showing that as "fps" next to
+  // LIVE read as throughput, which is how "I asked for 30 and it says
+  // 6.5" happened.
+  const [cameraFps, setCameraFps] = useState<number | null>(null);
+  const samples = useRef<{ at: number; captured: number }[]>([]);
   const objectUrlRef = useRef<string | null>(null);
   const stoppedRef = useRef(false);
 
@@ -24,7 +33,6 @@ function LivePreview({ runId, onClose }: Props) {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let lastSequence: string | null = null;
-    const arrivals: number[] = [];
 
     async function poll() {
       try {
@@ -41,10 +49,6 @@ function LivePreview({ runId, onClose }: Props) {
             objectUrlRef.current = url;
             setImageUrl(url);
 
-            const now = performance.now();
-            arrivals.push(now);
-            while (arrivals.length > 0 && now - arrivals[0] > FPS_WINDOW_MS) arrivals.shift();
-            setFps(arrivals.length / (FPS_WINDOW_MS / 1000));
           }
         }
       } catch {
@@ -74,6 +78,17 @@ function LivePreview({ runId, onClose }: Props) {
           if (cancelled) return;
           setStatus(s);
           stoppedRef.current = s.stopped;
+
+          const now = performance.now();
+          samples.current.push({ at: now, captured: s.frames_captured });
+          while (samples.current.length > 2 && now - samples.current[0].at > RATE_WINDOW_MS) {
+            samples.current.shift();
+          }
+          const first = samples.current[0];
+          const seconds = (now - first.at) / 1000;
+          // One sample says nothing, and a window shorter than a
+          // second turns counter jitter into a wild number.
+          if (seconds >= 1) setCameraFps((s.frames_captured - first.captured) / seconds);
         })
         .catch(() => undefined);
     load();
@@ -113,7 +128,7 @@ function LivePreview({ runId, onClose }: Props) {
         <span className={`live-badge${live ? "" : " ended"}`}>
           <span className="dot" />
           {live ? "LIVE" : "ENDED"}
-          {live && imageUrl ? ` · ${fps.toFixed(1)} fps` : ""}
+          {live && cameraFps !== null ? ` · ${cameraFps.toFixed(1)} fps from camera` : ""}
         </span>
       </div>
 
@@ -134,7 +149,7 @@ function LivePreview({ runId, onClose }: Props) {
       )}
 
       <p className="player-hint">
-        Boxes are drawn when each frame is processed. Dropped frames mean detection is slower than the camera - the
+        The rate beside LIVE is how fast frames are arriving from the camera, which is the camera and the network's decision - not a setting. The preview itself refreshes more slowly than that on purpose. Boxes are drawn when each frame is processed. Dropped frames mean detection is slower than the camera - the
         preview shows the newest frame it managed to process. Vehicles are saved as reviewable tracks about every 10
         seconds and when you stop the session.
       </p>

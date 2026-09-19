@@ -2549,3 +2549,10 @@ label.toggle {
   padding: 3px 8px;
   font-size: 11px;
 }
+
+.rtsp-hint {
+  margin: -2px 0 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
