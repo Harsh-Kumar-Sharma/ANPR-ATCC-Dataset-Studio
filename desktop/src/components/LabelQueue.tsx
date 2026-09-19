@@ -52,6 +52,14 @@ function LabelQueue({ queue, selectedFrameId, project }: Props) {
         </p>
       )}
 
+      {/* Beside the counts, not after the list. Below a hundred and
+          forty rows it may as well not exist - which is how someone
+          who had finished labelling came to ask for a feature that
+          was already there. */}
+      {frames.length > 0 && (
+        <SweepFrames project={project} sourceId={sourceId} onSwept={() => queue.refresh()} />
+      )}
+
       {progress !== null && (progress.rejected > 0 || progress.skipped > 0) && (
         <label className="label-queue__toggle">
           <input
@@ -118,14 +126,9 @@ function LabelQueue({ queue, selectedFrameId, project }: Props) {
           </ul>
         </>
       )}
-
-      {/* After the list, because it acts on what is in it - and only
-          once there is something to act on. */}
-      {frames.length > 0 && (
-        <SweepFrames project={project} sourceId={sourceId} onSwept={() => queue.refresh()} />
-      )}
     </section>
   );
 }
 
 export default LabelQueue;
+

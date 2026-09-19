@@ -214,6 +214,19 @@ describe("Deleting the frames nobody labelled", () => {
     expect(api.sweepUnlabelled).not.toHaveBeenCalled();
   });
 
+  it("sits above the list, not below it", async () => {
+    // Below a hundred and forty rows it may as well not exist, which
+    // is how someone who had finished labelling came to ask for a
+    // feature that was already there.
+    render(<Queue />);
+    const button = await screen.findByRole("button", { name: /delete the frames i did not label/i });
+    const firstFrame = screen.getByRole("button", { name: /^frame 0$/i });
+
+    const order = button.compareDocumentPosition(firstFrame);
+
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("deletes only when confirmed", async () => {
     render(<Queue />);
     fireEvent.click(await screen.findByRole("button", { name: /delete the frames i did not label/i }));

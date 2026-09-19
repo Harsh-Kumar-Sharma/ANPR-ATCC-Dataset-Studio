@@ -2568,7 +2568,7 @@ label.toggle {
 /* --- clearing out the frames nobody labelled --------------------------- */
 
 .sweep {
-  margin-top: 10px;
+  margin: 0 0 8px;
 }
 
 .sweep__start {
