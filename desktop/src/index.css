@@ -1820,7 +1820,16 @@ label.toggle {
   user-select: none;
 }
 
-.label-canvas__overlay rect.label-canvas__handle {
+.label-canvas__overlay rect/* A box that carries attributes, so a frame of four vehicles does not
+   have to be clicked through to find the one with a plate on it. */
+.label-canvas__has-attributes {
+  fill: var(--accent, #4a8cff);
+  stroke: #000;
+  stroke-width: 0.5;
+  opacity: 0.9;
+}
+
+.label-canvas__handle {
   fill: var(--bg-surface);
   stroke: var(--accent);
   stroke-width: 1.5;
@@ -1912,7 +1921,7 @@ label.toggle {
   gap: 8px 12px;
   flex-basis: 100%;
   padding-top: 6px;
-  border-top: 1px solid var(--border-subtle, var(--border-strong));
+  border-top: 1px solid var(--border-strong);
 }
 
 .label-canvas__attribute {
@@ -1926,15 +1935,6 @@ label.toggle {
   padding: 2px 6px;
   font: inherit;
   min-width: 160px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-}
-
-.label-canvas__attributes select {
-  padding: 2px 6px;
-  font: inherit;
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);

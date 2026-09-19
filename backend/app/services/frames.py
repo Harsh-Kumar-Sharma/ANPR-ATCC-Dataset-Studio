@@ -224,11 +224,16 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     Validation runs over every box before anything is touched, so a
     single bad box leaves the previous set exactly as it was.
     """
+    existing = {a.id: a for a in list_annotations(db, frame.id)}
+
     # Validated - and cleaned - before anything is touched, so one bad
     # box leaves the previous set exactly as it was, attributes included.
-    cleaned = [_validate(db, project_id, frame, index, box) for index, box in enumerate(boxes)]
-
-    existing = {a.id: a for a in list_annotations(db, frame.id)}
+    # What the box already holds goes in too: it is what tells an echo of
+    # a retired attribute apart from a client inventing one.
+    cleaned = [
+        _validate(db, project_id, frame, index, box, stored_attributes(existing.get(box.id)))
+        for index, box in enumerate(boxes)
+    ]
 
     echoed = [box.id for box in boxes if box.id is not None]
     if len(echoed) != len(set(echoed)):
@@ -239,7 +244,7 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
             f"{len(unknown)} box(es) refer to annotations no longer on this frame. Reload it and try again."
         )
 
-    for box, attributes in zip(boxes, cleaned):
+    for box, attributes in zip(boxes, cleaned, strict=True):
         if box.id is not None:
             annotation = existing[box.id]
             annotation.class_id = box.class_id
@@ -271,24 +276,36 @@ def replace_annotations(db: Session, project_id: str, frame: Frame, boxes: list[
     return list_annotations(db, frame.id)
 
 
-def _validate(db: Session, project_id: str, frame: Frame, index: int, box: BoxInput) -> dict:
+def stored_attributes(annotation: Annotation | None) -> dict:
+    """What this box already holds, or nothing if it is a new one."""
+    return dict(annotation.attributes or {}) if annotation is not None else {}
+
+
+def _validate(
+    db: Session, project_id: str, frame: Frame, index: int, box: BoxInput, stored: dict | None = None
+) -> dict:
     """Check one box, and return the attributes that should be stored
     for it. Returning rather than mutating keeps the whole check-first
-    pass free of side effects."""
+    pass free of side effects.
+
+    ``index`` is zero-based here and one-based in every message, because
+    the canvas numbers boxes from one on screen ("Box 1 of 3") and two
+    numbering schemes for the same box costs a user real time.
+    """
     if len(box.bbox) != 4 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in box.bbox):
-        raise InvalidBoxError(f"Box {index}: expected four finite numbers [x1, y1, x2, y2].")
+        raise InvalidBoxError(f"Box {index + 1}: expected four finite numbers [x1, y1, x2, y2].")
 
     x1, y1, x2, y2 = box.bbox
     if not (0 <= x1 < x2 <= frame.width and 0 <= y1 < y2 <= frame.height):
         raise InvalidBoxError(
-            f"Box {index}: [{x1}, {y1}, {x2}, {y2}] is not inside this {frame.width}x{frame.height} frame, "
+            f"Box {index + 1}: [{x1}, {y1}, {x2}, {y2}] is not inside this {frame.width}x{frame.height} frame, "
             "or has no area."
         )
 
     if box.class_id is not None and not is_valid_class_id(db, project_id, box.class_id):
-        raise InvalidBoxError(f"Box {index}: class {box.class_id} is not one of this project's classes.")
+        raise InvalidBoxError(f"Box {index + 1}: class {box.class_id} is not one of this project's classes.")
 
     try:
-        return clean_attributes(box.attributes)
+        return clean_attributes(box.attributes, stored=stored)
     except InvalidAttributeError as e:
-        raise InvalidBoxError(f"Box {index}: {e}") from e
+        raise InvalidBoxError(f"Box {index + 1}: {e}") from e

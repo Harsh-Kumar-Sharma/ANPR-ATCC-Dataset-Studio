@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.active_learning import router as active_learning_router
-from app.api.attributes import attributes_router
+from app.api.annotation_attributes import attributes_router
 from app.api.classes import router as classes_router
 from app.api.datasets import datasets_router, project_datasets_router
 from app.api.evaluation import router as evaluation_router

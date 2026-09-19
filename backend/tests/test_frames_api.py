@@ -140,7 +140,9 @@ def test_a_box_outside_the_frame_is_refused_and_the_previous_set_survives(tmp_pa
 
     assert response.status_code == 400
     assert response.json()["code"] == "invalid_box"
-    assert "Box 1" in response.json()["message"]
+    # The *second* box is the bad one, and boxes are numbered from one
+    # in the message because that is how the canvas numbers them.
+    assert "Box 2" in response.json()["message"]
     assert [a["bbox_json"] for a in client.get(f"/frames/{frame['id']}/annotations").json()] == [[0.0, 0.0, 10.0, 10.0]]
 
 

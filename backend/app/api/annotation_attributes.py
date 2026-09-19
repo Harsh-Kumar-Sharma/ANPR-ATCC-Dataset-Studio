@@ -11,7 +11,7 @@ rather than of what a particular project counts.
 
 from fastapi import APIRouter
 
-from app.schemas.annotation_attribute import AttributeDefinitionRead
+from app.schemas.annotation_attributes import AttributeDefinitionRead
 from app.services.annotation_attributes import ATTRIBUTE_DEFINITIONS
 
 attributes_router = APIRouter(prefix="/annotation-attributes", tags=["attributes"])

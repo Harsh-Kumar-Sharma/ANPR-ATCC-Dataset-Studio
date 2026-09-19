@@ -79,14 +79,16 @@ def test_the_attribute_definitions_are_served_rather_than_duplicated():
 
 def test_plate_text_is_a_free_string_and_survives_save_and_reload(queue):
     """The plate-text card in track review typed whatever the reviewer
-    read off the plate. This is that, moved onto the box it describes."""
+    read off the plate. This is that, moved onto the box it describes -
+    and canonicalised on the way in the same way the OCR path does, so
+    the two can be compared."""
     project, frames = queue
     saved = _save(frames[0], [_box(plate_text="MH 12 AB 1234")])
     assert saved.status_code == 200, saved.text
-    assert saved.json()[0]["attributes"]["plate_text"] == "MH 12 AB 1234"
+    assert saved.json()[0]["attributes"]["plate_text"] == "MH12AB1234"
 
     reloaded = client.get(f"/frames/{frames[0]['id']}/annotations").json()
-    assert reloaded[0]["attributes"]["plate_text"] == "MH 12 AB 1234"
+    assert reloaded[0]["attributes"]["plate_text"] == "MH12AB1234"
 
 
 def test_every_kind_of_attribute_round_trips(queue):
@@ -98,12 +100,14 @@ def test_every_kind_of_attribute_round_trips(queue):
     assert saved.status_code == 200, saved.text
 
     attributes = client.get(f"/frames/{frames[0]['id']}/annotations").json()[0]["attributes"]
+    # "night" is absent rather than false: a checkbox has two states and
+    # cannot produce an explicit false, so storing one would give "not a
+    # night shot" a second spelling nothing on screen could have written.
     assert attributes == {
-        "plate_text": "DL 3C 1234",
+        "plate_text": "DL3C1234",
         "colour": "white",
         "direction": "incoming",
         "occluded": True,
-        "night": False,
     }
 
 
@@ -119,7 +123,7 @@ def test_editing_a_box_keeps_the_attributes_it_was_not_asked_about(queue):
     )
     assert moved.status_code == 200, moved.text
     assert moved.json()[0]["id"] == first["id"]
-    assert moved.json()[0]["attributes"]["plate_text"] == "KA 01 AA 1111"
+    assert moved.json()[0]["attributes"]["plate_text"] == "KA01AA1111"
 
 
 def test_attributes_are_optional(queue):
@@ -144,10 +148,13 @@ def test_clearing_an_attribute_removes_it_rather_than_storing_a_blank(queue):
     assert cleared.json()[0]["attributes"] == {}
 
 
-def test_plate_text_is_trimmed(queue):
+def test_plate_text_is_canonicalised(queue):
+    """Uppercased, letters and digits only - the same shape the OCR path
+    stores, so the plate a human types and the plate a model read of the
+    same vehicle can be compared at all."""
     project, frames = queue
-    saved = _save(frames[0], [_box(plate_text="  UP 16 CD 0007  ")])
-    assert saved.json()[0]["attributes"]["plate_text"] == "UP 16 CD 0007"
+    saved = _save(frames[0], [_box(plate_text="  up 16 cd 0007  ")])
+    assert saved.json()[0]["attributes"]["plate_text"] == "UP16CD0007"
 
 
 # --- refusing nonsense ------------------------------------------------------
@@ -201,7 +208,7 @@ def test_a_bad_attribute_leaves_the_previous_boxes_untouched(queue):
 
     still_there = client.get(f"/frames/{frames[0]['id']}/annotations").json()
     assert len(still_there) == 1
-    assert still_there[0]["attributes"]["plate_text"] == "GJ 05 XY 9999"
+    assert still_there[0]["attributes"]["plate_text"] == "GJ05XY9999"
 
 
 # --- and out into the dataset -----------------------------------------------
@@ -220,7 +227,7 @@ def test_attributes_reach_the_exported_manifest(queue):
     export_dir = Path(project["workspace_path"]) / "exports" / "v1"
     manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
     obj = manifest["items"][0]["objects"][0]
-    assert obj["attributes"] == {"plate_text": "RJ 14 CV 0002", "colour": "white", "occluded": True}
+    assert obj["attributes"] == {"plate_text": "RJ14CV0002", "colour": "white", "occluded": True}
 
 
 def test_a_frame_with_no_attributes_still_exports_cleanly(queue):
@@ -233,3 +240,30 @@ def test_a_frame_with_no_attributes_still_exports_cleanly(queue):
     export_dir = Path(project["workspace_path"]) / "exports" / "v1"
     manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["items"][0]["objects"][0]["attributes"] == {}
+
+
+def test_retiring_an_attribute_does_not_lock_the_frames_that_used_it(queue, monkeypatch):
+    """The failure this nearly shipped with. The canvas loads a box and
+    sends its whole attribute set back, so a retired attribute arrives as
+    a key the panel cannot render and the user cannot clear - and
+    refusing it made the *entire frame* unsavable, over something
+    invisible, with no way out but deleting and redrawing the box."""
+    project, frames = queue
+    saved = _save(frames[0], [_box(colour="white", plate_text="MH 12 AB 1234")]).json()[0]
+    assert saved["attributes"]["colour"] == "white"
+
+    # Colour is retired between one save and the next.
+    from app.services import annotation_attributes
+
+    kept = [d for d in annotation_attributes.ATTRIBUTE_DEFINITIONS if d["key"] != "colour"]
+    monkeypatch.setattr(annotation_attributes, "ATTRIBUTE_DEFINITIONS", kept)
+    monkeypatch.setattr(annotation_attributes, "_BY_KEY", {d["key"]: d for d in kept})
+
+    again = _save(
+        frames[0],
+        [{"id": saved["id"], "class_id": 4, "bbox_json": TRUCK, "attributes": saved["attributes"]}],
+    )
+
+    assert again.status_code == 200, again.text
+    assert again.json()[0]["id"] == saved["id"], "the box keeps its identity, and its dataset items with it"
+    assert again.json()[0]["attributes"] == {"plate_text": "MH12AB1234"}

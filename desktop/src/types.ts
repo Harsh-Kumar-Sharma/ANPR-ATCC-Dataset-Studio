@@ -156,11 +156,11 @@ export interface AttributeDefinition {
   key: string;
   label: string;
   type: "text" | "choice" | "boolean";
-  /** `choice` only. */
-  options?: AttributeOption[];
-  /** `text` only. */
-  max_length?: number;
-  placeholder?: string;
+  /** `choice` only; null for the other types, not absent. */
+  options?: AttributeOption[] | null;
+  /** `text` only; null for the other types, not absent. */
+  max_length?: number | null;
+  placeholder?: string | null;
 }
 
 export type FrameStatus = "pending" | "labeled" | "rejected" | "skipped";

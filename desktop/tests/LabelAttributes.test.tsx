@@ -167,6 +167,76 @@ describe("LabelCanvas: the attributes panel", () => {
     await waitFor(() => expect(onDirtyChange).toHaveBeenCalledWith(true));
   });
 
+  it("unchecking a box clears the attribute rather than sending false", async () => {
+    // A checkbox has two states, not three. If it sent false the
+    // database would hold {} on some boxes and {occluded: false} on
+    // others, both meaning the same thing.
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation("a-1", { occluded: true })]);
+    const save = vi.spyOn(api, "saveFrameAnnotations").mockResolvedValue([annotation("a-1")]);
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    await screen.findAllByTestId("label-box");
+    selectFirstBox();
+    fireEvent.click(await screen.findByLabelText("Occluded"));
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith("f-1", [expect.objectContaining({ attributes: {} })]),
+    );
+  });
+
+  it("Ctrl+S saves from inside a text field, as it does everywhere else", async () => {
+    // The typing guard used to swallow it, so the one shortcut a user
+    // reaches for mid-sentence did nothing and said nothing.
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation("a-1")]);
+    const save = vi.spyOn(api, "saveFrameAnnotations").mockResolvedValue([annotation("a-1")]);
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    await screen.findAllByTestId("label-box");
+    selectFirstBox();
+    const field = await screen.findByLabelText("Plate text");
+    fireEvent.change(field, { target: { value: "MH 12 AB 1234" } });
+    fireEvent.keyDown(field, { key: "s", ctrlKey: true, bubbles: true });
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+  });
+
+  it("keeps a newly drawn box selected after saving it", async () => {
+    // A fresh box has no id, so matching the selection by id deselected
+    // it the instant it saved - closing the panel under someone who had
+    // just typed a plate into it.
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([]);
+    vi.spyOn(api, "saveFrameAnnotations").mockResolvedValue([annotation("a-new", { plate_text: "DL3C1234" })]);
+    vi.spyOn(HTMLImageElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, width: 640, height: 480, right: 640, bottom: 480, x: 0, y: 0, toJSON: () => ({}),
+    });
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    await screen.findByTestId("label-stage");
+    fireEvent.mouseDown(screen.getByTestId("label-stage"), { button: 0, clientX: 20, clientY: 20 });
+    fireEvent.mouseMove(window, { clientX: 120, clientY: 120 });
+    fireEvent.mouseUp(window, { clientX: 120, clientY: 120 });
+
+    fireEvent.change(await screen.findByLabelText("Plate text"), { target: { value: "DL 3C 1234" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByLabelText("Plate text")).toBeInTheDocument();
+  });
+
+  it("marks on the canvas which boxes already carry attributes", async () => {
+    // Otherwise the only way to find the one vehicle with a plate on it
+    // is to click all four.
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([
+      { ...annotation("a-1", { plate_text: "MH12AB1234" }), bbox_json: [10, 10, 100, 100] },
+      { ...annotation("a-2"), bbox_json: [200, 200, 300, 300] },
+    ]);
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    await screen.findAllByTestId("label-box");
+
+    expect(screen.getAllByTestId("label-has-attributes")).toHaveLength(1);
+  });
+
   it("typing a plate does not fire the box shortcuts", async () => {
     // "1" is assign-class-one and "]" is next-box. Both would be a
     // disaster inside a plate number.
@@ -177,7 +247,11 @@ describe("LabelCanvas: the attributes panel", () => {
     selectFirstBox();
     const field = await screen.findByLabelText("Plate text");
     fireEvent.change(field, { target: { value: "MH 12" } });
-    fireEvent.keyDown(field, { key: "1", bubbles: true });
+    // "2" would assign the second class, and "]" would jump to the next
+    // box. The fixture is class 1, so pressing "2" is a change the
+    // assertion can actually see.
+    fireEvent.keyDown(field, { key: "2", bubbles: true });
+    fireEvent.keyDown(field, { key: "]", bubbles: true });
 
     expect(screen.getByLabelText<HTMLInputElement>("Plate text")).toHaveValue("MH 12");
     expect(screen.getByLabelText<HTMLSelectElement>("Class of selected box")).toHaveValue("1");

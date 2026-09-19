@@ -383,12 +383,17 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (isEditableTarget(e.target)) return;
+      // Ctrl/Cmd+S first, and deliberately before the typing guard:
+      // everywhere else it saves from inside a text field, and the
+      // attributes panel is where a user now does real typing. Bare "S"
+      // stays blocked - it belongs in the plate they are halfway
+      // through, not in a save.
       if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         if (dirty && !saving) save();
         return;
       }
+      if (isEditableTarget(e.target)) return;
       const step = e.shiftKey ? NUDGE_FAST : NUDGE;
       switch (e.key) {
         case "]":
@@ -452,6 +457,12 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
     // what the user has on screen.
     const sent = boxes;
     const selectedId = selected !== null ? boxes[selected].id : null;
+    // A box drawn a moment ago has no id yet, so matching by id would
+    // deselect it the instant it is saved - which closes the attributes
+    // panel under someone who has just typed a plate into it. Its
+    // position in the sent order is preserved by the reordering below,
+    // so that is what to fall back to.
+    const selectedIndex = selected;
     setSaving(true);
     try {
       const saved = await api.saveFrameAnnotations(frame.id, sent);
@@ -475,7 +486,9 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
       const ordered = [...inSentOrder, ...saved.filter((a) => !seen.has(a.id))];
 
       setBoxes(ordered.map(fromAnnotation));
-      setSelected(selectedId !== null ? ordered.findIndex((a) => a.id === selectedId) : null);
+      const byIdIndex = selectedId !== null ? ordered.findIndex((a) => a.id === selectedId) : -1;
+      const fallback = selectedIndex !== null && selectedIndex < ordered.length ? selectedIndex : null;
+      setSelected(byIdIndex >= 0 ? byIdIndex : fallback);
       setDirty(false);
     } catch (e) {
       setError(describe(e));
@@ -553,6 +566,18 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
                 height={box.bbox_json[3] - box.bbox_json[1]}
                 onMouseDown={(e) => startMove(e, index)}
               />
+              {Object.keys(box.attributes ?? {}).length > 0 && (
+                // Otherwise the only way to find out which of four
+                // vehicles already has a plate on it is to click all
+                // four.
+                <circle
+                  className="label-canvas__has-attributes"
+                  data-testid="label-has-attributes"
+                  cx={box.bbox_json[2] - labelSize * 0.4}
+                  cy={box.bbox_json[1] + labelSize * 0.4}
+                  r={labelSize * 0.22}
+                />
+              )}
               <text
                 className="label-canvas__class"
                 data-testid="label-class"
@@ -644,7 +669,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
           {attributeDefs.length > 0 && (
             <div className="label-canvas__attributes" data-testid="label-attributes">
               {attributeDefs.map((definition) => {
-                const value = selectedBox.attributes[definition.key];
+                const value = (selectedBox.attributes ?? {})[definition.key];
                 if (definition.type === "boolean") {
                   return (
                     <label key={definition.key} className="label-canvas__attribute">
@@ -684,8 +709,8 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChang
                       type="text"
                       aria-label={definition.label}
                       value={typeof value === "string" ? value : ""}
-                      maxLength={definition.max_length}
-                      placeholder={definition.placeholder}
+                      maxLength={definition.max_length ?? undefined}
+                      placeholder={definition.placeholder ?? undefined}
                       onChange={(e) => setAttribute(definition.key, e.target.value)}
                     />
                   </label>

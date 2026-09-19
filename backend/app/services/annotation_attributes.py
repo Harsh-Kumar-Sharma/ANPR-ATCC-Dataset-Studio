@@ -21,11 +21,16 @@ UI can no longer show is a value nobody is maintaining.
 
 from typing import Any
 
-#: Longest plate text worth accepting. An Indian plate is thirteen
-#: characters with the spaces ("MH 12 AB 1234"); the rest of the room is
-#: for international formats and for however a reviewer chooses to space
-#: it. It is a guard against a paste accident, not a format check -
-#: refusing an unusual plate would be worse than storing one.
+from app.core.errors import AppError
+from app.services.text_normalization import normalize_plate_text
+
+#: Longest plate text worth accepting, measured on the canonical form -
+#: uppercase, letters and digits only, the same shape the OCR path
+#: stores. An Indian plate is ten characters that way; the rest of the
+#: room is for international formats. It is a guard against a paste
+#: accident, not a format check - refusing an unusual plate would be
+#: worse than storing one. Measuring the canonical form matters: a limit
+#: on raw typing would be a limit on how someone spaces a plate.
 PLATE_TEXT_MAX_LENGTH = 32
 
 
@@ -45,7 +50,7 @@ ATTRIBUTE_DEFINITIONS: list[dict[str, Any]] = [
         "label": "Plate text",
         "type": "text",
         "max_length": PLATE_TEXT_MAX_LENGTH,
-        "placeholder": "e.g. MH 12 AB 1234",
+        "placeholder": "e.g. MH12AB1234",
     },
     _choice(
         "colour",
@@ -87,36 +92,56 @@ ATTRIBUTE_DEFINITIONS: list[dict[str, Any]] = [
 _BY_KEY = {definition["key"]: definition for definition in ATTRIBUTE_DEFINITIONS}
 
 
-class InvalidAttributeError(ValueError):
-    """An attribute that is not one of ours, or a value that is not one
-    the attribute can take. A plain ``ValueError`` subclass, so the
-    caller wraps it in whatever error its own API speaks rather than
-    this module deciding what an HTTP status should be."""
+class InvalidAttributeError(AppError):
+    """An attribute that is not one of ours, or a value it cannot take.
+
+    An ``AppError`` like every other service error here, so a caller that
+    forgets to wrap it still produces a 400 the user can act on rather
+    than reaching the catch-all and becoming an opaque 500.
+    """
+
+    code = "invalid_attribute"
 
 
-def clean_attributes(attributes: dict | None) -> dict[str, Any]:
+def clean_attributes(attributes: dict | None, stored: dict | None = None) -> dict[str, Any]:
     """Check an incoming attribute set and return what should be stored.
 
     Cleaning, not just checking, because "not set" has to have exactly
     one representation. An empty string and a missing key mean the same
     thing to the person who typed them, and if both can reach the
     database then every later reader has to remember to test for both.
-    Clearing a field therefore removes the key.
+    Clearing a field therefore removes the key - and so does ``False``,
+    because a checkbox has two states and cannot produce an explicit
+    false, so storing one would give "not occluded" a second spelling
+    that nothing on screen could ever have written.
 
-    Unknown keys are refused rather than passed through. The field is
-    schema-free so that *adding* an attribute is cheap, not so that
-    anything at all can be written into it - a silently accepted
-    ``plate_txt`` is a value nothing will ever read again.
+    Unknown keys are refused. The field is schema-free so that *adding*
+    an attribute is cheap, not so that anything at all can be written
+    into it - a silently accepted ``plate_txt`` is a value nothing will
+    ever read again.
+
+    ``stored`` is what the annotation already holds, and it is the one
+    thing that excuses an unrecognised key or value. The canvas loads a
+    box and sends its whole attribute set back; if an attribute has been
+    retired since, that set carries something the panel cannot render and
+    the user cannot clear. Refusing it would make the entire frame
+    unsavable over a value that is invisible, so an *unchanged echo* of
+    something already stored is dropped instead. Anything else - a key
+    that is not stored, or a stored key with a new value - is still a
+    client writing something nothing will read, and is refused.
     """
     if attributes is None:
         return {}
     if not isinstance(attributes, dict):
         raise InvalidAttributeError("attributes must be an object.")
 
+    stored = stored or {}
     cleaned: dict[str, Any] = {}
     for key, value in attributes.items():
         definition = _BY_KEY.get(key)
         if definition is None:
+            if _is_echo(key, value, stored):
+                continue
             known = ", ".join(sorted(_BY_KEY))
             raise InvalidAttributeError(f"unknown attribute {key!r}. Known attributes: {known}.")
 
@@ -130,7 +155,8 @@ def clean_attributes(attributes: dict | None) -> dict[str, Any]:
             # later read of this field quietly wrong.
             if not isinstance(value, bool):
                 raise InvalidAttributeError(f"attribute {key!r} must be true or false, got {value!r}.")
-            cleaned[key] = value
+            if value:
+                cleaned[key] = True
             continue
 
         if not isinstance(value, str):
@@ -139,13 +165,15 @@ def clean_attributes(attributes: dict | None) -> dict[str, Any]:
         if kind == "choice":
             if value == "":
                 continue
-            allowed = [option["value"] for option in definition["options"]]
+            allowed = [option["value"] for option in definition.get("options", [])]
             if value not in allowed:
+                if _is_echo(key, value, stored):
+                    continue
                 raise InvalidAttributeError(f"attribute {key!r} cannot be {value!r}. Expected one of: {', '.join(allowed)}.")
             cleaned[key] = value
             continue
 
-        text = value.strip()
+        text = _canonicalise(definition, value)
         if not text:
             continue
         max_length = definition.get("max_length")
@@ -154,3 +182,28 @@ def clean_attributes(attributes: dict | None) -> dict[str, Any]:
         cleaned[key] = text
 
     return cleaned
+
+
+def _is_echo(key: str, value: Any, stored: dict) -> bool:
+    """Is this exactly what the annotation already holds?
+
+    The test for "the canvas handed back what it was given" rather than
+    "a client made something up". Only an unchanged echo is droppable -
+    anything else is a value somebody meant.
+    """
+    return key in stored and stored[key] == value
+
+
+def _canonicalise(definition: dict, value: str) -> str:
+    """Bring a text value into the form the rest of the app stores.
+
+    Plate text goes through the same ``normalize_plate_text`` the OCR
+    path uses. Without that, the plate a human types on the canvas and
+    the plate the model read of the same vehicle could never compare
+    equal - which would make recording it here pointless, since the
+    whole reason to keep plate text in one place is to be able to
+    compare the two.
+    """
+    if definition["key"] == "plate_text":
+        return normalize_plate_text(value)
+    return value.strip()
