@@ -16,4 +16,5 @@ use a model you trained yourself.
 - [ ] The Sources panel offers the choice next to Detect + Track, defaulting to the last one used
 - [ ] Weights that are not present are fetched once and cached in the models directory, with the download reported as job progress rather than a silent stall
 - [ ] The detector cache is keyed by model, so switching does not reload the one already in memory
+- [ ] A live RTSP session takes the same choice - the stream is started with a named model, including a custom one you trained, rather than the hard-coded default
 - [ ] The evaluation report says which model a run used, since comparing two runs is the point of choosing

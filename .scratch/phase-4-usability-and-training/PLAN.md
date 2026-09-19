@@ -4,29 +4,32 @@ Twelve tickets in five groups. The order is chosen so the things that
 hurt every single day land first and the two large pieces - rotated
 boxes and in-app training - come after the app is pleasant to use.
 
-## The constraint that shapes everything
+## Storage is yours to manage, but the app has to help
 
-**The disk is 99% full: 9.4 GB free of 476 GB.**
+The disk is 99% full: 9.4 GB free of 476 GB, and
+`day_anpr_gantry.mp4` is 90,003 frames. Keeping every frame with a
+vehicle in it means thousands of crops and, if they are materialised
+for labelling, gigabytes of full frames.
 
-That is not a footnote. `day_anpr_gantry.mp4` is 90,003 frames, and
-"keep every frame that has a vehicle in it" means up to 90,003 frame
-rows and a crop written per detection per frame. At even 40 KB a crop
-with two vehicles a frame, that is over 7 GB - and materialising the
-full frames for labelling would be 18-36 GB on top. It does not fit.
+You have said you will manage space yourself. So the app's job is not
+to refuse - it is to make space visible and freeable at any moment,
+including while a training run is going. That is ticket 13, and it
+lands early rather than last.
 
-So ticket 07 is not only "stop sampling". It is "stop writing pixels we
-have not been asked for", and it blocks the whole every-frame idea.
-This session has already had one near-miss: a selection trial wrote
-1.2 GB of orphan JPEGs before it was caught.
+Two things still change in the pipeline, because they cost nothing and
+remove the worst of the waste: crops are decoded on demand instead of
+written eagerly during detection, and a long run reports what it is
+consuming as it goes.
 
 ## Groups, in order
 
-**A. Clean up what is already broken (01-03).** There is no way to
+**A. Clean up what is already broken (01-03, 13).** There is no way to
 remove a source, a finished job, or a frame. Your database currently
 holds two dead RTSP sources, five cancelled or failed jobs, and a
 90,003-frame video with nothing extracted. Small tickets, immediate
 relief, and 01 reuses the interlock pattern the project delete just
-established.
+established. Ticket 13 belongs here too: freeing space has to be
+possible before the big runs, not after they fail.
 
 **B. Make the app source-aware (04-05).** Today the labelling queue
 mixes every source's frames together, which is the thing you said makes
@@ -54,10 +57,9 @@ Nothing changes about the exported label format until ticket 08 decides
 the rotated-box question, and nothing about evaluation or active
 learning. Those stay as they are.
 
-## Reality check on data volume
+## Configurable, not decided for you
 
-Your latest export is 20 images, 21 boxes, one class. Twenty images
-will not train anything. The point of group C is to make it cheap to
-produce thousands of candidate frames, and of group B to make labelling
-them bearable. Training (group E) is worth building, but it will not
-produce a useful model until the labelling has caught up.
+Every model choice in this plan is a choice you make at the moment you
+act, not a setting buried once: which model detects a video, which
+model runs a live stream, which model a training run starts from, which
+datasets get merged into it. The defaults remember what you used last.
