@@ -11,7 +11,7 @@ from app.db.models.project import Project
 from app.db.session import get_db
 from app.schemas.project import ProjectContentsRead, ProjectCreate, ProjectDeleteRequest, ProjectRead
 from app.services.class_definitions import class_schema_for, seed_project_classes
-from app.services.project_deletion import delete_project, summarize
+from app.services.project_deletion import delete_project, remove_workspace, summarize
 from app.services.workspace import create_project_workspace
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -84,8 +84,16 @@ def remove_project(project_id: str, payload: ProjectDeleteRequest, db: Session =
     against it.
     """
     project = get_project_or_404(db, project_id)
-    removed = delete_project(db, project, get_settings().workspace_root, confirm_name=payload.name)
+    workspace_root = get_settings().workspace_root
+    workspace_path = project.workspace_path
+    removed = delete_project(db, project, workspace_root, confirm_name=payload.name)
     db.commit()
+    # Only now. A filesystem cannot join the transaction, so one of the
+    # two failure modes has to be chosen: a crash during a multi-gigabyte
+    # delete leaves files the user can remove by hand, where the other
+    # order leaves the project in the picker with every row intact and
+    # every image gone.
+    removed.workspace_removed = remove_workspace(project_id, workspace_path, workspace_root)
     return ProjectContentsRead(**asdict(removed))
 
 

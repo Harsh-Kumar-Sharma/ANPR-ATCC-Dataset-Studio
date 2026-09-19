@@ -19,6 +19,7 @@ there being counted by the next query that forgets to scope itself.
 """
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from shutil import rmtree
 
@@ -38,16 +39,21 @@ from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
 from app.db.models.source import Source
 from app.db.models.track import Track
-from app.services.workspace import project_workspace_path
+
+
+#: A processing run that has not finished. Detection sets ``completed``
+#: or ``failed`` when it is done; a live RTSP session leaves its run
+#: ``running`` for as long as the camera is connected.
+UNFINISHED_RUN_STATUSES = ("pending", "running")
 
 
 class ProjectBusyError(ConflictError):
     """Work is running against this project.
 
-    A detached worker is still writing to these rows and into that
-    directory. Deleting underneath it leaves a process filling a
-    workspace that belongs to nothing, and a half-written state nobody
-    can reason about afterwards.
+    A detached worker or a live capture thread is still writing to these
+    rows and into that directory. Deleting underneath it leaves a
+    process filling a workspace that belongs to nothing, and a
+    half-written state nobody can reason about afterwards.
     """
 
     code = "project_busy"
@@ -83,7 +89,10 @@ class ProjectContents:
     #: Size of the workspace directory. Usually the bulk of what is
     #: being destroyed, and the only part measured in gigabytes.
     workspace_bytes: int = 0
-    #: Jobs that have not finished. Any at all and deletion refuses.
+    #: Jobs and processing runs that have not finished. Any at all and
+    #: deletion refuses. Runs are counted as well as jobs because a live
+    #: RTSP session has no job row at all - it starts capture threads and
+    #: a ``running`` run, and is otherwise invisible to a job-only check.
     running_jobs: int = 0
     #: Whether the workspace directory was actually removed. False when
     #: there was nothing there, or when it was somewhere this refuses to
@@ -101,10 +110,10 @@ def summarize(db: Session, project: Project, workspace_root: Path) -> ProjectCon
         tracks=_count_tracks(db, source_ids),
         labels=_count_labels(db, source_ids),
         dataset_versions=_count(db, DatasetVersion.id, DatasetVersion.project_id == project.id),
-        workspace_bytes=_directory_size(_deletable_workspace(project, workspace_root)),
-        running_jobs=_count(
-            db, Job.id, Job.project_id == project.id, Job.status.not_in(TERMINAL_JOB_STATUSES)
+        workspace_bytes=_directory_size(
+            _deletable_workspace(project.id, project.workspace_path, workspace_root)
         ),
+        running_jobs=_count_unfinished_work(db, project.id, source_ids),
     )
 
 
@@ -114,40 +123,44 @@ def delete_project(db: Session, project: Project, workspace_root: Path, *, confi
     ``confirm_name`` must equal the project's name exactly. Nothing is
     touched unless it does.
 
-    The caller commits. Everything here is one transaction, so a failure
-    part-way leaves the project whole rather than half-deleted - except
-    the directory, which is removed last precisely because a filesystem
-    cannot join the transaction. Rows without their files is a project
-    that is gone; files without their rows is a directory the user can
-    delete by hand.
+    Rows only. The caller commits, and only then removes the directory
+    with ``remove_workspace`` - a filesystem cannot join the
+    transaction, so one of the two failure modes has to be chosen, and
+    files-without-rows is the survivable one. A crash during a
+    multi-gigabyte ``rmtree`` then leaves a directory the user can
+    delete by hand. Doing it the other way round leaves the project in
+    the picker with every row intact and every image gone, which is the
+    most confusing state this app can produce.
     """
     if confirm_name != project.name:
-        raise ProjectNameMismatchError(
-            f"To delete this project, confirm its name exactly: {project.name!r}."
-        )
+        # Deliberately does not repeat the name. A client that retries on
+        # 409 could read it out of the refusal and resend, which would
+        # make the interlock a guard against typing mistakes only.
+        raise ProjectNameMismatchError("The name given does not match this project's name exactly.")
 
     contents = summarize(db, project, workspace_root)
     if contents.running_jobs:
         raise ProjectBusyError(
-            f"{contents.running_jobs} job(s) are still running for this project. "
-            "Wait for them to finish or cancel them, then delete it."
+            f"{contents.running_jobs} job(s) or live session(s) are still running for this project. "
+            "Wait for them to finish, cancel them, or stop the capture, then delete it."
         )
 
+    # Gathered in chunks as well as deleted in chunks. A real project
+    # holds thousands of frames, and one bound parameter per frame runs
+    # into SQLite's 32 766 cap while *building* the annotation list -
+    # which made a big enough project undeletable, with a 500 and
+    # "An unexpected error occurred".
     source_ids = _source_ids(db, project.id)
-    run_ids = (
-        [r for r in db.scalars(select(ProcessingRun.id).where(ProcessingRun.source_id.in_(source_ids)))]
-        if source_ids
-        else []
-    )
-    track_ids = [t for t in db.scalars(select(Track.id).where(Track.run_id.in_(run_ids)))] if run_ids else []
-    frame_ids = [f for f in db.scalars(select(Frame.id).where(Frame.source_id.in_(source_ids)))] if source_ids else []
-    annotation_ids = (
-        [a for a in db.scalars(select(Annotation.id).where(Annotation.frame_id.in_(frame_ids)))] if frame_ids else []
-    )
+    run_ids = _ids_in(db, ProcessingRun.id, ProcessingRun.source_id, source_ids)
+    track_ids = _ids_in(db, Track.id, Track.run_id, run_ids)
+    frame_ids = _ids_in(db, Frame.id, Frame.source_id, source_ids)
+    annotation_ids = _ids_in(db, Annotation.id, Annotation.frame_id, frame_ids)
     version_ids = [v for v in db.scalars(select(DatasetVersion.id).where(DatasetVersion.project_id == project.id))]
 
-    # Children first, so a failure part-way never leaves a parent
-    # pointing at rows that are gone.
+    # Children first. Everything here is one transaction, so ordering
+    # buys nothing on failure - it rolls back either way. It is for the
+    # reader: each statement can be checked against the parent that is
+    # still there when it runs.
     _delete_in(db, DatasetItem, DatasetItem.annotation_id, annotation_ids)
     _delete_in(db, DatasetItem, DatasetItem.dataset_version_id, version_ids)
     _delete_in(db, DatasetVersion, DatasetVersion.id, version_ids)
@@ -162,41 +175,86 @@ def delete_project(db: Session, project: Project, workspace_root: Path, *, confi
     db.execute(delete(Job).where(Job.project_id == project.id))
     db.delete(project)
     db.flush()
-
-    workspace = _deletable_workspace(project, workspace_root)
-    if workspace is not None and workspace.is_dir():
-        rmtree(workspace, ignore_errors=True)
-        contents.workspace_removed = not workspace.exists()
-
     return contents
 
 
-def _deletable_workspace(project: Project, workspace_root: Path) -> Path | None:
-    """The project's directory, if it is somewhere we may delete from.
+def remove_workspace(project_id: str, workspace_path: str, workspace_root: Path) -> bool:
+    """Delete the project's directory, if it is one of ours.
 
-    Two things have to hold: the path sits inside the configured
-    workspace root, and its own name is the project id. Both are cheap,
-    and together they mean a recursive delete can only ever reach a
-    directory this application created for this project.
+    Called after the commit, never before. Takes the id and path rather
+    than the row because by then the row is gone.
+
+    Returns whether the directory is actually gone, which the caller
+    reports - a permission error or a file held open by the desktop app
+    leaves files behind, and the user needs to hear that rather than be
+    told it all went.
+    """
+    workspace = _deletable_workspace(project_id, workspace_path, workspace_root)
+    if workspace is None or not workspace.is_dir():
+        return False
+    rmtree(workspace, ignore_errors=True)
+    return not workspace.exists()
+
+
+def _deletable_workspace(project_id: str, workspace_path: str, workspace_root: Path) -> Path | None:
+    """The project's directory, if it is one this app made for it.
 
     The recorded ``workspace_path`` is a column. A recursive delete
     driven by a column is a recursive delete driven by whatever wrote
-    it - a hand-edited row, a restored backup from a machine with a
+    it - a hand-edited row, a backup restored from a machine with a
     different layout - and the blast radius of getting that wrong is
     everything under whatever the column happens to say.
+
+    Three things have to hold, and the third is the one that does the
+    work:
+
+    1. the path resolves inside the resolved workspace root;
+    2. its own name is the project id;
+    3. it contains the ``project.json`` this app writes at creation,
+       naming this same project.
+
+    The first two alone were not a check at all. Both the recorded path
+    and the expected one are built from the same relative default
+    (``data/workspace``), so they resolve against the process's working
+    directory and always agree - the comparison could not fail, and what
+    ``rmtree`` was aimed at was decided by where the backend happened to
+    be started from rather than by the column. The manifest is what
+    makes the answer about the directory itself.
     """
-    if not project.workspace_path:
+    if not workspace_path:
         return None
 
-    recorded = Path(project.workspace_path)
-    expected = project_workspace_path(workspace_root, project.id)
     try:
-        if recorded.resolve() != expected.resolve():
-            return None
+        recorded = Path(workspace_path).resolve()
+        root = Path(workspace_root).resolve()
     except OSError:
         # An unresolvable path is not one to start deleting from.
         return None
+
+    if recorded == root or root not in recorded.parents:
+        return None
+    if recorded.name != project_id:
+        return None
+    if not _is_our_workspace(recorded, project_id):
+        return None
     return recorded
+
+
+def _is_our_workspace(path: Path, project_id: str) -> bool:
+    """Does this directory carry the manifest we wrote into it?
+
+    ``create_project_workspace`` writes ``project.json`` naming the
+    project. Reading it back is the difference between "this path looks
+    right" and "this is the directory we made", and it costs one small
+    file read before a recursive delete.
+    """
+    manifest = path / "project.json"
+    if not manifest.is_file():
+        return False
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8")).get("project_id") == project_id
+    except (OSError, ValueError):
+        return False
 
 
 def _directory_size(path: Path | None) -> int:
@@ -235,6 +293,44 @@ def _count_tracks(db: Session, source_ids: list[str]) -> int:
     )
 
 
+def _count_unfinished_work(db: Session, project_id: str, source_ids: list[str]) -> int:
+    """Jobs and processing runs that have not finished.
+
+    Both, because they are not the same set. Detection submits a job
+    *and* creates a run; a live RTSP session creates only a run, so a
+    job-only check saw nothing and let a project be deleted out from
+    under a camera that was still capturing into its workspace.
+    """
+    jobs = _count(db, Job.id, Job.project_id == project_id, Job.status.not_in(TERMINAL_JOB_STATUSES))
+    if not source_ids:
+        return jobs
+    runs = 0
+    for chunk in _chunked(source_ids):
+        runs += _count(
+            db,
+            ProcessingRun.id,
+            ProcessingRun.source_id.in_(chunk),
+            ProcessingRun.status.in_(UNFINISHED_RUN_STATUSES),
+        )
+    return jobs + runs
+
+
+def _ids_in(db: Session, id_column, match_column, values: list[str]) -> list[str]:
+    """Ids whose ``match_column`` is one of ``values``, gathered in chunks."""
+    if not values:
+        return []
+    found: list[str] = []
+    for chunk in _chunked(values):
+        found.extend(db.scalars(select(id_column).where(match_column.in_(chunk))))
+    return found
+
+
+def _chunked(items: list):
+    from app.services.annotations import chunked
+
+    return chunked(items)
+
+
 def _count_labels(db: Session, source_ids: list[str]) -> int:
     if not source_ids:
         return 0
@@ -256,7 +352,5 @@ def _delete_in(db: Session, model, column, ids: list[str]) -> None:
     list has to be fed in pieces. Same helper and same bound as
     ``services/annotations.py``.
     """
-    from app.services.annotations import chunked
-
-    for chunk in chunked(ids):
+    for chunk in _chunked(ids):
         db.execute(delete(model).where(column.in_(chunk)))
