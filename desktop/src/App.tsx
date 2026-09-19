@@ -47,7 +47,15 @@ function App() {
   const [queueVersion, setQueueVersion] = useState(0);
   // Bumped by the class editor so anything showing classes reloads them.
   const [classesVersion, setClassesVersion] = useState(0);
-  const { jobs, activeJobs, error: jobsError, refresh: refreshJobs, cancel: cancelJob } = useJobs(project?.id ?? null);
+  const {
+    jobs,
+    activeJobs,
+    error: jobsError,
+    refresh: refreshJobs,
+    cancel: cancelJob,
+    dismiss: dismissJob,
+    clearFinished: clearFinishedJobs,
+  } = useJobs(project?.id ?? null);
 
   const refreshTracks = useCallback(() => {
     if (!project) return;
@@ -203,7 +211,13 @@ function App() {
           {tab === "workflow" && (
             <>
               <SourcePanel project={project} onProcessed={refreshJobs} onWatch={watchSource} />
-              <JobsPanel jobs={jobs} error={jobsError} onCancel={cancelJob} />
+              <JobsPanel
+                jobs={jobs}
+                error={jobsError}
+                onCancel={cancelJob}
+                onDismiss={dismissJob}
+                onClearFinished={clearFinishedJobs}
+              />
               <TrackBrowser tracks={tracks} selectedTrackId={selectedTrackId} onSelect={selectTrack} />
             </>
           )}

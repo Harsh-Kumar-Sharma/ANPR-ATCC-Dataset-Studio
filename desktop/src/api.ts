@@ -131,6 +131,15 @@ export const api = {
   /** Idempotent: cancelling an already-finished job returns it
    *  unchanged rather than failing. */
   cancelJob: (jobId: string) => request<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
+  /** Forget a finished job, its progress file and its log. Refused
+   *  while it is still pending or running - cancel it first. */
+  dismissJob: (jobId: string) => request<{ removed: number }>(`/jobs/${jobId}`, { method: "DELETE" }),
+  /** Forget every finished job of a project in one go. */
+  clearFinishedJobs: (projectId: string) =>
+    request<{ removed: number }>("/jobs/clear-finished", {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId }),
+    }),
   sourceVideoUrl: (projectId: string, sourceId: string) => `${API_BASE}/projects/${projectId}/sources/${sourceId}/video`,
   getSourceDetections: (projectId: string, sourceId: string, runId?: string) =>
     request<SourceDetections>(

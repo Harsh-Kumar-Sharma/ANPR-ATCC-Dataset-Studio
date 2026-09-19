@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import JobIndicator from "../src/components/JobIndicator";
 import JobsPanel from "../src/components/JobsPanel";
@@ -109,5 +109,49 @@ describe("JobsPanel cancel", () => {
     const failed = screen.getByTestId("job-row").className;
 
     expect(cancelled).not.toEqual(failed);
+  });
+});
+
+describe("JobsPanel: clearing dead jobs", () => {
+  it("offers Dismiss on a finished job", () => {
+    render(<JobsPanel jobs={[job({ status: "failed" })]} onDismiss={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /dismiss/i })).toBeInTheDocument();
+  });
+
+  it("does not offer Dismiss while a job is running", () => {
+    // Its worker is still writing to that row and those files, and
+    // cancel is the path that actually stops one.
+    render(<JobsPanel jobs={[job({ status: "running" })]} onDismiss={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /dismiss/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+  });
+
+  it("dismissing asks for that job", () => {
+    const onDismiss = vi.fn();
+    const failed = job({ status: "failed" });
+    render(<JobsPanel jobs={[failed]} onDismiss={onDismiss} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+
+    expect(onDismiss).toHaveBeenCalledWith(failed);
+  });
+
+  it("offers to clear all the finished ones, and says how many", () => {
+    render(
+      <JobsPanel
+        jobs={[job({ status: "failed" }), job({ status: "cancelled" }), job({ status: "running" })]}
+        onClearFinished={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /clear 2 finished/i })).toBeInTheDocument();
+  });
+
+  it("does not offer to clear when everything is still running", () => {
+    render(<JobsPanel jobs={[job({ status: "running" })]} onClearFinished={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /clear/i })).not.toBeInTheDocument();
   });
 });

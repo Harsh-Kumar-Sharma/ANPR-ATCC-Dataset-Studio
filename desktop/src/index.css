@@ -2253,3 +2253,33 @@ label.toggle {
 .source-name {
   padding-right: 1.8rem;
 }
+
+/* --- clearing jobs ------------------------------------------------------ */
+
+.jobs-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.jobs-panel__clear,
+.job-row__dismiss {
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.job-row__dismiss {
+  margin-left: auto;
+}
+
+.jobs-panel__clear:hover,
+.job-row__dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}

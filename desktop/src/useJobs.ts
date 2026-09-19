@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 import type { Job } from "./types";
 
 const TERMINAL: ReadonlySet<Job["status"]> = new Set(["succeeded", "failed", "cancelled"]);
@@ -81,5 +81,32 @@ export function useJobs(projectId: string | null) {
     [refresh],
   );
 
-  return { jobs, activeJobs: jobs.filter(isActive), error, refresh, cancel };
+  const dismiss = useCallback(
+    async (job: Job) => {
+      try {
+        await api.dismissJob(job.id);
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : String(e));
+      } finally {
+        // Either way: on success the row is gone, and on failure the
+        // likeliest reason is that the job started running again
+        // between the render and the click.
+        refresh();
+      }
+    },
+    [refresh],
+  );
+
+  const clearFinished = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      await api.clearFinishedJobs(projectId);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      refresh();
+    }
+  }, [projectId, refresh]);
+
+  return { jobs, activeJobs: jobs.filter(isActive), error, refresh, cancel, dismiss, clearFinished };
 }

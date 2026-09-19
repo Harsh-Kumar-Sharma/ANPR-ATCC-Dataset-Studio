@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError, NotFoundError
 from app.db.models.job import JOB_STATUSES, JOB_TYPES, Job
 from app.db.session import SessionLocal, get_db
-from app.schemas.job import JobRead
+from app.schemas.job import ClearFinishedJobsRequest, JobRead, JobsClearedRead
 from app.services.jobs import runner
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,32 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobRead:
     """
     get_job_or_404(db, job_id)
     return _to_read_model(runner.cancel_job(db, job_id))
+
+
+@router.post("/clear-finished", response_model=JobsClearedRead)
+def clear_finished_jobs(payload: ClearFinishedJobsRequest, db: Session = Depends(get_db)) -> JobsClearedRead:
+    """Remove every finished job of a project, and say how many went.
+
+    Declared before ``/{job_id}`` so the literal path is not swallowed
+    by the parameter route.
+    """
+    removed = runner.forget_finished_jobs(db, payload.project_id)
+    db.commit()
+    return JobsClearedRead(removed=removed)
+
+
+@router.delete("/{job_id}", status_code=200, response_model=JobsClearedRead)
+def dismiss_job(job_id: str, db: Session = Depends(get_db)) -> JobsClearedRead:
+    """Forget a finished job, along with its progress file and log.
+
+    Refused while the job is pending or running: its worker is still
+    writing to that row and those files, and cancel is the path that
+    actually stops it.
+    """
+    get_job_or_404(db, job_id)
+    runner.forget_job(db, job_id)
+    db.commit()
+    return JobsClearedRead(removed=1)
 
 
 @router.get("/{job_id}/progress")

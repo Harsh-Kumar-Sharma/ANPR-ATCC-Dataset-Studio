@@ -38,3 +38,15 @@ class JobSubmitted(BaseModel):
 
     job: JobRead
     run_id: str | None = None
+
+
+class ClearFinishedJobsRequest(BaseModel):
+    """Which project's finished jobs to forget."""
+
+    project_id: str
+
+
+class JobsClearedRead(BaseModel):
+    """How many job rows were forgotten."""
+
+    removed: int

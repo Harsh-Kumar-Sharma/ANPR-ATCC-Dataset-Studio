@@ -28,8 +28,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.errors import NotFoundError
-from app.db.models.job import JOB_TYPES, Job
+from app.core.errors import ConflictError, NotFoundError
+from app.db.models.job import JOB_TYPES, TERMINAL_JOB_STATUSES, Job
 from app.services.jobs import process
 from app.services.jobs.handlers import HANDLERS
 from app.services.jobs.progress import read_progress
@@ -169,6 +169,60 @@ def mark_failed(db: Session, job_id: str, error: str) -> Job:
     db.commit()
     db.refresh(job)
     return job
+
+
+class JobRunningError(ConflictError):
+    """A job that has not finished cannot be dismissed.
+
+    Its worker is still writing to that row and to those files. Cancel
+    it first - that is what cancel is for, and it is the one path that
+    stops the process rather than just forgetting about it.
+    """
+
+    code = "job_running"
+
+
+def forget_job(db: Session, job_id: str) -> None:
+    """Remove a finished job, its progress file and its worker log.
+
+    Those two files live outside the workspace in the jobs directory,
+    so nothing has ever cleaned them up - not a project delete, not a
+    source delete. Every job that ever ran has been leaving both behind.
+    """
+    job = db.get(Job, job_id)
+    if job is None:
+        return
+    if job.status not in TERMINAL_JOB_STATUSES:
+        raise JobRunningError(
+            f"This job is {job.status}. Cancel it first, then dismiss it."
+        )
+    _forget_files(job_id)
+    db.delete(job)
+    db.flush()
+
+
+def forget_finished_jobs(db: Session, project_id: str) -> int:
+    """Remove every finished job of a project. Returns how many went."""
+    finished = list(
+        db.scalars(
+            select(Job).where(Job.project_id == project_id, Job.status.in_(TERMINAL_JOB_STATUSES))
+        )
+    )
+    for job in finished:
+        _forget_files(job.id)
+        db.delete(job)
+    db.flush()
+    return len(finished)
+
+
+def _forget_files(job_id: str) -> None:
+    for path in (progress_path(job_id), log_path(job_id)):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # A log still held open by a worker that has not quite
+            # exited. The row is what the user asked to be rid of.
+            logger.debug("Could not remove job file %s", path, exc_info=True)
 
 
 def cancel_job(db: Session, job_id: str, terminate: Callable[[int | None], None] = process.terminate) -> Job:
