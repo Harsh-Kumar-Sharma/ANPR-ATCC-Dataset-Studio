@@ -6,8 +6,9 @@ canvas holds a frame, not a project.
 """
 
 from dataclasses import asdict
+from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -28,7 +29,7 @@ from app.schemas.frame import (
 )
 from app.schemas.ocr import PlateReadingRead
 from app.schemas.review import AnnotationRead
-from app.services import frame_deletion, frame_sweep, frames
+from app.services import frame_deletion, frame_sweep, frames, thumbnails
 from app.services.plate_text import plate_readings_for_frame
 
 project_frames_router = APIRouter(prefix="/projects/{project_id}/frames", tags=["frames"])
@@ -130,6 +131,26 @@ def _require_source_of_project(db: Session, project_id: str, source_id: str | No
 @frames_router.get("/{frame_id}", response_model=FrameRead)
 def get_frame(frame_id: str, db: Session = Depends(get_db)) -> Frame:
     return frames.get_frame(db, frame_id)
+
+
+@frames_router.get("/{frame_id}/thumbnail")
+def get_frame_thumbnail(frame_id: str, db: Session = Depends(get_db)) -> Response:
+    """A small picture of this frame, for looking at many at once.
+
+    Its own endpoint rather than a parameter on the full-size one
+    because the costs are different in kind: a thumbnail is a few tens
+    of kilobytes and never writes a full-size image, so a grid of two
+    hundred frames does not decode two hundred 1080p files to disk.
+    """
+    frame = frames.get_frame(db, frame_id)
+    project = frames.project_of(db, frame)
+    return Response(
+        content=thumbnails.thumbnail_jpeg(db, frame, Path(project.workspace_path)),
+        media_type="image/jpeg",
+        # Cached hard: a frame's pixels never change, and a grid
+        # re-requests the same two hundred on every scroll.
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @frames_router.get("/{frame_id}/image")

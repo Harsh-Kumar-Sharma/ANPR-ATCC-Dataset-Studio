@@ -26,6 +26,7 @@ from app.db.models.project import Project
 from app.db.models.source import Source
 from app.services.cascade import directory_size, remove_tree
 from app.services.frame_materializer import frames_root
+from app.services.thumbnails import thumbs_root
 
 
 @dataclass
@@ -109,27 +110,45 @@ def clear_frame_images(db: Session, project: Project, source_id: str | None = No
     decoded yet, decode it on demand" - so the next time the canvas
     opens one it comes straight back out of the source video.
 
+    Only for sources that have a video to decode from. A live
+    capture's frames are not a cache: they are the only copy of
+    pixels that went past a camera once, and deleting them would take
+    the frames out of the labelling queue for good. Those are skipped,
+    and the message says how many.
+
     The frame rows and every box on them are untouched.
     """
     workspace = Path(project.workspace_path)
-    source_ids = [
-        s for s in db.scalars(select(Source.id).where(Source.project_id == project.id))
-    ]
+    sources = list(db.scalars(select(Source).where(Source.project_id == project.id)))
     if source_id is not None:
-        source_ids = [s for s in source_ids if s == source_id]
+        sources = [s for s in sources if s.id == source_id]
+
+    recoverable = [s for s in sources if s.type == "video"]
+    kept = len(sources) - len(recoverable)
 
     reclaimed = 0
-    for one in source_ids:
-        directory = frames_root(workspace) / one
+    for source in recoverable:
+        directory = frames_root(workspace) / source.id
         reclaimed += directory_size(directory)
         remove_tree(directory)
-        db.execute(update(Frame).where(Frame.source_id == one).values(image_path=None))
+        db.execute(update(Frame).where(Frame.source_id == source.id).values(image_path=None))
+
+    # Thumbnails are derived from the frames and regenerate on demand,
+    # so they go for every source - including live ones, whose full
+    # frames are staying put.
+    for source in sources:
+        thumbs = thumbs_root(workspace) / source.id
+        reclaimed += directory_size(thumbs)
+        remove_tree(thumbs)
     db.flush()
 
-    return Reclaimed(
-        reclaimed_bytes=reclaimed,
-        detail=f"Cleared decoded frames for {len(source_ids)} source(s). They decode again when next opened.",
-    )
+    detail = f"Cleared decoded frames for {len(recoverable)} source(s). They decode again when next opened."
+    if kept:
+        detail += (
+            f" {kept} live source(s) were left alone: their frames were captured from a stream and "
+            "cannot be decoded again."
+        )
+    return Reclaimed(reclaimed_bytes=reclaimed, detail=detail)
 
 
 def clear_job_files(db: Session, jobs_dir: Path) -> Reclaimed:
@@ -207,6 +226,9 @@ def _project_usage(db: Session, project: Project) -> ProjectUsage:
 
     videos = directory_size(workspace / "source")
     crops = directory_size(workspace / "derived" / "tracks")
+    # Thumbnails count as frame images: they are the same pixels,
+    # smaller, and clearing frame images should take them too.
+    thumbs = directory_size(workspace / "derived" / "thumbs")
     frames = directory_size(frames_root(workspace))
     exports = directory_size(workspace / "exports")
 
@@ -215,7 +237,7 @@ def _project_usage(db: Session, project: Project) -> ProjectUsage:
         name=project.name,
         source_videos_bytes=videos,
         track_crops_bytes=crops,
-        frame_images_bytes=frames,
+        frame_images_bytes=frames + thumbs,
         exports_bytes=exports,
         # The whole directory, so anything not in the four buckets above
         # still shows up in the total rather than quietly going missing.

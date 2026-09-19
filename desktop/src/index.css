@@ -2629,3 +2629,68 @@ label.toggle {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* --- every frame at once, as pictures ---------------------------------- */
+
+.browse-all {
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.frame-grid {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.frame-grid__items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 4px 2px 16px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.frame-grid__item {
+  display: block;
+  width: 100%;
+  padding: 4px;
+  text-align: left;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.frame-grid__item:hover {
+  border-color: var(--accent, #4a8cff);
+}
+
+.frame-grid__item.selected {
+  border-color: var(--accent, #4a8cff);
+  box-shadow: 0 0 0 1px var(--accent, #4a8cff);
+}
+
+.frame-grid__item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--bg-surface-2);
+  border-radius: 3px;
+}
+
+.frame-grid__caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}

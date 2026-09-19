@@ -42,6 +42,7 @@ from app.services.cascade import (
     remove_tree,
 )
 from app.services.frame_materializer import frames_root
+from app.services.thumbnails import thumbs_root
 from app.services.project_deletion import UNFINISHED_RUN_STATUSES
 
 
@@ -83,6 +84,9 @@ class _Owned:
     annotation_ids: list[str]
     video: Path | None
     frames_dir: Path | None
+    #: Small pictures made for the contact sheet. Derived, and
+    #: worthless once the frames they show are gone.
+    thumbs_dir: Path | None
     track_dirs: list[Path]
 
 
@@ -97,6 +101,7 @@ def summarize(db: Session, source: Source, workspace_path: Path) -> SourceConten
         bytes=(
             file_size(owned.video)
             + directory_size(owned.frames_dir)
+            + directory_size(owned.thumbs_dir)
             + sum(directory_size(d) for d in owned.track_dirs)
         ),
         running_jobs=_count_unfinished_work(db, source),
@@ -147,6 +152,8 @@ def remove_source_files(owned: _Owned) -> bool:
         removed = remove_file(owned.video) or removed
     if owned.frames_dir is not None:
         removed = remove_tree(owned.frames_dir) or removed
+    if owned.thumbs_dir is not None:
+        removed = remove_tree(owned.thumbs_dir) or removed
     for directory in owned.track_dirs:
         removed = remove_tree(directory) or removed
     return removed
@@ -165,6 +172,7 @@ def _owned(db: Session, source: Source, workspace_path: Path) -> _Owned:
         annotation_ids=annotation_ids,
         video=_owned_video(source, workspace_path),
         frames_dir=_inside(frames_root(workspace_path) / source.id, workspace_path),
+        thumbs_dir=_inside(thumbs_root(workspace_path) / source.id, workspace_path),
         track_dirs=[
             path
             for track_id in track_ids

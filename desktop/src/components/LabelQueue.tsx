@@ -10,6 +10,8 @@ interface Props {
   selectedFrameId: string | null;
   /** Needed to clear out the frames nobody labelled. */
   project: Project;
+  /** Show every frame at once, as pictures. */
+  onBrowseAll?: () => void;
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * The list itself lives in useFrameQueue, because the Previous/Next
  * under the canvas walks the same one. This panel shows it.
  */
-function LabelQueue({ queue, selectedFrameId, project }: Props) {
+function LabelQueue({ queue, selectedFrameId, project, onBrowseAll }: Props) {
   const { frames, progress, sources, sourceId, showSetAside, error, pending } = queue;
 
   return (
@@ -50,6 +52,14 @@ function LabelQueue({ queue, selectedFrameId, project }: Props) {
           {progress.labeled} labelled &middot; {progress.rejected + progress.skipped} set aside &middot;{" "}
           {progress.pending} left
         </p>
+      )}
+
+      {/* A list of "frame 0, frame 7, frame 14" says nothing about
+          which frame has a vehicle in it. */}
+      {frames.length > 0 && onBrowseAll && (
+        <button className="browse-all" onClick={onBrowseAll}>
+          See all {frames.length} as pictures
+        </button>
       )}
 
       {/* Beside the counts, not after the list. Below a hundred and

@@ -230,6 +230,10 @@ export const api = {
     request<Frame>(`/frames/${frameId}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
   /** The full frame, decoded on demand. The canvas's <img> src. */
   fullFrameImageUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/image`,
+
+  /** A small picture of a frame, for showing many at once. Its own
+   *  endpoint because it never decodes a full-size image to disk. */
+  frameThumbnailUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/thumbnail`,
   /** What a box can carry besides its class. One list, shared with the
    *  validation on the way back in. */
   listAttributeDefinitions: () => request<AttributeDefinition[]>("/annotation-attributes"),

@@ -6,6 +6,7 @@ import ClassSchemaEditor from "./components/ClassSchemaEditor";
 import EvaluationPanel from "./components/EvaluationPanel";
 import JobIndicator from "./components/JobIndicator";
 import JobsPanel from "./components/JobsPanel";
+import FrameGrid from "./components/FrameGrid";
 import FrameNav from "./components/FrameNav";
 import LabelCanvas from "./components/LabelCanvas";
 import LabelBalancePanel from "./components/LabelBalancePanel";
@@ -24,7 +25,7 @@ import { useJobs } from "./useJobs";
 import type { Frame, Project, Source, Track } from "./types";
 
 type Tab = "workflow" | "label" | "live" | "dataset" | "insights";
-type MainView = "review" | "player" | "live" | "label";
+type MainView = "review" | "player" | "live" | "label" | "grid";
 
 const TABS: { id: Tab; label: string; icon: JSX.Element }[] = [
   { id: "workflow", label: "Sources", icon: <IconFilm /> },
@@ -239,6 +240,18 @@ function App() {
         <FrameNav queue={frameQueue} />
       </>
     );
+  } else if (mainView === "grid") {
+    main = (
+      <FrameGrid
+        frames={frameQueue.frames}
+        selectedFrameId={labelFrame?.id ?? null}
+        onOpen={(frame) => {
+          setTab("label");
+          labelFrameNow(frame);
+        }}
+        onClose={() => setMainView(labelFrame ? "label" : "review")}
+      />
+    );
   } else if (mainView === "live" && liveRunId) {
     main = <LivePreview key={liveRunId} runId={liveRunId} onClose={() => setMainView("review")} />;
   } else if (selectedTrack) {
@@ -301,7 +314,12 @@ function App() {
             </>
           )}
           {tab === "label" && (
-            <LabelQueue queue={frameQueue} selectedFrameId={labelFrame?.id ?? null} project={project} />
+            <LabelQueue
+              queue={frameQueue}
+              selectedFrameId={labelFrame?.id ?? null}
+              project={project}
+              onBrowseAll={() => setMainView("grid")}
+            />
           )}
           {tab === "live" && (
             <RtspPanel project={project} onSessionEnded={refreshTracks} onShowPreview={showLivePreview} />
