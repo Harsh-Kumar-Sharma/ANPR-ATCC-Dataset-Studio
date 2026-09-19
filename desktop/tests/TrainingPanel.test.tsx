@@ -49,6 +49,7 @@ const run = (over: Partial<TrainingRun> = {}): TrainingRun => ({
   job_id: "job-1",
   epochs: 100,
   image_size: 640,
+  settings_json: null,
   status: "completed",
   output_model_id: "yolo26n-v1",
   best_map50: 0.612,
@@ -226,5 +227,39 @@ describe("TrainingPanel: when the history cannot be read", () => {
     await screen.findByRole("button", { name: /^train$/i });
 
     expect(screen.queryByText(/no such table/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("TrainingPanel: when validation had to borrow a split", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listDatasetVersions").mockResolvedValue([version()]);
+    vi.spyOn(api, "listModels").mockResolvedValue([model()]);
+    vi.spyOn(api, "startTraining").mockResolvedValue({ run: run({ status: "pending" }), job_id: "job-1" });
+  });
+
+  it("says what the score was measured on when it was not a real val set", async () => {
+    // An mAP measured on the training images is not a measure of
+    // anything, and looks identical to one that is.
+    vi.spyOn(api, "listTrainingRuns").mockResolvedValue([
+      run({
+        settings_json: {
+          validated_on: "train",
+          note: "The export has no validation or test images, so this run validated on the images it trained on.",
+        },
+      }),
+    ]);
+    render(<TrainingPanel project={project} jobs={[]} />);
+
+    expect(await screen.findByText(/validated on the images it trained on/i)).toBeInTheDocument();
+  });
+
+  it("says nothing extra when the validation split was real", async () => {
+    vi.spyOn(api, "listTrainingRuns").mockResolvedValue([run({ settings_json: { validated_on: "val" } })]);
+    render(<TrainingPanel project={project} jobs={[]} />);
+
+    await screen.findByText(/added as yolo26n-v1/i);
+    expect(screen.queryByText(/validated on/i)).not.toBeInTheDocument();
   });
 });

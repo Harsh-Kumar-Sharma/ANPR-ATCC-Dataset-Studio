@@ -106,7 +106,41 @@ def dataset_yaml(workspace_path: Path, version: DatasetVersion) -> Path:
     return workspace_path / "exports" / f"v{version.version}" / "data.yaml"
 
 
-def write_data_yaml(db: Session, project: Project, version: DatasetVersion, export_dir: Path) -> Path:
+def count_images(export_dir: Path, split: str) -> int:
+    directory = export_dir / "images" / split
+    if not directory.is_dir():
+        return 0
+    return sum(1 for path in directory.iterdir() if path.is_file())
+
+
+def choose_validation_split(export_dir: Path) -> tuple[str, str | None]:
+    """Which split validation should read, and why if it is not "val".
+
+    A small dataset splits to an empty validation set - four labelled
+    frames came out as three train, none val, one test - and training
+    refuses to start without one. Rather than failing on arithmetic
+    the user did not do, validation is pointed at a split that has
+    images, and the substitution is recorded so nobody reads the
+    resulting mAP as a real measure.
+    """
+    if count_images(export_dir, "val") > 0:
+        return "val", None
+    if count_images(export_dir, "test") > 0:
+        return (
+            "test",
+            "The export has no validation images, so this run validated on the test split instead. "
+            "Label more frames for a real validation set.",
+        )
+    return (
+        "train",
+        "The export has no validation or test images, so this run validated on the images it trained "
+        "on. Its mAP is not a measure of anything - label more frames.",
+    )
+
+
+def write_data_yaml(
+    db: Session, project: Project, version: DatasetVersion, export_dir: Path, val_split: str = "val"
+) -> Path:
     """Write the data.yaml an export is missing.
 
     Reuses the same writer the handoff endpoint uses, so a dataset
@@ -123,7 +157,7 @@ def write_data_yaml(db: Session, project: Project, version: DatasetVersion, expo
     snapshot = manifest.get("class_schema") or []
     names = [c["name"] for c in snapshot] if snapshot else class_names_for(db, project.id)
 
-    paths = write_retraining_handoff(export_dir, names, base_model="yolo26n.pt")
+    paths = write_retraining_handoff(export_dir, names, base_model="yolo26n.pt", val_split=val_split)
     return Path(paths["data_yaml_path"])
 
 
@@ -153,12 +187,18 @@ def prepare(
             f"Dataset version v{dataset_version.version} has no exported files at {yaml_path.parent}. "
             "Export it before training on it."
         )
-    if not yaml_path.is_file():
-        # data.yaml is written by the handoff endpoint, which exists
-        # for training outside the app. Training inside it should not
-        # require pressing that button first, so write the file here
-        # if it is missing.
-        write_data_yaml(db, project, dataset_version, yaml_path.parent)
+    export_dir = yaml_path.parent
+    if count_images(export_dir, "train") == 0:
+        raise TrainingUnavailableError(
+            f"Dataset version v{dataset_version.version} has no training images. Label some frames and "
+            "export again."
+        )
+
+    # Written every time rather than only when missing: the file has
+    # to name a validation split that actually has images in it, and
+    # which one that is depends on what was exported.
+    val_split, note = choose_validation_split(export_dir)
+    write_data_yaml(db, project, dataset_version, export_dir, val_split=val_split)
 
     # An unknown base model is a 404 from here, the same as everywhere
     # else a model id is accepted.
@@ -178,7 +218,7 @@ def prepare(
         base_model_id=base_model_id,
         epochs=epochs,
         image_size=image_size,
-        settings_json=settings or {},
+        settings_json={**(settings or {}), "validated_on": val_split, **({"note": note} if note else {})},
         status="pending",
     )
     db.add(run)

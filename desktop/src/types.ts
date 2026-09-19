@@ -556,6 +556,9 @@ export interface TrainingRun {
   job_id: string | null;
   epochs: number;
   image_size: number;
+  /** What was passed, plus what the app had to decide itself -
+   *  notably which split validation read. */
+  settings_json: Record<string, unknown> | null;
   status: string;
   /** The model id the finished weights were added under. */
   output_model_id: string | null;

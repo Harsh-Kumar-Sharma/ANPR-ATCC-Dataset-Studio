@@ -1,7 +1,9 @@
 from pathlib import Path
 
 
-def write_retraining_handoff(export_dir: Path, class_names: list[str], base_model: str) -> dict[str, str]:
+def write_retraining_handoff(
+    export_dir: Path, class_names: list[str], base_model: str, val_split: str = "val"
+) -> dict[str, str]:
     """Generate the two files an external training job actually needs
     to pick up an exported dataset version: a standard Ultralytics
     ``data.yaml`` and a short instructions file with the exact command
@@ -13,12 +15,17 @@ def write_retraining_handoff(export_dir: Path, class_names: list[str], base_mode
     in index order - not the project's current list. The label files on
     disk hold indices assigned at export time, so naming them from a
     since-edited list would mislabel every box.
+
+    ``val_split`` names which split validation reads. Normally "val",
+    but a small dataset can split to an empty validation set, and
+    training refuses to start without one - so the caller may point it
+    at another split rather than leaving the file unusable.
     """
     names_block = "\n".join(f"  {i}: {name}" for i, name in enumerate(class_names))
     data_yaml = (
         f"path: {export_dir.resolve().as_posix()}\n"
         "train: images/train\n"
-        "val: images/val\n"
+        f"val: images/{val_split}\n"
         "test: images/test\n"
         f"nc: {len(class_names)}\n"
         "names:\n"

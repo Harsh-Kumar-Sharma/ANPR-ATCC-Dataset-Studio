@@ -452,3 +452,86 @@ def test_an_explicit_cpu_setting_is_honoured(tmp_path, models_dir, monkeypatch):
         _start(project, version)
 
     assert seen["device"] == "cpu"
+
+
+# --- the splits a small dataset actually produces -----------------------------
+
+
+def _splits(export_dir: Path, train: int, val: int, test: int) -> None:
+    for split, count in (("train", train), ("val", val), ("test", test)):
+        directory = export_dir / "images" / split
+        directory.mkdir(parents=True, exist_ok=True)
+        for existing in directory.iterdir():
+            existing.unlink()
+        for i in range(count):
+            (directory / f"{i}.jpg").write_bytes(b"jpeg")
+
+
+def _export_dir(project: dict, version: dict) -> Path:
+    return Path(project["workspace_path"]) / "exports" / f"v{version['version']}"
+
+
+def test_training_uses_the_test_split_when_there_are_no_validation_images(tmp_path, models_dir, fake_training):
+    """Four labelled frames came out as three train, none val, one
+    test - and ultralytics refuses to start without a validation set.
+    """
+    project, version = _exported_version(tmp_path, "No Val Images")
+    _splits(_export_dir(project, version), train=3, val=0, test=1)
+
+    with run_jobs_inline():
+        status, body = _start(project, version)
+
+    assert status == 202, body
+    yaml = (_export_dir(project, version) / "data.yaml").read_text(encoding="utf-8")
+    assert "val: images/test" in yaml
+
+
+def test_validating_on_another_split_is_recorded_rather_than_hidden(tmp_path, models_dir, fake_training):
+    """Nobody should read the resulting mAP as a real measure without
+    being told what it was measured on."""
+    project, version = _exported_version(tmp_path, "Substitution Is Recorded")
+    _splits(_export_dir(project, version), train=3, val=0, test=1)
+
+    with run_jobs_inline():
+        _, body = _start(project, version)
+
+    run = client.get(f"/training-runs/{body['run']['id']}").json()
+    assert run["settings_json"]["validated_on"] == "test"
+    assert "no validation images" in run["settings_json"]["note"]
+
+
+def test_with_neither_val_nor_test_it_falls_back_to_train_and_says_so(tmp_path, models_dir, fake_training):
+    project, version = _exported_version(tmp_path, "Only Train Images")
+    _splits(_export_dir(project, version), train=2, val=0, test=0)
+
+    with run_jobs_inline():
+        _, body = _start(project, version)
+
+    run = client.get(f"/training-runs/{body['run']['id']}").json()
+    assert run["settings_json"]["validated_on"] == "train"
+    assert "not a measure of anything" in run["settings_json"]["note"]
+
+
+def test_a_real_validation_split_is_left_alone(tmp_path, models_dir, fake_training):
+    project, version = _exported_version(tmp_path, "Real Val Split")
+    _splits(_export_dir(project, version), train=8, val=2, test=1)
+
+    with run_jobs_inline():
+        _, body = _start(project, version)
+
+    yaml = (_export_dir(project, version) / "data.yaml").read_text(encoding="utf-8")
+    assert "val: images/val" in yaml
+    run = client.get(f"/training-runs/{body['run']['id']}").json()
+    assert "note" not in run["settings_json"]
+
+
+def test_an_export_with_no_training_images_is_refused(tmp_path, models_dir, fake_training):
+    """There is nothing to train on, and an hour of GPU time would
+    prove it."""
+    project, version = _exported_version(tmp_path, "Nothing To Train On")
+    _splits(_export_dir(project, version), train=0, val=0, test=0)
+
+    status, body = _start(project, version)
+
+    assert status == 400
+    assert "no training images" in body["message"].lower()

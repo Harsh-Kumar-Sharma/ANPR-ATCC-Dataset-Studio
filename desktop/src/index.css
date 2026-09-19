@@ -2809,3 +2809,8 @@ label.toggle {
   padding: 3px 10px;
   font-size: 12px;
 }
+
+.training-runs__caveat {
+  color: var(--warning-text, #8a6d1f);
+  line-height: 1.45;
+}

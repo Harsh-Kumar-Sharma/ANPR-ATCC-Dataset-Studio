@@ -185,6 +185,12 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
               {run.output_model_id && (
                 <span className="training-runs__model">Added as {run.output_model_id}</span>
               )}
+              {/* Said next to the score, not buried: an mAP measured
+                  on the training images is not a measure of anything,
+                  and looks identical to one that is. */}
+              {typeof run.settings_json?.note === "string" && (
+                <span className="training-runs__caveat">{run.settings_json.note}</span>
+              )}
             </li>
           ))}
         </ul>

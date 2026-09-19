@@ -26,6 +26,10 @@ class TrainingRunRead(BaseModel):
     job_id: str | None
     epochs: int
     image_size: int
+    #: What was passed, plus anything the app had to decide for
+    #: itself - notably which split validation read, when the export
+    #: had no validation images.
+    settings_json: dict | None
     status: str
     #: The model id the finished weights were imported under, once
     #: there is one.
