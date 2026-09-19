@@ -16,6 +16,7 @@ import TrainingPanel from "./components/TrainingPanel";
 import LivePreview from "./components/LivePreview";
 import ProjectPicker from "./components/ProjectPicker";
 import RtspPanel from "./components/RtspPanel";
+import SchemaBanner from "./components/SchemaBanner";
 import SourcePanel from "./components/SourcePanel";
 import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
@@ -194,7 +195,12 @@ function App() {
   }
 
   if (!project) {
-    return <ProjectPicker onSelect={handleSelectProject} />;
+    return (
+      <>
+        <SchemaBanner />
+        <ProjectPicker onSelect={handleSelectProject} />
+      </>
+    );
   }
 
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId) ?? null;
@@ -277,6 +283,10 @@ function App() {
 
   return (
     <div className="app-layout">
+      {/* Above everything: a database behind the code breaks
+          whichever panel happens to use the newest table, and the
+          message there cannot explain why. */}
+      <SchemaBanner onUpgraded={() => setQueueVersion((v) => v + 1)} />
       <aside className="sidebar">
         <div className="sidebar-header">
           <button className="back-link" onClick={() => handleSelectProject(null)}>

@@ -2769,3 +2769,43 @@ label.toggle {
 .training-runs__model {
   color: var(--text-muted);
 }
+
+/* --- the database is behind the app ------------------------------------ */
+
+.schema-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: var(--warning-bg);
+  border-bottom: 1px solid var(--warning-border);
+}
+
+.schema-banner--ok {
+  background: var(--bg-surface-2);
+  border-bottom-color: var(--border);
+  color: var(--text-secondary);
+}
+
+.schema-banner__text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 320px;
+}
+
+.schema-banner__note {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.schema-banner button {
+  padding: 3px 10px;
+  font-size: 12px;
+}

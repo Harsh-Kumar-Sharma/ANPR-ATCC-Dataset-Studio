@@ -29,6 +29,8 @@ import type {
   LiveCamera,
   ModelInfo,
   RunEstimate,
+  SchemaState,
+  SchemaUpgradeResult,
   Sweep,
   TrainingRun,
   TrainingStarted,
@@ -87,6 +89,12 @@ export const api = {
    *  interlock against a mis-aimed request. */
   deleteProject: (projectId: string, name: string) =>
     request<ProjectContents>(`/projects/${projectId}`, { method: "DELETE", body: JSON.stringify({ name }) }),
+  /** Whether the database matches this app's expectations. */
+  getSchemaState: () => request<SchemaState>("/schema"),
+
+  /** Bring the database up to date. Backs it up first. */
+  upgradeSchema: () => request<SchemaUpgradeResult>("/schema/upgrade", { method: "POST" }),
+
   listProjects: () => request<Project[]>("/projects"),
   createProject: (name: string, classPreset?: string) =>
     request<Project>("/projects", {

@@ -13,6 +13,7 @@ from app.api.frames import frames_router, project_frames_router
 from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
+from app.api.schema import router as schema_router
 from app.api.training import router as training_router, runs_router as training_runs_router
 from app.api.labels import router as labels_router
 from app.api.playback import router as playback_router
@@ -29,6 +30,8 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.services.jobs.runner import reconcile_jobs
+from app.db.session import engine
+from app.services import schema_state
 from app.services.live_reconcile import reconcile_live_captures
 
 configure_logging()
@@ -69,6 +72,23 @@ async def lifespan(_app: FastAPI):
     except Exception:
         logger.exception("Could not settle live captures on startup")
 
+    # Said loudly, once, at startup: a database behind the code is the
+    # most confusing failure this app has, because it surfaces as "An
+    # unexpected error occurred" somewhere apparently unrelated.
+    try:
+        schema = schema_state.state(engine)
+        if not schema.up_to_date:
+            logger.warning(
+                "The database is at revision %s but this app expects %s. %d migration(s) pending: %s. "
+                "Use the banner in the app to bring it up to date, or run: alembic upgrade head",
+                schema.current,
+                schema.head,
+                len(schema.pending),
+                ", ".join(schema.pending) or "unknown",
+            )
+    except Exception:
+        logger.exception("Could not check whether the database is up to date")
+
     yield
 
 
@@ -96,6 +116,7 @@ app.include_router(health_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
 app.include_router(models_router)
+app.include_router(schema_router)
 app.include_router(training_router)
 app.include_router(training_runs_router)
 app.include_router(classes_router)

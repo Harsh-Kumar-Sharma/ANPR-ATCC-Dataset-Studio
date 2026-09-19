@@ -8,7 +8,14 @@ from app.db.base import Base
 from app.db.models import *  # noqa: F401,F403  (ensure models are registered on Base.metadata)
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().resolved_database_url())
+
+# A caller can name the database to migrate - the app's "update the
+# database" button does, so it can be pointed at a copy in a test
+# rather than always at whatever the settings resolve to.
+config.set_main_option(
+    "sqlalchemy.url",
+    config.attributes.get("target_url") or get_settings().resolved_database_url(),
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)

@@ -570,3 +570,18 @@ export interface TrainingStarted {
   run: TrainingRun;
   job_id: string;
 }
+
+/** Where the database is against where the code expects it. */
+export interface SchemaState {
+  current: string | null;
+  head: string | null;
+  up_to_date: boolean;
+  /** Every migration between the two. */
+  pending: string[];
+}
+
+export interface SchemaUpgradeResult {
+  state: SchemaState;
+  /** Where the database was copied before it was changed. */
+  backup_path: string | null;
+}
