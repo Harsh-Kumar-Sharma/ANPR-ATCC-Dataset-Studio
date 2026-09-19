@@ -138,6 +138,10 @@ export const api = {
     request<Frame[]>(`/projects/${projectId}/frames${query({ status })}`),
   getFrame: (frameId: string) => request<Frame>(`/frames/${frameId}`),
   getQueueProgress: (projectId: string) => request<QueueProgress>(`/projects/${projectId}/frames/progress`),
+  /** Decide which of a source's frames are worth labelling. Runs in
+   *  the background; frames a human has already touched are left alone. */
+  selectFrames: (projectId: string, sourceId: string) =>
+    request<JobSubmitted>(`/projects/${projectId}/sources/${sourceId}/select-frames`, { method: "POST" }),
   /** Skip a frame, or put a skipped one back. Boxes already on it
    *  are untouched either way. */
   setFrameStatus: (frameId: string, status: Frame["status"]) =>

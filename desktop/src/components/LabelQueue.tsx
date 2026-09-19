@@ -49,7 +49,10 @@ function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, o
   // The frame the user asked for while unsaved work was open.
   const [pending, setPending] = useState<Frame | null>(null);
   const [resumed, setResumed] = useState(false);
-  const [showSkipped, setShowSkipped] = useState(false);
+  // Frames out of the queue: rejected by a human, or passed over by
+  // selection. Shown together because the question the user is asking
+  // is the same one - what am I not being offered?
+  const [showSetAside, setShowSetAside] = useState<boolean>(false);
   // Only the newest request may write. Two refreshes racing (rapid saves
   // each bumping refreshKey) could otherwise land out of order and leave
   // the list describing an older state than the counts.
@@ -61,7 +64,11 @@ function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, o
     const request = ++latestRequest.current;
     try {
       const [list, counts] = await Promise.all([
-        api.listFrames(project.id, showSkipped ? "rejected" : undefined),
+        showSetAside
+          ? Promise.all([api.listFrames(project.id, "rejected"), api.listFrames(project.id, "skipped")]).then(
+              ([rejected, skipped]) => [...rejected, ...skipped].sort((a, b) => a.frame_index - b.frame_index),
+            )
+          : api.listFrames(project.id),
         api.getQueueProgress(project.id),
       ]);
       if (request !== latestRequest.current) return null;
@@ -73,7 +80,7 @@ function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, o
       if (request === latestRequest.current) setError(describe(e));
       return null;
     }
-  }, [project.id, showSkipped]);
+  }, [project.id, showSetAside]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,14 +127,15 @@ function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, o
 
       {progress && progress.total > 0 && (
         <p className="label-queue__progress" data-testid="queue-progress">
-          {progress.labeled} labelled &middot; {progress.rejected} skipped &middot; {progress.pending} left
+          {progress.labeled} labelled &middot; {progress.rejected + progress.skipped} set aside &middot;{" "}
+          {progress.pending} left
         </p>
       )}
 
-      {progress !== null && progress.rejected > 0 && (
+      {progress !== null && (progress.rejected > 0 || progress.skipped > 0) && (
         <label className="label-queue__toggle">
-          <input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} />
-          Show skipped frames
+          <input type="checkbox" checked={showSetAside} onChange={(e) => setShowSetAside(e.target.checked)} />
+          Show set-aside frames
         </label>
       )}
 
@@ -153,7 +161,7 @@ function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, o
 
       {frames.length === 0 ? (
         <p className="label-queue__empty">
-          {showSkipped ? "No skipped frames." : "No frames yet - run detection on a source first."}
+          {showSetAside ? "Nothing has been set aside." : "No frames yet - run detection on a source first."}
         </p>
       ) : (
         <>
@@ -176,7 +184,7 @@ function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, o
                   <span>frame {frame.frame_index}</span>
                   <span className={`label-queue__status label-queue__status--${frame.status}`}>{frame.status}</span>
                 </button>
-                {frame.status === "rejected" && (
+                {(frame.status === "rejected" || frame.status === "skipped") && (
                   <button
                     className="label-queue__restore"
                     aria-label={`Put frame ${frame.frame_index} back`}

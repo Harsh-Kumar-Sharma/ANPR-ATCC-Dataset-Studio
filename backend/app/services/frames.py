@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError, NotFoundError
 from app.db.models.annotation import Annotation
-from app.db.models.frame import FRAME_STATUSES, Frame
+from app.db.models.frame import FRAME_STATUSES, SET_ASIDE_STATUSES, Frame
 from app.db.models.project import Project
 from app.db.models.source import Source
 from app.services.annotations import delete_annotations
@@ -111,10 +111,10 @@ def list_queue(db: Session, project_id: str, status: str | None = None) -> list[
     if status is not None:
         stmt = stmt.where(Frame.status == status)
     else:
-        # A rejected frame has been judged not worth labelling, so it is
-        # not offered again - but it is still reachable by asking for it
-        # by status, which is how the judgement gets undone.
-        stmt = stmt.where(Frame.status != "rejected")
+        # A frame a human rejected, or that selection passed over, is not
+        # offered again - but both stay reachable by asking for that
+        # status, which is how either judgement gets undone.
+        stmt = stmt.where(Frame.status.not_in(SET_ASIDE_STATUSES))
     return list(db.scalars(stmt))
 
 
@@ -126,12 +126,12 @@ def set_status(db: Session, frame: Frame, status: str) -> Frame:
     judgement can be reversed by putting the frame back.
 
     Putting it back asks for ``pending``, but what it gets is whatever
-    is true of the frame - a frame that was labelled before it was
-    skipped is still labelled, and saying otherwise would both misreport
+    is true of the frame - a frame that was labelled before it was set
+    aside is still labelled, and saying otherwise would both misreport
     it and leave the progress counts wrong.
     """
     _require_known_status(status)
-    frame.status = status if status == "rejected" else _status_from_work(db, frame)
+    frame.status = status if status in SET_ASIDE_STATUSES else _status_from_work(db, frame)
     db.flush()
     return frame
 

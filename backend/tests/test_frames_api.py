@@ -347,7 +347,7 @@ def test_progress_reports_labelled_rejected_and_remaining(tmp_path):
     project, queue = _project_with_frames(tmp_path, "Progress API Project")
 
     before = client.get(f"/projects/{project['id']}/frames/progress").json()
-    assert before == {"pending": len(queue), "labeled": 0, "rejected": 0, "total": len(queue)}
+    assert before == {"pending": len(queue), "labeled": 0, "rejected": 0, "skipped": 0, "total": len(queue)}
 
     client.put(f"/frames/{queue[0]['id']}/annotations", json={"annotations": []})
     client.put(f"/frames/{queue[1]['id']}/status", json={"status": "rejected"})
@@ -357,6 +357,7 @@ def test_progress_reports_labelled_rejected_and_remaining(tmp_path):
         "pending": len(queue) - 2,
         "labeled": 1,
         "rejected": 1,
+        "skipped": 0,
         "total": len(queue),
     }
 
@@ -393,3 +394,58 @@ def test_putting_a_labelled_frame_back_reports_it_as_labelled(tmp_path):
     progress = client.get(f"/projects/{project['id']}/frames/progress").json()
     assert progress["labeled"] == 1
     assert progress["rejected"] == 0
+
+
+# --- ticket 11: asking for a better queue ---------------------------------------
+
+
+def test_selection_runs_as_a_job_and_thins_the_queue(tmp_path):
+    """The ticket's done-when: over a run of near-identical frames, the
+    queue comes out visibly shorter, and every frame says why."""
+    from tests.job_execution import run_jobs_inline
+
+    project, queue = _project_with_frames(tmp_path, "Selection Project", frame_count=40)
+    source = client.get(f"/projects/{project['id']}/sources").json()[0]
+    before = len(queue)
+
+    with run_jobs_inline():
+        submitted = client.post(f"/projects/{project['id']}/sources/{source['id']}/select-frames")
+
+    assert submitted.status_code == 202
+    assert submitted.json()["job"]["type"] == "select"
+    assert submitted.json()["run_id"] is None, "selection produces no processing run"
+
+    after = client.get(f"/projects/{project['id']}/frames").json()
+    assert len(after) < before, "a repetitive run should come out shorter"
+    assert all(f["selection_reason"] for f in after), "every offered frame says why it is there"
+
+    progress = client.get(f"/projects/{project['id']}/frames/progress").json()
+    assert progress["skipped"] == before - len(after)
+    assert progress["total"] == before
+
+    set_aside = client.get(f"/projects/{project['id']}/frames", params={"status": "skipped"}).json()
+    assert all("duplicate" in f["selection_reason"] or "quality" in f["selection_reason"] or "detections" in f["selection_reason"] for f in set_aside)
+
+
+def test_a_frame_selection_passed_over_can_be_put_back_by_hand(tmp_path):
+    from tests.job_execution import run_jobs_inline
+
+    project, _ = _project_with_frames(tmp_path, "Selection Put Back Project", frame_count=20)
+    source = client.get(f"/projects/{project['id']}/sources").json()[0]
+    with run_jobs_inline():
+        client.post(f"/projects/{project['id']}/sources/{source['id']}/select-frames")
+
+    set_aside = client.get(f"/projects/{project['id']}/frames", params={"status": "skipped"}).json()
+    assert set_aside, "the fixture should produce something to put back"
+
+    client.put(f"/frames/{set_aside[0]['id']}/status", json={"status": "pending"})
+
+    assert set_aside[0]["id"] in [f["id"] for f in client.get(f"/projects/{project['id']}/frames").json()]
+
+
+def test_selection_over_an_unknown_source_is_a_404():
+    project = client.post("/projects", json={"name": "Selection 404 Project"}).json()
+
+    response = client.post(f"/projects/{project['id']}/sources/does-not-exist/select-frames")
+
+    assert response.status_code == 404

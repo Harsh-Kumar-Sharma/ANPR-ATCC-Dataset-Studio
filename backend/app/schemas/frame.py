@@ -24,11 +24,16 @@ class FrameStatusWrite(BaseModel):
 
 
 class QueueProgress(BaseModel):
-    """How far through the frames the labelling has got."""
+    """How far through the frames the labelling has got.
+
+    ``rejected`` is what a human looked at and set aside; ``skipped``
+    is what frame selection never offered. Counted apart because they
+    say different things about the queue."""
 
     pending: int
     labeled: int
     rejected: int
+    skipped: int
     total: int
 
 

@@ -25,6 +25,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.services.frame_ranking import DEFAULT_RANKING_CONFIG, RankingConfig, compute_composite_score
+
 #: dhash compares each pixel with its right-hand neighbour on a small
 #: grid. 8x9 greyscale gives the 64 comparisons that make the hash.
 _HASH_WIDTH = 9
@@ -80,6 +82,40 @@ class SelectionDecision:
     frame_id: str
     selected: bool
     reason: str
+
+
+def frame_quality(candidates: list, config: RankingConfig = DEFAULT_RANKING_CONFIG) -> float:
+    """How good the best look at anything on this frame is.
+
+    Not recomputed from pixels: detection already scored every
+    observation, and those scores are on the frame-candidate rows. A
+    frame is worth as much as its best detection - one sharp vehicle
+    makes a frame worth labelling even if the others are a blur.
+
+    Candidates from before quality signals existed have null scores;
+    they are treated as neutral rather than dropped, because "we did not
+    measure this" is not the same as "this is bad".
+    """
+    scores = [
+        compute_composite_score(
+            blur_score=candidate.blur_score if candidate.blur_score is not None else 0.5,
+            area_ratio=candidate.area_ratio if candidate.area_ratio is not None else 0.5,
+            confidence=candidate.detector_confidence,
+            # Stability compares a detection with its neighbours in the
+            # same track, which is a per-track question; at frame level
+            # the neutral value is the honest one.
+            temporal_stability=0.5,
+            truncated=bool((candidate.flags_json or {}).get("truncated")),
+            config=config,
+        )
+        for candidate in candidates
+    ]
+    return max(scores) if scores else 0.0
+
+
+def brightness_of(image: np.ndarray) -> float:
+    """Mean luma, 0-1."""
+    return float(image.mean()) / 255.0
 
 
 def perceptual_hash(image: np.ndarray) -> int:

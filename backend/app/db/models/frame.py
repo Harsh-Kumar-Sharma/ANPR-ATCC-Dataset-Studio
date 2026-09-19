@@ -15,8 +15,16 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-#: A frame's place in the labelling queue. Terminal states are the last two.
-FRAME_STATUSES = ("pending", "labeled", "rejected")
+#: A frame's place in the labelling queue.
+#:
+#: ``rejected`` is a human saying "I looked, not worth labelling".
+#: ``skipped`` is frame selection never offering it in the first
+#: place. Both leave the queue and both can be undone, but they are
+#: different judgements and the progress line counts them apart.
+FRAME_STATUSES = ("pending", "labeled", "rejected", "skipped")
+
+#: Statuses that keep a frame out of the queue.
+SET_ASIDE_STATUSES = ("rejected", "skipped")
 
 
 class Frame(Base):
@@ -53,7 +61,8 @@ class Frame(Base):
     image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     #: Where this frame is in the labelling queue. ``pending`` until a
     #: human has either saved its boxes (``labeled``, which includes
-    #: "there is nothing here") or thrown it out (``rejected``).
+    #: "there is nothing here") or thrown it out (``rejected``), or until
+    #: frame selection passed over it (``skipped``).
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     #: Why this frame entered the queue. Debuggability: a queue full of
     #: near-duplicates is only fixable if each row can say how it got in.

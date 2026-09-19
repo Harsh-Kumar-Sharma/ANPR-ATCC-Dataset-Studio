@@ -18,7 +18,7 @@ def _utcnow() -> datetime:
 #: Detection blocked an HTTP request for one to three minutes; training
 #: will take hours. Both need the same machinery, so it is built once
 #: and proven on detection first. Export and pre-annotation join later.
-JOB_TYPES = ("detect", "train", "export", "preannotate")
+JOB_TYPES = ("detect", "select", "train", "export", "preannotate")
 
 #: ``pending`` means submitted and launched but not yet picked up by its
 #: worker - a real state, not a placeholder, because process start is

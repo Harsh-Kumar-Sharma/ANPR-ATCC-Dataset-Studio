@@ -214,6 +214,27 @@ def process_source_endpoint(
     return JobSubmitted(job=JobRead.model_validate(job), run_id=run.id)
 
 
+@router.post("/{source_id}/select-frames", response_model=JobSubmitted, status_code=202)
+def select_frames_endpoint(
+    project_id: str,
+    source_id: str,
+    db: Session = Depends(get_db),
+    launcher: Launcher = Depends(get_launcher),
+) -> JobSubmitted:
+    """Decide which of this source's frames are worth labelling.
+
+    Runs in the background because it decodes every sampled frame.
+    Frames a human has already labelled or rejected are left alone -
+    selection suggests what to look at next, it does not overrule
+    someone who has already looked.
+    """
+    project = get_project_or_404(db, project_id)
+    source = _get_source_or_404(db, project_id, source_id)
+
+    job = submit_job(db, type="select", project_id=project.id, params={"source_id": source.id}, launcher=launcher)
+    return JobSubmitted(job=JobRead.model_validate(job))
+
+
 @runs_router.get("/{run_id}", response_model=ProcessingRunRead)
 def get_processing_run(run_id: str, db: Session = Depends(get_db)) -> ProcessingRun:
     """Read a processing run's current state.

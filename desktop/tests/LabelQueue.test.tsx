@@ -29,6 +29,7 @@ const progress = (over: Partial<QueueProgress> = {}): QueueProgress => ({
   pending: 3,
   labeled: 0,
   rejected: 0,
+  skipped: 0,
   total: 3,
   ...over,
 });
@@ -63,7 +64,7 @@ describe("LabelQueue", () => {
 
     const summary = await screen.findByTestId("queue-progress");
     expect(summary).toHaveTextContent(/3 labelled/i);
-    expect(summary).toHaveTextContent(/2 skipped/i);
+    expect(summary).toHaveTextContent(/2 set aside/i);
     expect(summary).toHaveTextContent(/5 left/i);
   });
 
@@ -107,13 +108,13 @@ describe("LabelQueue", () => {
     expect(screen.getByRole("button", { name: /previous frame/i })).toBeEnabled();
   });
 
-  it("offers the skipped frames only when there are some", async () => {
+  it("offers the set-aside frames only when there are some", async () => {
     renderQueue();
     await screen.findByRole("button", { name: /frame 0/i });
-    expect(screen.queryByLabelText(/show skipped/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/show set-aside/i)).not.toBeInTheDocument();
   });
 
-  it("can show what was skipped and put a frame back", async () => {
+  it("can show what was set aside and put a frame back", async () => {
     // The claim that skipping is reversible needs somewhere to reverse it.
     vi.spyOn(api, "getQueueProgress").mockResolvedValue(progress({ pending: 2, rejected: 1, total: 3 }));
     // Answer by status rather than swapping the mock mid-flight, which
@@ -121,14 +122,17 @@ describe("LabelQueue", () => {
     const listFrames = vi
       .spyOn(api, "listFrames")
       .mockImplementation(async (_projectId, status) =>
-        status === "rejected" ? [frame(5, "rejected")] : [frame(0), frame(1)],
+        status === "rejected" ? [frame(5, "rejected")] : status === "skipped" ? [] : [frame(0), frame(1)],
       );
     const setStatus = vi.spyOn(api, "setFrameStatus").mockResolvedValue(frame(5));
     renderQueue();
 
-    fireEvent.click(await screen.findByLabelText(/show skipped/i));
+    fireEvent.click(await screen.findByLabelText(/show set-aside/i));
 
-    await waitFor(() => expect(listFrames).toHaveBeenLastCalledWith("p-1", "rejected"));
+    // Both set-aside statuses are fetched, so check both rather than
+    // whichever happened to resolve last.
+    await waitFor(() => expect(listFrames).toHaveBeenCalledWith("p-1", "rejected"));
+    expect(listFrames).toHaveBeenCalledWith("p-1", "skipped");
 
     fireEvent.click(await screen.findByRole("button", { name: /put frame 5 back/i }));
 

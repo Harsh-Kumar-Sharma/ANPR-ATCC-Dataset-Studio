@@ -97,10 +97,14 @@ export interface ClassUsage {
 }
 
 /** How far through the frames the labelling has got. */
+/** `rejected` is what a human set aside; `skipped` is what frame
+ *  selection never offered. Counted apart because they say different
+ *  things about the queue. */
 export interface QueueProgress {
   pending: number;
   labeled: number;
   rejected: number;
+  skipped: number;
   total: number;
 }
 
@@ -134,7 +138,7 @@ export interface Annotation {
   updated_at: string;
 }
 
-export type FrameStatus = "pending" | "labeled" | "rejected";
+export type FrameStatus = "pending" | "labeled" | "rejected" | "skipped";
 
 /** A full frame, and its place in the labelling queue. */
 export interface Frame {

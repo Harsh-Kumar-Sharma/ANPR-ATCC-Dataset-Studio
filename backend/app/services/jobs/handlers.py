@@ -12,19 +12,28 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
+from app.db.models.frame import Frame
+from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
 from app.db.models.source import Source
 from app.ml.factory import create_tracker, get_default_detector
+from app.services.frame_sampler import SampledFrame, decode_sampled_frames
+from app.services.frame_selection import FrameSignals, brightness_of, frame_quality, perceptual_hash, select_frames
 from app.services.track_processor import ProgressReporter, process_source
 
 logger = logging.getLogger(__name__)
 
 #: A run that already settled must not be relabelled by late cleanup.
 TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+#: Decoding dominates a selection run, so it owns most of the bar.
+READING_SHARE = 0.9
+PROGRESS_EVERY = 10
 
 
 def _utcnow() -> datetime:
@@ -135,6 +144,93 @@ class JobHandler:
     on_abort: Callable[[Session, dict, str], None] | None = None
 
 
+def run_select_job(db: Session, params: dict, report: ProgressReporter) -> dict:
+    """Decide which of a source's frames are worth labelling.
+
+    Runs as a job because it decodes every sampled frame to read its
+    brightness and perceptual hash - the two signals that cannot come
+    from the database. Quality and vehicle count do come from the
+    database, because detection already worked them out.
+
+    Frames a human has already touched are left alone. Selection is a
+    suggestion about what to look at next; it does not get to overrule
+    someone who has looked.
+    """
+    source_id = params["source_id"]
+    source = db.get(Source, source_id)
+    if source is None:
+        raise NotFoundError(f"Source not found: {source_id}")
+    if db.get(Project, source.project_id) is None:
+        raise NotFoundError(f"Project not found: {source.project_id}")
+
+    frames = list(
+        db.scalars(
+            select(Frame)
+            .where(Frame.source_id == source_id, Frame.status.in_(("pending", "skipped")))
+            .order_by(Frame.frame_index)
+        )
+    )
+    if not frames:
+        return {"source_id": source_id, "considered": 0, "selected": 0}
+
+    candidates_by_frame: dict[str, list] = {}
+    for candidate in db.scalars(
+        select(FrameCandidate)
+        .join(Frame, FrameCandidate.frame_id == Frame.id)
+        .where(Frame.source_id == source_id)
+    ):
+        candidates_by_frame.setdefault(candidate.frame_id, []).append(candidate)
+
+    report(0.0, f"Reading {len(frames)} frames")
+    signals: list[FrameSignals] = []
+    for done, (frame, image) in enumerate(_decode(frames, source), start=1):
+        candidates = candidates_by_frame.get(frame.id, [])
+        signals.append(
+            FrameSignals(
+                frame_id=frame.id,
+                frame_index=frame.frame_index,
+                quality=frame_quality(candidates),
+                vehicle_count=len(candidates),
+                brightness=brightness_of(image),
+                phash=perceptual_hash(image),
+            )
+        )
+        if done % PROGRESS_EVERY == 0 or done == len(frames):
+            report(READING_SHARE * done / len(frames), f"Frame {done} of {len(frames)}")
+
+    report(READING_SHARE, "Choosing frames")
+    by_id = {frame.id: frame for frame in frames}
+    selected = 0
+    for decision in select_frames(signals):
+        frame = by_id[decision.frame_id]
+        frame.selection_reason = decision.reason
+        frame.status = "pending" if decision.selected else "skipped"
+        selected += 1 if decision.selected else 0
+    db.commit()
+
+    return {"source_id": source_id, "considered": len(signals), "selected": selected}
+
+
+def _decode(frames: list[Frame], source: Source):
+    """Yield each frame with its pixels, in one ordered pass.
+
+    Deliberately does not go through ``materialize_frames``: that caches
+    every frame it decodes, and selection looks at each frame once and
+    then throws the pixels away. Caching them would write a gigabyte of
+    JPEGs per source for a computation that needs none of them - and on
+    a nearly-full disk that is the difference between a slow job and a
+    failed one. Frames are cached when somebody actually opens one to
+    label it.
+    """
+    by_index = {frame.frame_index: frame for frame in frames}
+    sampled = [SampledFrame(frame_index=f.frame_index, timestamp_ms=f.timestamp_ms) for f in frames]
+    for sampled_frame, image in decode_sampled_frames(Path(source.path_or_uri), sampled):
+        frame = by_index.get(sampled_frame.frame_index)
+        if frame is not None:
+            yield frame, image
+
+
 HANDLERS: dict[str, JobHandler] = {
     "detect": JobHandler(run=run_detect_job, on_abort=settle_detect_job),
+    "select": JobHandler(run=run_select_job),
 }

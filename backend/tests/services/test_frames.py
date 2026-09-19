@@ -663,7 +663,7 @@ def test_progress_counts_what_has_been_done():
     with SessionLocal() as db:
         progress = frames.queue_progress(db, project.id)
 
-    assert progress == {"pending": 2, "labeled": 1, "rejected": 1, "total": 4}
+    assert progress == {"pending": 2, "labeled": 1, "rejected": 1, "skipped": 0, "total": 4}
 
 
 def test_progress_is_scoped_to_the_project():
@@ -690,7 +690,7 @@ def test_putting_a_labelled_frame_back_remembers_it_was_labelled():
 
     with SessionLocal() as db:
         assert db.get(Frame, frame.id).status == "labeled"
-        assert frames.queue_progress(db, project.id) == {"pending": 0, "labeled": 1, "rejected": 0, "total": 1}
+        assert frames.queue_progress(db, project.id) == {"pending": 0, "labeled": 1, "rejected": 0, "skipped": 0, "total": 1}
 
 
 def test_putting_an_untouched_frame_back_leaves_it_pending():
@@ -705,3 +705,55 @@ def test_putting_an_untouched_frame_back_leaves_it_pending():
 
     with SessionLocal() as db:
         assert db.get(Frame, frame.id).status == "pending"
+
+
+# --- ticket 11: frames the machine set aside ------------------------------------
+
+
+def test_a_frame_selection_passed_over_is_not_offered():
+    project, source, kept = _project_with_frame("Selection Queue")
+    passed_over = _add_frame(source, 1)
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, passed_over.id), "skipped")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert [f.id for f in frames.list_queue(db, project.id)] == [kept.id]
+        assert [f.id for f in frames.list_queue(db, project.id, status="skipped")] == [passed_over.id]
+
+
+def test_progress_counts_what_selection_set_aside_separately_from_what_a_human_did():
+    """"3 skipped" should not lump together "I looked and said no" with
+    "the machine never offered it"."""
+    project, source, _ = _project_with_frame("Selection Progress")
+    machine = _add_frame(source, 1)
+    human = _add_frame(source, 2)
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, machine.id), "skipped")
+        frames.set_status(db, db.get(Frame, human.id), "rejected")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert frames.queue_progress(db, project.id) == {
+            "pending": 1,
+            "labeled": 0,
+            "rejected": 1,
+            "skipped": 1,
+            "total": 3,
+        }
+
+
+def test_a_frame_selection_passed_over_can_still_be_put_back():
+    project, _, frame = _project_with_frame("Selection Put Back")
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "skipped")
+        db.commit()
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "pending")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert [f.id for f in frames.list_queue(db, project.id)] == [frame.id]

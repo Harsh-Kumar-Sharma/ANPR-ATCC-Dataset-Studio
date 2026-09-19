@@ -32,7 +32,9 @@ class JobSubmitted(BaseModel):
 
     Carries the processing run as well as the job so the UI can link to
     the run immediately, rather than waiting for a worker to start.
+    ``run_id`` is null for work that produces no run of its own, such as
+    frame selection.
     """
 
     job: JobRead
-    run_id: str
+    run_id: str | None = None
