@@ -125,7 +125,9 @@ function App() {
     main = (
       <LabelCanvas
         key={labelFrame.id}
+        project={project}
         frame={labelFrame}
+        classesVersion={classesVersion}
         onSaved={() => setQueueVersion((v) => v + 1)}
       />
     );

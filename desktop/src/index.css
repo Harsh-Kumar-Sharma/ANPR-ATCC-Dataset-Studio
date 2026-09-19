@@ -1791,6 +1791,54 @@ label.toggle {
   fill: rgba(59, 111, 237, 0.12);
   stroke: var(--accent);
   stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Boxes take the mouse; the overlay itself still lets everything
+   through to the stage so a drag on empty space starts a draw. */
+.label-canvas__overlay rect.label-canvas__box {
+  pointer-events: all;
+  cursor: move;
+}
+
+.label-canvas__overlay rect.label-canvas__box[data-selected="true"] {
+  fill: rgba(59, 111, 237, 0.22);
+  stroke-width: 3;
+}
+
+.label-canvas__overlay text.label-canvas__class {
+  font: 600 12px var(--font-sans);
+  fill: var(--accent-fg);
+  paint-order: stroke;
+  stroke: var(--accent);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  user-select: none;
+}
+
+.label-canvas__overlay rect.label-canvas__handle {
+  fill: var(--bg-surface);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  pointer-events: all;
+}
+
+.label-canvas__overlay rect.label-canvas__handle[data-handle="nw"],
+.label-canvas__overlay rect.label-canvas__handle[data-handle="se"] {
+  cursor: nwse-resize;
+}
+.label-canvas__overlay rect.label-canvas__handle[data-handle="ne"],
+.label-canvas__overlay rect.label-canvas__handle[data-handle="sw"] {
+  cursor: nesw-resize;
+}
+.label-canvas__overlay rect.label-canvas__handle[data-handle="n"],
+.label-canvas__overlay rect.label-canvas__handle[data-handle="s"] {
+  cursor: ns-resize;
+}
+.label-canvas__overlay rect.label-canvas__handle[data-handle="e"],
+.label-canvas__overlay rect.label-canvas__handle[data-handle="w"] {
+  cursor: ew-resize;
 }
 
 .label-canvas__overlay rect.label-canvas__draft {
@@ -1816,6 +1864,47 @@ label.toggle {
 }
 
 .label-canvas__hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.label-canvas__selected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.label-canvas__selected select {
+  padding: 2px 6px;
+  font: inherit;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.label-canvas__selected button {
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.label-canvas__selected button:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.label-canvas__shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   font-size: 12px;
   color: var(--text-muted);
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { IconAlert, IconCheck, IconX } from "../Icons";
+import { isEditableTarget } from "../keyboard";
 import type { ProjectClass, FrameCandidate, OcrCandidate, Project, Track, TrackTimeline } from "../types";
 
 interface Props {
@@ -15,10 +16,6 @@ interface Props {
 }
 
 type Bbox = [number, number, number, number];
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
-}
 
 function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersion = 0 }: Props) {
   const [timeline, setTimeline] = useState<TrackTimeline | null>(null);
