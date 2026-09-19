@@ -12,6 +12,7 @@ import type {
   FrameAnnotationWrite,
   Job,
   JobSubmitted,
+  LabelBalance,
   OcrCandidate,
   ProcessingRun,
   Project,
@@ -188,6 +189,9 @@ export const api = {
     request<QueueItem[]>(`/projects/${projectId}/active-learning/low-confidence-queue`),
   getHardFailedQueue: (projectId: string) =>
     request<QueueItem[]>(`/projects/${projectId}/active-learning/hard-failed-queue`),
+  /** This project's human labels counted by class, whichever way they
+   *  were written. Not the evaluation report's run-scoped distribution. */
+  getLabelBalance: (projectId: string) => request<LabelBalance>(`/projects/${projectId}/label-balance`),
   getDisagreements: (projectId: string) =>
     request<DisagreementItem[]>(`/projects/${projectId}/active-learning/disagreements`),
   createRetrainingHandoff: (datasetVersionId: string) =>

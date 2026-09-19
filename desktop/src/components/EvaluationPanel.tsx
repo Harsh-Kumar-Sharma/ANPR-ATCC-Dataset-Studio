@@ -83,7 +83,7 @@ function EvaluationPanel({ tracks }: Props) {
           </div>
 
           <div className="section-title" style={{ marginTop: "0.3rem" }}>
-            Class distribution
+            Class distribution (this run's tracks)
           </div>
           <ul className="class-distribution-list">
             {Object.entries(report.class_distribution).map(([name, count]) => (
@@ -92,7 +92,14 @@ function EvaluationPanel({ tracks }: Props) {
                 <strong>{count}</strong>
               </li>
             ))}
-            {Object.keys(report.class_distribution).length === 0 && <li className="empty">None yet.</li>}
+            {/* Scoped to one processing run, so a box drawn on the
+                labelling canvas is not in it and cannot be - the frame's
+                source may have several runs. "None yet." read as "you
+                have not labelled anything", which for a canvas labeller
+                was flatly wrong. */}
+            {Object.keys(report.class_distribution).length === 0 && (
+              <li className="empty">No track reviewed in this run. Canvas labels are counted under "Your labels".</li>
+            )}
           </ul>
 
           <div className="section-title" style={{ marginTop: "0.3rem" }}>

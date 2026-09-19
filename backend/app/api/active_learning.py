@@ -36,10 +36,15 @@ def get_hard_failed_queue(project_id: str, limit: int = 50, db: Session = Depend
 
 @router.get("/disagreements", response_model=list[DisagreementItemRead])
 def get_model_human_disagreements(project_id: str, db: Session = Depends(get_db)) -> list[DisagreementItemRead]:
-    """Tracks where the human's ATCC classification is grossly
-    inconsistent with what the detector observed at all - NOT true
-    model-ensemble disagreement (only one trained model exists). See
-    docs/HANDOFF.md Phase 8 for why."""
-    project = get_project_or_404(db, project_id)
+    """Labels worth a second look: a human class the detector's own class
+    does not allow for, or a vehicle the human drew and the detector
+    never found.
+
+    NOT true model-ensemble disagreement - only one trained model exists.
+    See docs/HANDOFF.md Phase 8 for why. Covers labels written on the
+    canvas as well as through track review; a canvas box is matched to a
+    detection by overlap, and reported as a miss when nothing matches.
+    """
+    get_project_or_404(db, project_id)
     items = find_model_human_disagreements(db, project_id)
     return [DisagreementItemRead(**asdict(item)) for item in items]

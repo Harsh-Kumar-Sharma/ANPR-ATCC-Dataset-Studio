@@ -7,6 +7,7 @@ import EvaluationPanel from "./components/EvaluationPanel";
 import JobIndicator from "./components/JobIndicator";
 import JobsPanel from "./components/JobsPanel";
 import LabelCanvas from "./components/LabelCanvas";
+import LabelBalancePanel from "./components/LabelBalancePanel";
 import LabelQueue from "./components/LabelQueue";
 import LivePreview from "./components/LivePreview";
 import ProjectPicker from "./components/ProjectPicker";
@@ -91,6 +92,21 @@ function App() {
     setLabelFrame(frame);
     setLabelDirty(false);
     setMainView("label");
+  }
+
+  /** Open a frame the user picked somewhere other than the queue - the
+   *  disagreement list, for one, whose canvas-drawn entries have a frame
+   *  and no track. The frame is fetched rather than looked up locally
+   *  because nothing outside the Label tab holds the queue. */
+  async function selectFrameById(frameId: string) {
+    try {
+      const frame = await api.getFrame(frameId);
+      setTab("label");
+      labelFrameNow(frame);
+    } catch {
+      // Deleted, or the backend is down. The panel the user clicked from
+      // is still there; taking them nowhere is better than a blank canvas.
+    }
   }
 
   function showLivePreview(runId: string) {
@@ -212,8 +228,14 @@ function App() {
           )}
           {tab === "insights" && (
             <>
+              <LabelBalancePanel project={project} refreshKey={queueVersion} />
               <EvaluationPanel tracks={tracks} />
-              <ActiveLearningPanel project={project} tracks={tracks} onSelectTrack={selectTrack} />
+              <ActiveLearningPanel
+                project={project}
+                tracks={tracks}
+                onSelectTrack={selectTrack}
+                onSelectFrame={selectFrameById}
+              />
             </>
           )}
         </div>

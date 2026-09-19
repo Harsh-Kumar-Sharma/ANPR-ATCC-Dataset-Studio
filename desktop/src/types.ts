@@ -288,12 +288,41 @@ export interface RtspSessionStatus {
   error: string | null;
 }
 
+/** One label worth a second look, and why.
+ *
+ *  `class_mismatch` - the detector saw something at that box and the
+ *  human's class does not fit it. `missed_detection` - the human drew a
+ *  vehicle the detector never found, so there is no detector class. */
 export interface DisagreementItem {
-  track_id: string;
+  kind: "class_mismatch" | "missed_detection";
+  frame_id: string;
   annotation_id: string;
-  detector_class: string;
   human_class_id: number;
   human_class_name: string;
+  /** Null for a missed detection. */
+  detector_class: string | null;
+  /** Null unless the label was made by reviewing that track. A box drawn
+   *  on the canvas belongs to a frame, so the frame is what to open. */
+  track_id: string | null;
+}
+
+export interface ClassCount {
+  class_id: number;
+  name: string;
+  box_count: number;
+}
+
+/** What a labeller has produced across a whole project.
+ *
+ *  A different question from the evaluation report's class distribution,
+ *  which is scoped to one processing run and so cannot account for a box
+ *  drawn on the canvas at all. */
+export interface LabelBalance {
+  classes: ClassCount[];
+  total_boxes: number;
+  unclassified_boxes: number;
+  labeled_frames: number;
+  background_frames: number;
 }
 
 export interface FailureGalleryItem {

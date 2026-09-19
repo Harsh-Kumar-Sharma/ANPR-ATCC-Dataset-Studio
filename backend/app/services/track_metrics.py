@@ -15,7 +15,14 @@ class TrackSummary:
     last_bbox: Bbox
 
 
-def _iou(a: Bbox, b: Bbox) -> float:
+def iou(a: Bbox, b: Bbox) -> float:
+    """Intersection over union of two ``[x1, y1, x2, y2]`` boxes.
+
+    Public because more than one question in this codebase is "are these
+    two boxes the same object" - duplicate tracks here, and matching a
+    human's box to a detection in ``active_learning``. One definition so
+    the two cannot answer it differently.
+    """
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
     ix1, iy1 = max(ax1, bx1), max(ay1, by1)
@@ -50,7 +57,7 @@ def find_duplicate_track_pairs(
             time_overlaps = a.start_ts <= b.end_ts and b.start_ts <= a.end_ts
             if not time_overlaps:
                 continue
-            if _iou(a.first_bbox, b.first_bbox) >= iou_threshold or _iou(a.last_bbox, b.last_bbox) >= iou_threshold:
+            if iou(a.first_bbox, b.first_bbox) >= iou_threshold or iou(a.last_bbox, b.last_bbox) >= iou_threshold:
                 pairs.append((a.track_id, b.track_id))
     return pairs
 
@@ -73,6 +80,6 @@ def find_fragmented_track_pairs(
                 continue  # they overlap in time - that's duplicate territory, not fragmentation
             if gap > gap_threshold_ms:
                 break  # ordered by start_ts, so no later track can be closer
-            if _iou(earlier.last_bbox, later.first_bbox) >= iou_threshold:
+            if iou(earlier.last_bbox, later.first_bbox) >= iou_threshold:
                 pairs.append((earlier.track_id, later.track_id))
     return pairs

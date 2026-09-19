@@ -12,6 +12,7 @@ from app.api.evaluation import router as evaluation_router
 from app.api.frames import frames_router, project_frames_router
 from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
+from app.api.labels import router as labels_router
 from app.api.playback import router as playback_router
 from app.api.processing_profiles import router as processing_profiles_router
 from app.api.projects import router as projects_router
@@ -79,6 +80,7 @@ app.include_router(projects_router)
 app.include_router(jobs_router)
 app.include_router(classes_router)
 app.include_router(attributes_router)
+app.include_router(labels_router)
 app.include_router(project_frames_router)
 app.include_router(frames_router)
 app.include_router(sources_router)

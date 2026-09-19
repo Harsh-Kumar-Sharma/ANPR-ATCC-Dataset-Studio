@@ -7,6 +7,10 @@ interface Props {
   project: Project;
   tracks: Track[];
   onSelectTrack: (track: Track) => void;
+  /** Open a frame in the labelling canvas. A box drawn there belongs to
+   *  a frame and to no track, so a track-review button has nowhere to
+   *  send the reviewer. */
+  onSelectFrame: (frameId: string) => void;
 }
 
 type Tab = "low-confidence" | "hard-failed" | "disagreements";
@@ -17,7 +21,7 @@ const TAB_LABEL: Record<Tab, string> = {
   disagreements: "Disagreements",
 };
 
-function ActiveLearningPanel({ project, tracks, onSelectTrack }: Props) {
+function ActiveLearningPanel({ project, tracks, onSelectTrack, onSelectFrame }: Props) {
   const [tab, setTab] = useState<Tab | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [disagreements, setDisagreements] = useState<DisagreementItem[]>([]);
@@ -82,12 +86,24 @@ function ActiveLearningPanel({ project, tracks, onSelectTrack }: Props) {
           {disagreements.map((item) => (
             <li key={item.annotation_id}>
               <span>
-                detector saw "{item.detector_class}", human picked "{item.human_class_name}"
+                {item.kind === "missed_detection"
+                  ? `detector found nothing here, human drew a "${item.human_class_name}"`
+                  : `detector saw "${item.detector_class}", human picked "${item.human_class_name}"`}
               </span>
-              <button onClick={() => reviewTrack(item.track_id)}>Review</button>
+              {/* A label made by reviewing a track opens that track,
+                  which is where it was written. Everything else opens
+                  its frame - a canvas box is not visible in a track. */}
+              {item.track_id ? (
+                <button onClick={() => reviewTrack(item.track_id!)}>Review track</button>
+              ) : (
+                <button onClick={() => onSelectFrame(item.frame_id)}>Open frame</button>
+              )}
             </li>
           ))}
-          {disagreements.length === 0 && <li className="empty">None.</li>}
+          {/* "None." read the same whether the queue had looked and
+              found nothing or could not see canvas labels at all. It can
+              see them now, so it can say so. */}
+          {disagreements.length === 0 && <li className="empty">Nothing to flag - every label agrees with the model.</li>}
         </ul>
       )}
     </div>

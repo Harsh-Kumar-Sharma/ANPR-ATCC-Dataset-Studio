@@ -1871,6 +1871,29 @@ label.toggle {
   color: var(--text-muted);
 }
 
+.label-balance-panel .class-distribution-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The imbalance is the thing worth seeing, and two numbers side by side
+   do not show it the way two bars do. */
+.class-balance-bar {
+  height: 6px;
+  min-width: 4px;
+  flex: 0 1 auto;
+  border-radius: 3px;
+  background: var(--accent, #4a8cff);
+  opacity: 0.55;
+}
+
+.label-balance-summary {
+  margin: 0.3rem 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .label-canvas__selected {
   display: flex;
   align-items: center;
