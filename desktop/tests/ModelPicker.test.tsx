@@ -6,7 +6,7 @@
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../src/api";
+import { api, ApiError } from "../src/api";
 import RtspPanel from "../src/components/RtspPanel";
 import SourcePanel from "../src/components/SourcePanel";
 import type { Job, JobSubmitted, ModelInfo, Project, RtspStartResult, Source } from "../src/types";
@@ -60,6 +60,7 @@ const model = (over: Partial<ModelInfo> = {}): ModelInfo => ({
   present: true,
   bytes: 5_544_453,
   note: "Fastest.",
+  classes: [],
   ...over,
 });
 
@@ -185,5 +186,115 @@ describe("Choosing the model for a live stream", () => {
         "yolo26s",
       ),
     );
+  });
+});
+
+describe("Bringing your own model in", () => {
+  const mine: ModelInfo = model({
+    id: "gantry_v3",
+    label: "gantry_v3",
+    kind: "custom",
+    weights_file: "gantry_v3.pt",
+    note: "Your own model. Detects: plate, vehicle.",
+    classes: ["plate", "vehicle"],
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listSources").mockResolvedValue([source]);
+    vi.spyOn(api, "listModels").mockResolvedValue(both);
+    vi.spyOn(api, "processSource").mockResolvedValue(submitted);
+  });
+
+  function panel() {
+    return render(<SourcePanel project={project} onProcessed={vi.fn()} onWatch={vi.fn()} />);
+  }
+
+  it("offers a way in that does not involve copying files by hand", async () => {
+    panel();
+
+    expect(await screen.findByRole("button", { name: /use a model you trained/i })).toBeInTheDocument();
+  });
+
+  it("imports the file and selects it straight away", async () => {
+    // Importing a model and then having to go and find it in the menu
+    // would be a strange place to stop.
+    const importModel = vi.spyOn(api, "importModel").mockResolvedValue(mine);
+    vi.mocked(api.listModels).mockResolvedValueOnce(both).mockResolvedValue([...both, mine]);
+    panel();
+
+    fireEvent.click(await screen.findByRole("button", { name: /use a model you trained/i }));
+    fireEvent.change(screen.getByLabelText(/path to a trained model/i), {
+      target: { value: "C:/runs/detect/train/weights/best.pt" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^add model$/i }));
+
+    await waitFor(() =>
+      expect(importModel).toHaveBeenCalledWith("C:/runs/detect/train/weights/best.pt", ""),
+    );
+    await waitFor(() => expect(screen.getByLabelText(/^model$/i)).toHaveValue("gantry_v3"));
+  });
+
+  it("passes on a name when one is given", async () => {
+    const importModel = vi.spyOn(api, "importModel").mockResolvedValue(mine);
+    panel();
+
+    fireEvent.click(await screen.findByRole("button", { name: /use a model you trained/i }));
+    fireEvent.change(screen.getByLabelText(/path to a trained model/i), { target: { value: "best.pt" } });
+    fireEvent.change(screen.getByLabelText(/name for this model/i), { target: { value: "Gantry v3" } });
+    fireEvent.click(screen.getByRole("button", { name: /^add model$/i }));
+
+    await waitFor(() => expect(importModel).toHaveBeenCalledWith("best.pt", "Gantry v3"));
+  });
+
+  it("says what was wrong with a file it would not take", async () => {
+    // The refusal is the useful part: "that is not a model" now beats
+    // a failed job in two minutes.
+    vi.spyOn(api, "importModel").mockRejectedValue(
+      new ApiError(400, "model_import_failed", "A model has to be a .pt file. notes.txt is not one."),
+    );
+    panel();
+
+    fireEvent.click(await screen.findByRole("button", { name: /use a model you trained/i }));
+    fireEvent.change(screen.getByLabelText(/path to a trained model/i), { target: { value: "notes.txt" } });
+    fireEvent.click(screen.getByRole("button", { name: /^add model$/i }));
+
+    expect(await screen.findByText(/notes\.txt is not one/i)).toBeInTheDocument();
+    // And the form stays open with what was typed, to be corrected.
+    expect(screen.getByLabelText(/path to a trained model/i)).toHaveValue("notes.txt");
+  });
+
+  it("says what a model you trained detects, since the menu name will not", async () => {
+    vi.mocked(api.listModels).mockResolvedValue([...both, mine]);
+    panel();
+    fireEvent.change(await screen.findByLabelText(/^model$/i), { target: { value: "gantry_v3" } });
+
+    expect(await screen.findByText(/detects: plate, vehicle/i)).toBeInTheDocument();
+  });
+
+  it("offers to remove a model you imported, but not a built-in", async () => {
+    vi.mocked(api.listModels).mockResolvedValue([...both, mine]);
+    panel();
+    await screen.findByLabelText(/^model$/i);
+
+    // The source list has its own Remove buttons, so this asks
+    // specifically about the built-in model.
+    expect(screen.queryByRole("button", { name: /remove yolo/i })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^model$/i), { target: { value: "gantry_v3" } });
+    expect(await screen.findByRole("button", { name: /remove gantry_v3/i })).toBeInTheDocument();
+  });
+
+  it("removes it and stops offering it", async () => {
+    const deleteModel = vi.spyOn(api, "deleteModel").mockResolvedValue(undefined);
+    vi.mocked(api.listModels).mockResolvedValueOnce([...both, mine]).mockResolvedValue(both);
+    panel();
+    fireEvent.change(await screen.findByLabelText(/^model$/i), { target: { value: "gantry_v3" } });
+
+    fireEvent.click(await screen.findByRole("button", { name: /remove gantry_v3/i }));
+
+    await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("gantry_v3"));
+    await waitFor(() => expect(screen.getByLabelText(/^model$/i)).not.toHaveTextContent(/gantry_v3/));
   });
 });

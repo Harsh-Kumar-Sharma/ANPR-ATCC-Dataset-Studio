@@ -151,6 +151,18 @@ export const api = {
 
   /** Everything that can detect: the built-ins, and your own. */
   listModels: () => request<ModelInfo[]>("/models"),
+
+  /** Take a .pt you trained into the app. The backend loads it as
+   *  part of accepting it, so this is slow and can refuse. */
+  importModel: (path: string, name?: string) =>
+    request<ModelInfo>("/models", {
+      method: "POST",
+      body: JSON.stringify({ path, name: name?.trim() || null }),
+    }),
+
+  /** Forget a model you imported. Built-ins are refused. */
+  deleteModel: (modelId: string) =>
+    request<void>(`/models/${encodeURIComponent(modelId)}`, { method: "DELETE" }),
   getProcessingRun: (runId: string) => request<ProcessingRun>(`/processing-runs/${runId}`),
 
   listJobs: (params: { projectId?: string; status?: string; type?: string } = {}) =>

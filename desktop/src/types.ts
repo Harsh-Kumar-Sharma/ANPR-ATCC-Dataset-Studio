@@ -504,6 +504,8 @@ export interface ModelInfo {
   present: boolean;
   bytes: number;
   note: string;
+  /** What a custom model detects, as its checkpoint reports it. */
+  classes: string[];
 }
 
 /** What a detection run would process, and what it would cost.

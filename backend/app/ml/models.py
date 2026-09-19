@@ -6,8 +6,9 @@ use a model you trained yourself. This is the list of what can be
 chosen, and the rules for turning a chosen id into a file on disk.
 """
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.errors import AppError, NotFoundError
@@ -68,6 +69,11 @@ class ModelInfo:
     present: bool
     bytes: int
     note: str = ""
+    #: What a custom model detects, as its checkpoint reports it.
+    #: Empty for a built-in (COCO, and the app knows what to do with
+    #: those) and for a file dropped into the directory by hand,
+    #: which nothing has read yet.
+    classes: list[str] = field(default_factory=list)
 
 
 def _size(path: Path) -> int:
@@ -101,18 +107,52 @@ def list_models(weights_dir: Path) -> list[ModelInfo]:
     for path in sorted(weights_dir.glob(f"*{WEIGHTS_SUFFIX}")):
         if path.name in _BUILTIN_FILES or not path.is_file():
             continue
+        # A file being copied in is not a model yet. Listing it would
+        # offer a half-written checkpoint as something to detect with.
+        if path.name.startswith(".importing-"):
+            continue
+        extra = _read_sidecar(weights_dir, path.stem)
+        classes = [str(c) for c in extra.get("classes", [])]
         models.append(
             ModelInfo(
                 id=path.stem,
-                label=path.stem,
+                label=str(extra.get("label") or path.stem),
                 kind="custom",
                 weights_file=path.name,
                 present=True,
                 bytes=_size(path),
-                note="Your own model.",
+                note=_describe_classes(classes),
+                classes=classes,
             )
         )
     return models
+
+
+def sidecar_path(weights_dir: Path, model_id: str) -> Path:
+    """Where what we know about an imported model is kept."""
+    return weights_dir / f"{model_id}.json"
+
+
+def _read_sidecar(weights_dir: Path, model_id: str) -> dict:
+    """What was recorded when the model was imported, if anything.
+
+    A model copied into the directory by hand has no sidecar, and
+    still works - it is just listed by its filename.
+    """
+    path = sidecar_path(weights_dir, model_id)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _describe_classes(classes: list[str]) -> str:
+    if not classes:
+        return "Your own model."
+    shown = ", ".join(classes[:6])
+    more = f" and {len(classes) - 6} more" if len(classes) > 6 else ""
+    return f"Your own model. Detects: {shown}{more}."
 
 
 def get_model(model_id: str, weights_dir: Path) -> ModelInfo:

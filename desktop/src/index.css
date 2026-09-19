@@ -2495,3 +2495,57 @@ label.toggle {
   background: var(--danger-bg);
   border: 1px solid var(--danger-border);
 }
+
+/* --- bringing your own model in ---------------------------------------- */
+
+.model-picker__manage {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.model-picker__add,
+.model-picker__remove {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.model-picker__remove {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+.model-picker__import {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.model-picker__import input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.model-picker__import-row {
+  display: flex;
+  gap: 6px;
+}
+
+.model-picker__import-row button {
+  flex: 1;
+  padding: 3px 8px;
+  font-size: 11px;
+}

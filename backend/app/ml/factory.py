@@ -7,9 +7,9 @@ from app.ml.detector import Detector
 from app.ml.plate_ocr import PlateOcrEngine
 from app.ml.rapidocr_engine import RapidOcrEngine
 from app.ml.tracker import Tracker
-from app.ml.models import DEFAULT_MODEL_ID
+from app.ml.models import DEFAULT_MODEL_ID, get_model
 from app.ml.weights import ensure_weights
-from app.ml.yolo_detector import YoloDetector
+from app.ml.yolo_detector import DEFAULT_VEHICLE_CLASS_NAMES, YoloDetector
 
 
 #: Given a model id, the detector for it.
@@ -28,7 +28,16 @@ def get_detector(model_id: str = DEFAULT_MODEL_ID) -> Detector:
     settings = get_settings()
     weights_dir = settings.resolved_model_weights_dir()
     path = ensure_weights(model_id, weights_dir)
-    return YoloDetector(weights=str(path), name=model_id, device=settings.device)
+    model = get_model(model_id, weights_dir)
+    # A built-in is a COCO model, where the allowlist is what keeps
+    # people and traffic lights out of a vehicle dataset. A model you
+    # trained has its own classes, and filtering those against COCO
+    # vehicle names would silently throw away everything it found -
+    # a plate detector's "plate" is not on that list.
+    allowlist = DEFAULT_VEHICLE_CLASS_NAMES if model.kind == "builtin" else None
+    return YoloDetector(
+        weights=str(path), name=model_id, device=settings.device, class_allowlist=allowlist
+    )
 
 
 def get_detector_provider() -> "DetectorProvider":

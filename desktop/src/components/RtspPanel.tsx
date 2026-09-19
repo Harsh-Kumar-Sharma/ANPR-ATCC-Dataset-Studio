@@ -96,7 +96,9 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
               onChange={(e) => setExpectedFps(Number(e.target.value))}
             />
           </label>
-          <ModelPicker choice={modelChoice} id="live-model" disabled={starting} />
+          {/* manage=false: importing and removing belong in one place,
+              and both pickers are in the same sidebar. */}
+          <ModelPicker choice={modelChoice} id="live-model" disabled={starting} manage={false} />
           <button type="submit" className="btn-primary btn-block" disabled={!url.trim() || starting}>
             {starting ? "Starting…" : "Start Live Capture"}
           </button>

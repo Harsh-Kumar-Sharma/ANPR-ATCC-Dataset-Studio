@@ -7,11 +7,15 @@ trained. This says what the choice is.
 
 from dataclasses import asdict
 
+from pathlib import Path
+
 from fastapi import APIRouter
 
 from app.core.config import get_settings
 from app.ml import models as model_registry
-from app.schemas.model import ModelRead
+from app.ml.factory import get_detector
+from app.schemas.model import ModelImportRequest, ModelRead
+from app.services.model_import import import_model, remove_model
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -26,3 +30,27 @@ def list_models() -> list[ModelRead]:
     """
     weights_dir = get_settings().resolved_model_weights_dir()
     return [ModelRead(**asdict(model)) for model in model_registry.list_models(weights_dir)]
+
+
+@router.post("", response_model=ModelRead, status_code=201)
+def import_a_model(payload: ModelImportRequest) -> ModelRead:
+    """Take a `.pt` you trained into the models directory.
+
+    The file is loaded as part of accepting it, which takes a few
+    seconds and is the point: a checkpoint that does not load is
+    refused here, rather than failing in the middle of a run where it
+    reaches the user as a failed job.
+    """
+    weights_dir = get_settings().resolved_model_weights_dir()
+    imported = import_model(Path(payload.path), weights_dir, name=payload.name)
+    return ModelRead(**asdict(imported.model))
+
+
+@router.delete("/{model_id}", status_code=204)
+def remove_a_model(model_id: str) -> None:
+    """Forget a model you imported. Built-ins are refused."""
+    weights_dir = get_settings().resolved_model_weights_dir()
+    remove_model(model_id, weights_dir)
+    # Otherwise the deleted model stays loaded and keeps detecting
+    # for the life of the process.
+    get_detector.cache_clear()

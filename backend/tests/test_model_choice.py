@@ -293,7 +293,7 @@ def test_switching_model_does_not_reload_the_one_already_in_memory(monkeypatch):
     loaded = []
 
     class _Loaded:
-        def __init__(self, weights, name=None, device=None):
+        def __init__(self, weights, name=None, device=None, class_allowlist=None):
             loaded.append(name)
             self.model_version = name
 

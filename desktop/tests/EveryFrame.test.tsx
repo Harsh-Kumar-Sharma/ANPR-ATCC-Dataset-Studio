@@ -57,6 +57,7 @@ const model: ModelInfo = {
   present: true,
   bytes: 5_544_453,
   note: "Fastest.",
+  classes: [],
 };
 
 const estimate = (over: Partial<RunEstimate> = {}): RunEstimate => ({
