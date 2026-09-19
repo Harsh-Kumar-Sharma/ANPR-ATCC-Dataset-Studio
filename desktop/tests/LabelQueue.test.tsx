@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api";
 import LabelQueue from "../src/components/LabelQueue";
+import { useFrameQueue } from "../src/useFrameQueue";
 import type { Frame, Project, QueueProgress, SourceQueue } from "../src/types";
 
 const project: Project = {
@@ -46,10 +47,30 @@ const progress = (over: Partial<QueueProgress> = {}): QueueProgress => ({
   ...over,
 });
 
-function renderQueue(props: Partial<React.ComponentProps<typeof LabelQueue>> = {}) {
-  return render(
-    <LabelQueue project={project} selectedFrameId={null} onSelect={vi.fn()} dirty={false} {...props} />,
-  );
+/** The panel plus the queue it shows. The list is held above the panel
+ *  now, so the two are exercised together - which is also how they run. */
+interface HarnessProps {
+  selectedFrameId?: string | null;
+  dirty?: boolean;
+  sourceId?: string | null;
+  onSelect?: (frame: Frame) => void;
+  onSourceChange?: (sourceId: string | null) => void;
+}
+
+function Harness({ selectedFrameId = null, dirty = false, sourceId, onSelect, onSourceChange }: HarnessProps) {
+  const queue = useFrameQueue({
+    project,
+    selectedFrameId,
+    dirty,
+    sourceId,
+    onSelect: onSelect ?? (() => {}),
+    onSourceChange,
+  });
+  return <LabelQueue queue={queue} selectedFrameId={selectedFrameId} />;
+}
+
+function renderQueue(props: HarnessProps = {}) {
+  return render(<Harness {...props} />);
 }
 
 describe("LabelQueue", () => {

@@ -425,6 +425,10 @@ function LabelCanvas({
         return;
       }
       if (isEditableTarget(e.target)) return;
+      // Ctrl/Cmd with an arrow moves between frames, not pixels. That
+      // belongs to the nav strip below the canvas; nudging here too
+      // would shift the box on the way out.
+      if (e.ctrlKey || e.metaKey) return;
       const step = e.shiftKey ? NUDGE_FAST : NUDGE;
       switch (e.key) {
         case "]":

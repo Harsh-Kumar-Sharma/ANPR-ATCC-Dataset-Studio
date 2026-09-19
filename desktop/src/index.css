@@ -2029,7 +2029,8 @@ label.toggle {
   cursor: default;
 }
 
-.label-queue__prompt {
+.label-queue__prompt,
+.frame-nav__prompt {
   margin: 0 0 10px;
   padding: 10px;
   font-size: 13px;
@@ -2038,7 +2039,8 @@ label.toggle {
   border-radius: var(--radius-sm);
 }
 
-.label-queue__prompt p {
+.label-queue__prompt p,
+.frame-nav__prompt p {
   margin: 0 0 8px;
 }
 
@@ -2383,4 +2385,44 @@ label.toggle {
 
 .source-list .source-name--link:hover {
   text-decoration: underline;
+}
+
+/* --- moving between frames, under the image --------------------------- */
+
+.frame-nav {
+  margin-top: 10px;
+}
+
+.frame-nav__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.frame-nav__row button {
+  min-width: 110px;
+}
+
+.frame-nav__position {
+  min-width: 90px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.frame-nav__hint {
+  margin: 6px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.frame-nav__hint .kbd {
+  margin: 0 1px;
+}
+
+.frame-nav__prompt {
+  margin-top: 10px;
 }

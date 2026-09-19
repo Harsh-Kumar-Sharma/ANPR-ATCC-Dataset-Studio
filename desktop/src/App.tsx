@@ -6,6 +6,7 @@ import ClassSchemaEditor from "./components/ClassSchemaEditor";
 import EvaluationPanel from "./components/EvaluationPanel";
 import JobIndicator from "./components/JobIndicator";
 import JobsPanel from "./components/JobsPanel";
+import FrameNav from "./components/FrameNav";
 import LabelCanvas from "./components/LabelCanvas";
 import LabelBalancePanel from "./components/LabelBalancePanel";
 import LabelQueue from "./components/LabelQueue";
@@ -18,6 +19,7 @@ import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
 import VideoPlayer from "./components/VideoPlayer";
 import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconCheck, IconFilm, IconInbox } from "./Icons";
+import { useFrameQueue } from "./useFrameQueue";
 import { useJobs } from "./useJobs";
 import type { Frame, Project, Source, Track } from "./types";
 
@@ -113,6 +115,19 @@ function App() {
     setMainView("player");
   }
 
+  // Held here rather than in the queue panel: the Previous/Next under
+  // the canvas walks the same list, and two copies would be two lists
+  // disagreeing about which frame comes next.
+  const frameQueue = useFrameQueue({
+    project,
+    selectedFrameId: labelFrame?.id ?? null,
+    dirty: labelDirty,
+    refreshKey: queueVersion,
+    sourceId: labelSourceId,
+    onSelect: (frame) => labelFrameNow(frame),
+    onSourceChange: setLabelSourceId,
+  });
+
   function labelFrameNow(frame: Frame) {
     setLabelFrame(frame);
     setLabelDirty(false);
@@ -167,28 +182,33 @@ function App() {
     );
   } else if (mainView === "label" && labelFrame) {
     main = (
-      <LabelCanvas
-        key={labelFrame.id}
-        project={project}
-        frame={labelFrame}
-        classesVersion={classesVersion}
-        onSaved={() => setQueueVersion((v) => v + 1)}
-        onDirtyChange={setLabelDirty}
-        onRejected={() => {
-          // The frame leaves the queue, but the user is still labelling -
-          // the queue picks the next one rather than dropping them out.
-          setLabelDirty(false);
-          setLabelFrame(null);
-          setQueueVersion((v) => v + 1);
-        }}
-        onDeleted={() => {
-          // Same move as a skip. The difference is behind it: there is
-          // no frame left to put back.
-          setLabelDirty(false);
-          setLabelFrame(null);
-          setQueueVersion((v) => v + 1);
-        }}
-      />
+      <>
+        <LabelCanvas
+          key={labelFrame.id}
+          project={project}
+          frame={labelFrame}
+          classesVersion={classesVersion}
+          onSaved={() => setQueueVersion((v) => v + 1)}
+          onDirtyChange={setLabelDirty}
+          onRejected={() => {
+            // The frame leaves the queue, but the user is still labelling -
+            // the queue picks the next one rather than dropping them out.
+            setLabelDirty(false);
+            setLabelFrame(null);
+            setQueueVersion((v) => v + 1);
+          }}
+          onDeleted={() => {
+            // Same move as a skip. The difference is behind it: there is
+            // no frame left to put back.
+            setLabelDirty(false);
+            setLabelFrame(null);
+            setQueueVersion((v) => v + 1);
+          }}
+        />
+        {/* Under the image, where the work is - not only in the
+            sidebar the user has to look away to reach. */}
+        <FrameNav queue={frameQueue} />
+      </>
     );
   } else if (mainView === "live" && liveRunId) {
     main = <LivePreview key={liveRunId} runId={liveRunId} onClose={() => setMainView("review")} />;
@@ -251,15 +271,7 @@ function App() {
             </>
           )}
           {tab === "label" && (
-            <LabelQueue
-              project={project}
-              selectedFrameId={labelFrame?.id ?? null}
-              dirty={labelDirty}
-              refreshKey={queueVersion}
-              sourceId={labelSourceId}
-              onSelect={labelFrameNow}
-              onSourceChange={setLabelSourceId}
-            />
+            <LabelQueue queue={frameQueue} selectedFrameId={labelFrame?.id ?? null} />
           )}
           {tab === "live" && (
             <RtspPanel project={project} onSessionEnded={refreshTracks} onShowPreview={showLivePreview} />
