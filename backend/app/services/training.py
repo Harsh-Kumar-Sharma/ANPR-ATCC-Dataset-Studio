@@ -1,0 +1,308 @@
+"""Training a model inside the app.
+
+The app used to write a `data.yaml` and a `RETRAINING.md` and stop
+there, leaving the user to copy a command into a terminal. This runs
+that command for them, on the job machinery that already carries
+long work: a detached process, a progress file, and a cancel.
+
+One at a time, deliberately. The GPU here is small and training is
+the one job that will saturate it; a second run started by accident
+would make both slower and could exhaust GPU memory outright.
+"""
+
+import logging
+import shutil
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.errors import AppError, ConflictError, NotFoundError
+from app.db.models.dataset_version import DatasetVersion
+from app.db.models.project import Project
+from app.db.models.training_run import TrainingRun
+from app.ml.models import WEIGHTS_SUFFIX, get_model
+from app.ml.weights import ensure_weights
+from app.services.model_import import safe_id
+from app.services.run_estimate import free_bytes_for
+
+logger = logging.getLogger(__name__)
+
+#: Statuses that mean the run is still going, and so still hold the GPU.
+UNFINISHED = ("pending", "running")
+
+#: Refuse to start a run that would leave less than this free.
+#: Checkpoints, cached labels and the copied dataset all land on disk
+#: while it runs, and a training run that fills the disk at epoch 80
+#: wastes an hour rather than a minute.
+SPACE_FLOOR_BYTES = 2 * 1024**3
+
+
+class TrainingBusyError(ConflictError):
+    """Another training run already has the GPU."""
+
+    code = "training_busy"
+
+
+class TrainingUnavailableError(AppError):
+    code = "training_unavailable"
+
+
+@dataclass
+class TrainingProgress:
+    """What one epoch reported."""
+
+    epoch: int
+    epochs: int
+    loss: float | None = None
+    map50: float | None = None
+
+    def message(self) -> str:
+        parts = [f"Epoch {self.epoch} of {self.epochs}"]
+        if self.loss is not None:
+            parts.append(f"loss {self.loss:.3f}")
+        if self.map50 is not None:
+            parts.append(f"mAP50 {self.map50:.3f}")
+        return " · ".join(parts)
+
+    def fraction(self) -> float:
+        if self.epochs <= 0:
+            return 0.0
+        # Held below 1.0: the run is not done until the weights have
+        # been imported, and a bar that sits at 100% while something
+        # is still happening is a bar that lies.
+        return min(0.95, self.epoch / self.epochs * 0.95)
+
+
+def unfinished_run(db: Session) -> TrainingRun | None:
+    """The run currently holding the GPU, if there is one."""
+    return db.scalar(select(TrainingRun).where(TrainingRun.status.in_(UNFINISHED)))
+
+
+def require_gpu_free(db: Session) -> None:
+    busy = unfinished_run(db)
+    if busy is None:
+        return
+    raise TrainingBusyError(
+        f"A training run started {busy.started_at:%H:%M} is still going, on dataset version "
+        f"{busy.dataset_version_id}. Only one runs at a time - this machine has one GPU, and a "
+        "second run would make both slower. Wait for it or cancel it first.",
+    )
+
+
+def training_root(workspace_path: Path) -> Path:
+    return workspace_path / "training"
+
+
+def run_directory(workspace_path: Path, run_id: str) -> Path:
+    return training_root(workspace_path) / run_id
+
+
+def dataset_yaml(workspace_path: Path, version: DatasetVersion) -> Path:
+    """Where the export for this version wrote its data.yaml."""
+    return workspace_path / "exports" / f"v{version.version}" / "data.yaml"
+
+
+def write_data_yaml(db: Session, project: Project, version: DatasetVersion, export_dir: Path) -> Path:
+    """Write the data.yaml an export is missing.
+
+    Reuses the same writer the handoff endpoint uses, so a dataset
+    trained in the app and one trained from a terminal are described
+    by identical files.
+    """
+    import json
+
+    from app.services.class_definitions import class_names_for
+    from app.services.retraining_handoff import write_retraining_handoff
+
+    manifest_path = export_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    snapshot = manifest.get("class_schema") or []
+    names = [c["name"] for c in snapshot] if snapshot else class_names_for(db, project.id)
+
+    paths = write_retraining_handoff(export_dir, names, base_model="yolo26n.pt")
+    return Path(paths["data_yaml_path"])
+
+
+def prepare(
+    db: Session,
+    project: Project,
+    dataset_version: DatasetVersion,
+    base_model_id: str,
+    weights_dir: Path,
+    epochs: int = 100,
+    image_size: int = 640,
+    settings: dict | None = None,
+) -> TrainingRun:
+    """Check everything a run needs, and record it as about to start.
+
+    Checked here rather than in the worker because every one of these
+    is the caller's mistake, and finding out an hour later through a
+    failed job is a poor way to learn that a dataset was never
+    exported.
+    """
+    require_gpu_free(db)
+
+    workspace = Path(project.workspace_path)
+    yaml_path = dataset_yaml(workspace, dataset_version)
+    if not yaml_path.parent.is_dir():
+        raise TrainingUnavailableError(
+            f"Dataset version v{dataset_version.version} has no exported files at {yaml_path.parent}. "
+            "Export it before training on it."
+        )
+    if not yaml_path.is_file():
+        # data.yaml is written by the handoff endpoint, which exists
+        # for training outside the app. Training inside it should not
+        # require pressing that button first, so write the file here
+        # if it is missing.
+        write_data_yaml(db, project, dataset_version, yaml_path.parent)
+
+    # An unknown base model is a 404 from here, the same as everywhere
+    # else a model id is accepted.
+    get_model(base_model_id, weights_dir)
+
+    free = free_bytes_for(workspace)
+    if free < SPACE_FLOOR_BYTES:
+        raise TrainingUnavailableError(
+            f"Only {free // 1024**2} MB free. Training writes checkpoints as it goes, and a run that "
+            "fills the disk at epoch 80 wastes an hour rather than a minute. Free some space first - "
+            "the Storage tool can tell you where it went."
+        )
+
+    run = TrainingRun(
+        project_id=project.id,
+        dataset_version_id=dataset_version.id,
+        base_model_id=base_model_id,
+        epochs=epochs,
+        image_size=image_size,
+        settings_json=settings or {},
+        status="pending",
+    )
+    db.add(run)
+    db.flush()
+    return run
+
+
+#: Runs the training. Injected so tests never load torch.
+Trainer = Callable[..., Path]
+
+
+def train_with_ultralytics(
+    weights: Path,
+    data_yaml: Path,
+    output_dir: Path,
+    epochs: int,
+    image_size: int,
+    device: str | None,
+    on_epoch: Callable[[TrainingProgress], None],
+) -> Path:
+    """Run Ultralytics training and return the best checkpoint.
+
+    Imported inside the function: ultralytics pulls in torch, which is
+    seconds of import time that a process not training should not pay.
+    """
+    from ultralytics import YOLO
+
+    model = YOLO(str(weights))
+
+    def report(trainer) -> None:
+        # Ultralytics hands the trainer over; everything useful is on
+        # it, and all of it is optional depending on the version.
+        metrics = getattr(trainer, "metrics", None) or {}
+        losses = getattr(trainer, "label_loss_items", None)
+        loss = None
+        if callable(losses):
+            try:
+                loss = float(sum(losses(getattr(trainer, "tloss", None)).values()))
+            except Exception:  # noqa: BLE001 - progress must not break training
+                loss = None
+        on_epoch(
+            TrainingProgress(
+                epoch=int(getattr(trainer, "epoch", 0)) + 1,
+                epochs=epochs,
+                loss=loss,
+                map50=_first_float(metrics, ("metrics/mAP50(B)", "metrics/mAP50", "mAP50")),
+            )
+        )
+
+    model.add_callback("on_fit_epoch_end", report)
+    model.train(
+        data=str(data_yaml),
+        epochs=epochs,
+        imgsz=image_size,
+        device=device,
+        project=str(output_dir),
+        name="run",
+        exist_ok=True,
+    )
+
+    best = output_dir / "run" / "weights" / "best.pt"
+    if not best.is_file():
+        raise TrainingUnavailableError(f"Training finished but left no checkpoint at {best}")
+    return best
+
+
+def _first_float(metrics: dict, keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = metrics.get(key)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def adopt_weights(best: Path, weights_dir: Path, run: TrainingRun, version: int) -> str:
+    """Put the trained weights where the model picker will find them.
+
+    Named after the dataset version it was trained on rather than
+    "best", because "best.pt" tells you nothing six weeks later and
+    the models directory is a flat list.
+    """
+    base = safe_id(f"{run.base_model_id}-v{version}")
+    model_id = base
+    suffix = 2
+    while (weights_dir / f"{model_id}{WEIGHTS_SUFFIX}").exists():
+        # Training the same pair twice is a normal thing to do; the
+        # second result must not overwrite the first.
+        model_id = f"{base}-{suffix}"
+        suffix += 1
+
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    destination = weights_dir / f"{model_id}{WEIGHTS_SUFFIX}"
+    shutil.copy2(best, destination)
+    return model_id
+
+
+def base_weights(base_model_id: str, weights_dir: Path) -> Path:
+    """The checkpoint a run starts from, fetched if it is a built-in
+    that has never been used here."""
+    return ensure_weights(base_model_id, weights_dir)
+
+
+def settle(db: Session, run_id: str, status: str, message: str | None = None) -> None:
+    """Leave a run that stopped without finishing in an honest state.
+
+    Without this the row stays "running" forever, which both
+    misreports what happened and holds the GPU against every future
+    run.
+    """
+    run = db.get(TrainingRun, run_id)
+    if run is None or run.status not in UNFINISHED:
+        return
+    run.status = status
+    if message:
+        run.error_message = message[:2048]
+    run.completed_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def get_run(db: Session, run_id: str) -> TrainingRun:
+    run = db.get(TrainingRun, run_id)
+    if run is None:
+        raise NotFoundError(f"Training run not found: {run_id}")
+    return run

@@ -12,6 +12,7 @@ import LabelCanvas from "./components/LabelCanvas";
 import LabelBalancePanel from "./components/LabelBalancePanel";
 import LabelQueue from "./components/LabelQueue";
 import StoragePanel from "./components/StoragePanel";
+import TrainingPanel from "./components/TrainingPanel";
 import LivePreview from "./components/LivePreview";
 import ProjectPicker from "./components/ProjectPicker";
 import RtspPanel from "./components/RtspPanel";
@@ -327,6 +328,7 @@ function App() {
           {tab === "dataset" && (
             <>
               <DatasetPanel project={project} />
+              <TrainingPanel project={project} jobs={jobs} refreshKey={queueVersion} />
               <StoragePanel project={project} refreshKey={queueVersion} />
               <ClassSchemaEditor project={project} onClassesChanged={() => setClassesVersion((v) => v + 1)} />
             </>

@@ -13,6 +13,7 @@ from app.api.frames import frames_router, project_frames_router
 from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
+from app.api.training import router as training_router, runs_router as training_runs_router
 from app.api.labels import router as labels_router
 from app.api.playback import router as playback_router
 from app.api.processing_profiles import router as processing_profiles_router
@@ -95,6 +96,8 @@ app.include_router(health_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
 app.include_router(models_router)
+app.include_router(training_router)
+app.include_router(training_runs_router)
 app.include_router(classes_router)
 app.include_router(attributes_router)
 app.include_router(labels_router)

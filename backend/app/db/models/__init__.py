@@ -11,10 +11,12 @@ from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
 from app.db.models.source import Source
 from app.db.models.track import Track
+from app.db.models.training_run import TrainingRun
 
 __all__ = [
     "Project",
     "LiveCamera",
+    "TrainingRun",
     "Source",
     "ProcessingRun",
     "Track",

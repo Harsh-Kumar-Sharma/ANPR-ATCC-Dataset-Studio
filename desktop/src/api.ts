@@ -30,6 +30,8 @@ import type {
   ModelInfo,
   RunEstimate,
   Sweep,
+  TrainingRun,
+  TrainingStarted,
   Source,
   SourceContents,
   SourceQueue,
@@ -284,6 +286,25 @@ export const api = {
   deleteDatasetVersion: (datasetVersionId: string) =>
     request<Reclaimed>(`/dataset-versions/${datasetVersionId}`, { method: "DELETE" }),
   listDatasetVersions: (projectId: string) => request<DatasetVersion[]>(`/projects/${projectId}/dataset-versions`),
+
+  /** Start training on an exported dataset version. Returns as soon
+   *  as it is queued - follow it through the job. */
+  startTraining: (
+    projectId: string,
+    options: { datasetVersionId: string; baseModelId: string; epochs: number; imageSize: number },
+  ) =>
+    request<TrainingStarted>(`/projects/${projectId}/training-runs`, {
+      method: "POST",
+      body: JSON.stringify({
+        dataset_version_id: options.datasetVersionId,
+        base_model_id: options.baseModelId,
+        epochs: options.epochs,
+        image_size: options.imageSize,
+      }),
+    }),
+
+  listTrainingRuns: (projectId: string) =>
+    request<TrainingRun[]>(`/projects/${projectId}/training-runs`),
   exportDataset: (projectId: string) =>
     request<DatasetExportResult>(`/projects/${projectId}/dataset-versions`, { method: "POST", body: JSON.stringify({}) }),
 

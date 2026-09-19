@@ -546,3 +546,27 @@ export interface LiveCamera {
   keep_every: number;
   last_used_at: string;
 }
+
+/** One attempt at training a model, and what it was made from. */
+export interface TrainingRun {
+  id: string;
+  project_id: string;
+  dataset_version_id: string;
+  base_model_id: string;
+  job_id: string | null;
+  epochs: number;
+  image_size: number;
+  status: string;
+  /** The model id the finished weights were added under. */
+  output_model_id: string | null;
+  best_map50: number | null;
+  last_epoch: number | null;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface TrainingStarted {
+  run: TrainingRun;
+  job_id: string;
+}

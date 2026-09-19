@@ -18,13 +18,17 @@ from sqlalchemy.orm import Session
 from app.core.errors import NotFoundError
 from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
+from app.db.models.dataset_version import DatasetVersion
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
 from app.db.models.source import Source
+from app.db.models.training_run import TrainingRun
 from app.core.config import get_settings
 from app.ml.factory import create_tracker, get_detector
 from app.ml.models import DEFAULT_MODEL_ID
 from app.ml.weights import ensure_weights
+from app.services import training
+from app.services.training import train_with_ultralytics as train
 from app.services.frame_sampler import SampledFrame, decode_sampled_frames
 from app.services.frame_selection import FrameSignals, brightness_of, frame_quality, perceptual_hash, select_frames
 from app.services.track_processor import ProgressReporter, process_source
@@ -150,6 +154,93 @@ def settle_detect_job(db: Session, params: dict, outcome: str) -> None:
     db.commit()
 
 
+def run_train_job(db: Session, params: dict, report: ProgressReporter) -> dict:
+    """Train a model on a dataset version.
+
+    Runs in the detached worker, like detection: a training run is
+    tens of minutes to hours, and the app window closing must not
+    take it with it.
+    """
+    run_id = params["training_run_id"]
+    run = db.get(TrainingRun, run_id)
+    if run is None:
+        raise NotFoundError(f"Training run not found: {run_id}")
+
+    project = db.get(Project, run.project_id)
+    if project is None:
+        raise NotFoundError(f"Project not found: {run.project_id}")
+    version = db.get(DatasetVersion, run.dataset_version_id)
+    if version is None:
+        raise NotFoundError(f"Dataset version not found: {run.dataset_version_id}")
+
+    workspace = Path(project.workspace_path)
+    weights_dir = get_settings().resolved_model_weights_dir()
+
+    run.status = "running"
+    db.commit()
+
+    report(0.0, f"Fetching {run.base_model_id}")
+    weights = training.base_weights(run.base_model_id, weights_dir)
+
+    def on_epoch(progress: training.TrainingProgress) -> None:
+        # Written to the row as well as the progress file: the file is
+        # how the UI follows a live run, the row is what survives the
+        # app being closed and reopened.
+        run.last_epoch = progress.epoch
+        if progress.map50 is not None:
+            run.best_map50 = max(run.best_map50 or 0.0, progress.map50)
+        db.commit()
+        report(progress.fraction(), progress.message())
+
+    report(0.0, f"Training on v{version.version} from {run.base_model_id}")
+    try:
+        best = train(
+            weights=weights,
+            data_yaml=training.dataset_yaml(workspace, version),
+            output_dir=training.run_directory(workspace, run.id),
+            epochs=run.epochs,
+            image_size=run.image_size,
+            device=get_settings().device,
+            on_epoch=on_epoch,
+        )
+    except BaseException as exc:
+        # The row has to reflect it, or the GPU stays held against
+        # every future run by a row that claims to be training.
+        run.status = "failed"
+        run.error_message = str(exc)[:2048]
+        run.completed_at = _utcnow()
+        db.commit()
+        raise
+
+    report(0.97, "Adding the trained model")
+    model_id = training.adopt_weights(best, weights_dir, run, version.version)
+
+    run.output_model_id = model_id
+    run.status = "completed"
+    run.completed_at = _utcnow()
+    db.commit()
+
+    return {"training_run_id": run.id, "model_id": model_id, "project_id": project.id}
+
+
+def settle_train_job(db: Session, params: dict, outcome: str) -> None:
+    """Leave an abandoned training run in an honest state.
+
+    Checkpoints already written stay where they are - a cancelled run
+    at epoch 60 has produced something, and deleting it would throw
+    away an hour of GPU time the user paid for.
+    """
+    run_id = params.get("training_run_id")
+    if run_id is None:
+        return
+    training.settle(
+        db,
+        run_id,
+        outcome,
+        "Stopped before it finished. Any checkpoints it had already written are in the run's folder.",
+    )
+
+
 @dataclass(frozen=True)
 class JobHandler:
     """Everything the job system needs to know about one job type.
@@ -252,4 +343,5 @@ def _decode(frames: list[Frame], source: Source):
 HANDLERS: dict[str, JobHandler] = {
     "detect": JobHandler(run=run_detect_job, on_abort=settle_detect_job),
     "select": JobHandler(run=run_select_job),
+    "train": JobHandler(run=run_train_job, on_abort=settle_train_job),
 }
