@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { IconAlert } from "../Icons";
 import { isEditableTarget } from "../keyboard";
-import type { Annotation, Frame, FrameAnnotationWrite, Project, ProjectClass } from "../types";
+import type { Annotation, Bbox, Frame, FrameAnnotationWrite, Project, ProjectClass } from "../types";
 
 interface Props {
   project: Project;
@@ -13,7 +13,6 @@ interface Props {
 }
 
 type Box = FrameAnnotationWrite;
-type Bbox = [number, number, number, number];
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 const HANDLES: Handle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
@@ -48,15 +47,42 @@ function shifted(b: Bbox, dx: number, dy: number, width: number, height: number)
   return [b[0] + sx, b[1] + sy, b[2] + sx, b[3] + sy];
 }
 
+/** Keep a dragged edge at least MIN_BOX_SIDE from the edge it pivots on.
+ *
+ *  Crossing over is still allowed - that is the flip - but the moving
+ *  edge cannot land on the anchor, which would make a box of no area
+ *  that the server rejects on save and the user cannot see to fix. If
+ *  the minimum does not fit on the side being approached, it goes to
+ *  the other side, so a box pinned against the frame edge still resists
+ *  rather than collapsing.
+ */
+function withMinimumSpan(anchor: number, moving: number, limit: number): number {
+  const next = moving >= anchor ? Math.max(moving, anchor + MIN_BOX_SIDE) : Math.min(moving, anchor - MIN_BOX_SIDE);
+  if (next < 0) return Math.min(anchor + MIN_BOX_SIDE, limit);
+  if (next > limit) return Math.max(anchor - MIN_BOX_SIDE, 0);
+  return next;
+}
+
 /** Move the edge(s) a handle names to the pointer, then normalise so
  *  dragging past the opposite edge flips the box instead of inverting. */
-function resized(origin: Bbox, handle: Handle, px: number, py: number): Bbox {
+function resized(origin: Bbox, handle: Handle, px: number, py: number, width: number, height: number): Bbox {
   const [x1, y1, x2, y2] = origin;
+  // The anchor is the edge that is not moving - the box pivots on it.
+  const nx = handle.includes("w")
+    ? withMinimumSpan(x2, px, width)
+    : handle.includes("e")
+      ? withMinimumSpan(x1, px, width)
+      : null;
+  const ny = handle.includes("n")
+    ? withMinimumSpan(y2, py, height)
+    : handle.includes("s")
+      ? withMinimumSpan(y1, py, height)
+      : null;
   const next: Bbox = [
-    handle.includes("w") ? px : x1,
-    handle.includes("n") ? py : y1,
-    handle.includes("e") ? px : x2,
-    handle.includes("s") ? py : y2,
+    handle.includes("w") ? (nx as number) : x1,
+    handle.includes("n") ? (ny as number) : y1,
+    handle.includes("e") ? (nx as number) : x2,
+    handle.includes("s") ? (ny as number) : y2,
   ];
   return normalise(next);
 }
@@ -153,6 +179,23 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
     setDrag(next);
   }
 
+  /** Abandon a drag in progress, or deselect if there is none.
+   *
+   *  A move or resize has already written its geometry by the time this
+   *  runs, so cancelling has to put the box back - otherwise it stays
+   *  where it was dragged while Save sits disabled, and the edit is
+   *  stranded somewhere the user cannot commit or undo.
+   */
+  function cancelDrag() {
+    const d = dragRef.current;
+    if (!d) {
+      setSelected(null);
+      return;
+    }
+    if (d.kind !== "draw") setBox(d.index, d.origin);
+    updateDrag(null);
+  }
+
   function setBox(index: number, bbox: Bbox) {
     setBoxes((prev) => prev.map((b, i) => (i === index ? { ...b, bbox_json: bbox } : b)));
   }
@@ -197,7 +240,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
         setBox(d.index, shifted(d.origin, px - d.startX, py - d.startY, frame.width, frame.height));
         return d;
       case "resize":
-        setBox(d.index, resized(d.origin, d.handle, px, py));
+        setBox(d.index, resized(d.origin, d.handle, px, py, frame.width, frame.height));
         return d;
     }
   }
@@ -216,7 +259,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
     const final =
       d.kind === "move"
         ? shifted(d.origin, px - d.startX, py - d.startY, frame.width, frame.height)
-        : resized(d.origin, d.handle, px, py);
+        : resized(d.origin, d.handle, px, py, frame.width, frame.height);
     setBox(d.index, final);
     if (!sameBox(final, d.origin)) setDirty(true);
   }
@@ -259,8 +302,12 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
 
   function deleteSelected() {
     if (selected === null) return;
+    const remaining = boxes.length - 1;
     setBoxes((prev) => prev.filter((_, i) => i !== selected));
-    setSelected(null);
+    // Stay where the user was working rather than dropping them out of
+    // the frame entirely: the box that slid into this slot, or the last
+    // one if they deleted the end of the list.
+    setSelected(remaining === 0 ? null : Math.min(selected, remaining - 1));
     setDirty(true);
   }
 
@@ -294,8 +341,7 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
           cycle(-1);
           break;
         case "Escape":
-          if (dragRef.current) updateDrag(null);
-          else setSelected(null);
+          cancelDrag();
           break;
         case "Delete":
         case "Backspace":
@@ -344,14 +390,36 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
   // --- saving --------------------------------------------------------------
 
   async function save() {
+    // What is being sent, held by identity. Editing replaces the array,
+    // so this is how the response knows whether it is still describing
+    // what the user has on screen.
+    const sent = boxes;
+    const selectedId = selected !== null ? boxes[selected].id : null;
     setSaving(true);
     try {
-      const saved = await api.saveFrameAnnotations(frame.id, boxes);
-      setBoxes(saved.map(fromAnnotation));
-      setSelected((s) => (s !== null && s < saved.length ? s : null));
-      setDirty(false);
-      setError(null);
+      const saved = await api.saveFrameAnnotations(frame.id, sent);
       onSaved?.({ ...frame, status: "labeled" });
+      setError(null);
+
+      if (boxesRef.current !== sent) {
+        // The user kept working while the request was out. Their boxes
+        // win - adopting the response here would silently undo whatever
+        // they just did, and the frame still has changes to send.
+        return;
+      }
+
+      // Server order is by updated_at, so an edited box can come back in
+      // a different position. Put them back in the order they were sent
+      // so the canvas does not reshuffle under the user, with anything
+      // new appended.
+      const byId = new Map(saved.map((a) => [a.id, a]));
+      const inSentOrder = sent.flatMap((box) => (box.id && byId.has(box.id) ? [byId.get(box.id)!] : []));
+      const seen = new Set(inSentOrder.map((a) => a.id));
+      const ordered = [...inSentOrder, ...saved.filter((a) => !seen.has(a.id))];
+
+      setBoxes(ordered.map(fromAnnotation));
+      setSelected(selectedId !== null ? ordered.findIndex((a) => a.id === selectedId) : null);
+      setDirty(false);
     } catch (e) {
       setError(describe(e));
     } finally {
@@ -361,13 +429,15 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
 
   // --- render --------------------------------------------------------------
 
-  const className = (id: number | null) => classes.find((c) => c.id === id)?.name ?? "?";
+  const classNameOf = (id: number | null) => classes.find((c) => c.id === id)?.name ?? "?";
   const draftBox: Bbox | null = drag?.kind === "draw" ? normalise([drag.x1, drag.y1, drag.x2, drag.y2]) : null;
   const unclassified = boxes.filter((b) => b.class_id === null).length;
   const selectedBox = selected !== null ? boxes[selected] : null;
-  // Handle size in frame pixels: constant enough on screen across the
-  // frame sizes this app sees, without another rendered-size to track.
+  // Sized in frame pixels, as a fraction of the frame: the overlay is
+  // scaled to fit, so a fixed number of frame units would render tiny on
+  // a 1920px frame and huge on a 640px one. Same reasoning for both.
   const handleSize = Math.max(6, frame.width * 0.01);
+  const labelSize = Math.max(11, frame.width * 0.016);
 
   function handlePoints(b: Bbox): Record<Handle, [number, number]> {
     const cx = (b[0] + b[2]) / 2;
@@ -409,30 +479,35 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
               <text
                 className="label-canvas__class"
                 data-testid="label-class"
-                x={box.bbox_json[0] + 4}
-                y={box.bbox_json[1] + 14}
+                x={box.bbox_json[0] + labelSize * 0.3}
+                y={box.bbox_json[1] + labelSize * 1.1}
+                style={{ fontSize: labelSize, strokeWidth: labelSize * 0.25 }}
               >
-                {className(box.class_id)}
+                {classNameOf(box.class_id)}
               </text>
             </g>
           ))}
           {selectedBox &&
-            HANDLES.map((handle) => {
-              const [hx, hy] = handlePoints(selectedBox.bbox_json)[handle];
-              return (
-                <rect
-                  key={handle}
-                  className="label-canvas__handle"
-                  data-testid="label-handle"
-                  data-handle={handle}
-                  x={hx - handleSize / 2}
-                  y={hy - handleSize / 2}
-                  width={handleSize}
-                  height={handleSize}
-                  onMouseDown={(e) => startResize(e, selected as number, handle)}
-                />
-              );
-            })}
+            selected !== null &&
+            (() => {
+              const points = handlePoints(selectedBox.bbox_json);
+              return HANDLES.map((handle) => {
+                const [hx, hy] = points[handle];
+                return (
+                  <rect
+                    key={handle}
+                    className="label-canvas__handle"
+                    data-testid="label-handle"
+                    data-handle={handle}
+                    x={hx - handleSize / 2}
+                    y={hy - handleSize / 2}
+                    width={handleSize}
+                    height={handleSize}
+                    onMouseDown={(e) => startResize(e, selected, handle)}
+                  />
+                );
+              });
+            })()}
           {draftBox && (
             <rect
               className="label-canvas__draft"

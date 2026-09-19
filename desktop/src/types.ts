@@ -140,6 +140,9 @@ export interface Frame {
   selection_reason: string | null;
 }
 
+/** A box as `[x1, y1, x2, y2]`. Full-frame pixels everywhere it is used. */
+export type Bbox = [number, number, number, number];
+
 /** One box as the canvas sends it. Coordinates are full-frame pixels.
  *  `id` is the annotation this box already is when it was loaded rather
  *  than drawn; echoing it keeps that row - and whatever indexes it -
@@ -147,7 +150,7 @@ export interface Frame {
 export interface FrameAnnotationWrite {
   id: string | null;
   class_id: number | null;
-  bbox_json: [number, number, number, number];
+  bbox_json: Bbox;
   attributes: Record<string, unknown>;
 }
 

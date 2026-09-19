@@ -23,3 +23,19 @@ there is a test that does exactly that.
 **Note:** `isEditableTarget` moved out of `TrackReview` into `src/keyboard.ts` -
 both panels put single-letter shortcuts on the window, so both need the same
 rule that typing into a field never triggers them.
+
+**From review (fixed):** a resize could collapse a box onto the opposite edge,
+producing zero area the server rejects on save - invisible, and impossible for
+the user to locate. A dragged edge now stops `MIN_BOX_SIDE` short of the edge it
+pivots on; crossing over still flips. Escape mid-drag left the box where it had
+been dragged with Save disabled, stranding the edit; it puts the box back now.
+An edit made while a save was in flight was overwritten by the response; the
+response is dropped instead, since the user's boxes are newer. Selection follows
+the box by id rather than by position, and the saved set is restored in the
+order it was sent, because the server orders by `updated_at` and an edited box
+can come back somewhere else.
+
+**Not done, and not required here:** there is no keyboard *resize* - arrows move
+a box, they do not reshape it. The ticket asks for adjustment from the keyboard
+and the documented keymap says move; worth a follow-up if labelling turns out to
+need it.

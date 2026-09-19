@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { IconAlert, IconCheck, IconX } from "../Icons";
 import { isEditableTarget } from "../keyboard";
-import type { ProjectClass, FrameCandidate, OcrCandidate, Project, Track, TrackTimeline } from "../types";
+import type { Bbox, FrameCandidate, OcrCandidate, Project, ProjectClass, Track, TrackTimeline } from "../types";
 
 interface Props {
   project: Project;
@@ -14,8 +14,6 @@ interface Props {
    *  open rather than on the next remount. */
   classesVersion?: number;
 }
-
-type Bbox = [number, number, number, number];
 
 function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersion = 0 }: Props) {
   const [timeline, setTimeline] = useState<TrackTimeline | null>(null);

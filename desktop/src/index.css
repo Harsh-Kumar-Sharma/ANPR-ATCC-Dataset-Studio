@@ -1806,12 +1806,15 @@ label.toggle {
   stroke-width: 3;
 }
 
+/* Font size and stroke width are set on the element: this text lives
+   inside the viewBox, so it scales with the frame and a fixed size here
+   would be illegible on a 1920px frame. */
 .label-canvas__overlay text.label-canvas__class {
-  font: 600 12px var(--font-sans);
+  font-family: var(--font-sans);
+  font-weight: 600;
   fill: var(--accent-fg);
   paint-order: stroke;
   stroke: var(--accent);
-  stroke-width: 3px;
   stroke-linejoin: round;
   pointer-events: none;
   user-select: none;

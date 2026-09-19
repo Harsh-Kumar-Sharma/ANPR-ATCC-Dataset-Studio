@@ -397,6 +397,70 @@ describe("LabelCanvas: editing", () => {
     expect(geometry(box())).toEqual([40, 100, 60, 50]);
   });
 
+  it("a resize cannot collapse a box to nothing", async () => {
+    // The server rejects a zero-area box (0 <= x1 < x2), so a handle
+    // dragged onto the opposite edge must stop short rather than produce
+    // something that fails on save.
+    renderCanvas();
+    await waitFor(() => expect(screen.getAllByTestId("label-box")).toHaveLength(1));
+    key("]");
+
+    const e = screen.getAllByTestId("label-handle").find((h) => h.getAttribute("data-handle") === "e")!;
+    // Drag the east edge exactly onto the west edge at frame x=100 [screen 50].
+    drag(e, [100, 62], [50, 62]);
+
+    const [x, , width] = geometry(box());
+    expect(width).toBeGreaterThanOrEqual(2);
+    expect(x).toBe(100);
+  });
+
+  it("a resize cannot collapse a box against the frame edge either", async () => {
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation([0, 0, 100, 50], 1)]);
+    renderCanvas();
+    await waitFor(() => expect(screen.getAllByTestId("label-box")).toHaveLength(1));
+    key("]");
+
+    const w = screen.getAllByTestId("label-handle").find((h) => h.getAttribute("data-handle") === "w")!;
+    // West edge is already at 0; drag it right onto the east edge.
+    drag(w, [0, 12], [50, 12]);
+
+    const [, , width] = geometry(box());
+    expect(width).toBeGreaterThanOrEqual(2);
+  });
+
+  it("Escape during a drag puts the box back where it was", async () => {
+    // apply() has already written the dragged geometry by the time Escape
+    // arrives, so cancelling has to restore the original - otherwise the
+    // box stays moved while Save sits disabled and the edit is stranded.
+    renderCanvas();
+    await waitFor(() => expect(screen.getAllByTestId("label-box")).toHaveLength(1));
+    const before = geometry(box());
+
+    fireEvent.mouseDown(box(), { button: 0, clientX: 60, clientY: 60 });
+    fireEvent.mouseMove(window, { clientX: 90, clientY: 90 });
+    expect(geometry(box())).not.toEqual(before);
+
+    key("Escape");
+
+    expect(geometry(box())).toEqual(before);
+    expect(screen.queryByText(/unsaved/)).not.toBeInTheDocument();
+  });
+
+  it("deleting selects the next box rather than dropping the user out", async () => {
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([
+      annotation([10, 10, 50, 50], 1),
+      annotation([100, 100, 200, 150], 2),
+    ]);
+    renderCanvas();
+    await waitFor(() => expect(screen.getAllByTestId("label-box")).toHaveLength(2));
+    key("]");
+
+    key("Delete");
+
+    expect(screen.getAllByTestId("label-box")).toHaveLength(1);
+    expect(screen.getByText(/box 1 of 1/i)).toBeInTheDocument();
+  });
+
   it("handles only appear on the selected box", async () => {
     vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation([10, 10, 50, 50]), annotation([100, 100, 200, 150])]);
     renderCanvas();
@@ -509,6 +573,57 @@ describe("LabelCanvas: saving", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/reload it and try again/i);
     expect(screen.getAllByTestId("label-box")).toHaveLength(1);
     expect(screen.getByText(/unsaved/)).toBeInTheDocument();
+  });
+
+  it("does not throw away an edit made while a save is in flight", async () => {
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation([10, 10, 50, 50], 1)]);
+    renderCanvas();
+    await waitFor(() => expect(screen.getAllByTestId("label-box")).toHaveLength(1));
+
+    let release: (value: Annotation[]) => void = () => {};
+    vi.spyOn(api, "saveFrameAnnotations").mockReturnValue(
+      new Promise<Annotation[]>((resolve) => {
+        release = resolve;
+      }),
+    );
+    key("]");
+    key("2");
+    key("s");
+
+    // The user keeps working while the request is out.
+    key("ArrowRight");
+    const nudged = geometry(box());
+
+    release([annotation([10, 10, 50, 50], 2)]);
+    await waitFor(() => expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled());
+
+    // The nudge survived, and the frame still knows it has work to send.
+    expect(geometry(box())).toEqual(nudged);
+    expect(screen.getByText(/unsaved/)).toBeInTheDocument();
+  });
+
+  it("keeps the same box selected when the server returns them reordered", async () => {
+    // The server orders by updated_at, so an edited box can come back in a
+    // different position. A positional selection would silently land on
+    // someone else's box.
+    const first = annotation([10, 10, 50, 50], 1);
+    const second = annotation([100, 100, 200, 150], 2);
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([first, second]);
+    renderCanvas();
+    await waitFor(() => expect(screen.getAllByTestId("label-box")).toHaveLength(2));
+
+    key("]");
+    key("2");
+    expect(screen.getByText(/box 1 of 2/i)).toBeInTheDocument();
+
+    // Edited box comes back last.
+    vi.spyOn(api, "saveFrameAnnotations").mockResolvedValue([second, { ...first, class_id: 2 }]);
+    key("s");
+
+    await waitFor(() => expect(screen.queryByText(/unsaved/)).not.toBeInTheDocument());
+    expect(screen.getByText(/box 1 of 2/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/class of selected box/i)).toHaveValue("2");
+    expect(geometry(box(0))).toEqual([10, 10, 40, 40]);
   });
 
   it("lists the shortcuts where the user can see them", async () => {
