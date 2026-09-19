@@ -13,6 +13,7 @@ from app.ml.factory import DetectorProvider, create_tracker, get_detector_provid
 from app.ml.models import DEFAULT_MODEL_ID
 from app.schemas.rtsp import RtspSessionStatusRead, RtspStartRequest, RtspStartResult
 from app.services.rtsp_session import RtspCaptureSession
+from app.services.live_reconcile import UNFINISHED as UNFINISHED_LIVE, settle as settle_live_run
 from app.services.rtsp_session_registry import get_session, register_session
 from app.services.rtsp_source import ConnectionProvider, RtspSourceAdapter, default_connection_provider
 
@@ -109,14 +110,39 @@ def get_rtsp_status(run_id: str) -> RtspSessionStatusRead:
 
 
 @run_router.post("/{run_id}/rtsp/stop", response_model=RtspSessionStatusRead)
-def stop_rtsp_session(run_id: str) -> RtspSessionStatusRead:
+def stop_rtsp_session(run_id: str, db: Session = Depends(get_db)) -> RtspSessionStatusRead:
     """Signal the session to stop. Does not block until it actually
     finishes (that can take up to one capture-read cycle plus a final
-    persist) - poll ``/rtsp/status`` until ``stopped`` is true."""
-    session = _get_session_or_404(run_id)
-    session.stop()
-    status = session.status()
-    return RtspSessionStatusRead(**asdict(status))
+    persist) - poll ``/rtsp/status`` until ``stopped`` is true.
+
+    A run the registry has never heard of is settled rather than
+    refused. That is what an abandoned capture looks like after a
+    restart: the threads died with the old process, but the row still
+    claims to be running and blocks its source against deletion. The
+    user pressing Stop is right, and answering 404 left them with no
+    way to act on it.
+    """
+    session = get_session(run_id)
+    if session is not None:
+        session.stop()
+        return RtspSessionStatusRead(**asdict(session.status()))
+
+    run = db.get(ProcessingRun, run_id)
+    if run is None:
+        raise NotFoundError(f"No live (or previously started) RTSP session for run: {run_id}")
+    if run.status in UNFINISHED_LIVE:
+        settle_live_run(db, run)
+        db.commit()
+    return RtspSessionStatusRead(
+        run_id=run_id,
+        connected=False,
+        reconnect_attempts=0,
+        frames_captured=run.sampled_frame_count or 0,
+        frames_dropped=0,
+        tracks_persisted=0,
+        stopped=True,
+        error=run.error_message,
+    )
 
 
 @run_router.get("/{run_id}/rtsp/preview.jpg")

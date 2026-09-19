@@ -28,6 +28,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.services.jobs.runner import reconcile_jobs
+from app.services.live_reconcile import reconcile_live_captures
 
 configure_logging()
 
@@ -53,6 +54,19 @@ async def lifespan(_app: FastAPI):
         # A failure here must not stop the app opening - the user needs
         # it far more than they need tidy job rows.
         logger.exception("Could not reconcile jobs on startup")
+
+    # A live capture is threads inside this process, so one that was
+    # running when the app closed is certainly gone - unlike a detached
+    # job, there is nothing to reattach to. Its row stayed "running"
+    # forever, which blocked its source against deletion and told the
+    # user to stop a capture that no longer existed.
+    try:
+        with SessionLocal() as db:
+            settled = reconcile_live_captures(db)
+        if settled:
+            logger.warning("Settled %d live capture(s) left running by a previous session", len(settled))
+    except Exception:
+        logger.exception("Could not settle live captures on startup")
 
     yield
 
