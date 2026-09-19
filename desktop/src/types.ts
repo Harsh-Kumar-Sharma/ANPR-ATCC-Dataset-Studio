@@ -290,11 +290,11 @@ export interface RtspSessionStatus {
 
 /** One label worth a second look, and why.
  *
- *  `class_mismatch` - the detector saw something at that box and the
- *  human's class does not fit it. `missed_detection` - the human drew a
- *  vehicle the detector never found, so there is no detector class. */
+ *  `class_mismatch` - detections match that box and none of them allows
+ *  for the class the human chose. `unmatched_box` - nothing the detector
+ *  found matches it, so there is no detector class. */
 export interface DisagreementItem {
-  kind: "class_mismatch" | "missed_detection";
+  kind: "class_mismatch" | "unmatched_box";
   frame_id: string;
   annotation_id: string;
   human_class_id: number;

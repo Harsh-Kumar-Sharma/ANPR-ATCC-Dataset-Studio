@@ -44,14 +44,25 @@ const fromCanvas: DisagreementItem = {
   track_id: null,
 };
 
-const missed: DisagreementItem = {
-  kind: "missed_detection",
+const unmatched: DisagreementItem = {
+  kind: "unmatched_box",
   frame_id: "f-3",
   annotation_id: "a-3",
   human_class_id: 4,
   human_class_name: "Car/Jeep/Van",
   detector_class: null,
   track_id: null,
+};
+
+const balance: LabelBalance = {
+  classes: [
+    { class_id: 4, name: "Car/Jeep/Van", box_count: 42 },
+    { class_id: 8, name: "Bus", box_count: 7 },
+  ],
+  total_boxes: 49,
+  unclassified_boxes: 0,
+  labeled_frames: 30,
+  background_frames: 2,
 };
 
 function renderPanel(overrides: Partial<React.ComponentProps<typeof ActiveLearningPanel>> = {}) {
@@ -86,6 +97,18 @@ describe("ActiveLearningPanel: canvas labels in the disagreement queue", () => {
     expect(onSelectFrame).toHaveBeenCalledWith("f-2");
   });
 
+  it("says so when the frame cannot be opened, instead of doing nothing", async () => {
+    // The only surface that can report it - the app has no toast - so a
+    // swallowed failure was a button that silently did nothing.
+    vi.spyOn(api, "getDisagreements").mockResolvedValue([fromCanvas]);
+    renderPanel({ onSelectFrame: vi.fn().mockRejectedValue(new Error("frame is gone")) });
+
+    openDisagreements();
+    fireEvent.click(await screen.findByRole("button", { name: /open frame/i }));
+
+    expect(await screen.findByText(/could not open that frame/i)).toBeInTheDocument();
+  });
+
   it("still opens the track for a label written by reviewing one", async () => {
     const onSelectTrack = vi.fn();
     vi.spyOn(api, "getDisagreements").mockResolvedValue([fromTrackReview]);
@@ -97,13 +120,16 @@ describe("ActiveLearningPanel: canvas labels in the disagreement queue", () => {
     expect(onSelectTrack).toHaveBeenCalledWith(track);
   });
 
-  it("says a vehicle was missed rather than inventing a detector class", async () => {
-    vi.spyOn(api, "getDisagreements").mockResolvedValue([missed]);
+  it("says nothing matched rather than inventing a detector class", async () => {
+    // "the detector found nothing here" was a claim the data does not
+    // support: a box drawn far enough from its own detection lands here
+    // too, and telling the user the model missed it would be false.
+    vi.spyOn(api, "getDisagreements").mockResolvedValue([unmatched]);
     renderPanel();
 
     openDisagreements();
 
-    expect(await screen.findByText(/detector found nothing/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing the detector found matches/i)).toBeInTheDocument();
     expect(screen.queryByText(/detector saw/i)).not.toBeInTheDocument();
   });
 
@@ -118,29 +144,36 @@ describe("ActiveLearningPanel: canvas labels in the disagreement queue", () => {
     expect(row.textContent).toContain("Bus");
   });
 
-  it("an empty queue says it looked, not that there is nothing", async () => {
-    // "None." after finding nothing and "None." after being unable to
-    // look were the same sentence, which is how a canvas labeller read
-    // a blind spot as a clean bill of health.
+  it("an empty queue over real labels says everything agrees", async () => {
     vi.spyOn(api, "getDisagreements").mockResolvedValue([]);
+    vi.spyOn(api, "getLabelBalance").mockResolvedValue(balance);
     renderPanel();
 
     openDisagreements();
 
     expect(await screen.findByText(/nothing to flag/i)).toBeInTheDocument();
   });
+
+  it("an empty queue over no labels says there is nothing to compare", async () => {
+    // Otherwise the panel gives a project nobody has labelled a clean
+    // bill of health - the exact conflation this ticket objected to,
+    // one sentence further on.
+    vi.spyOn(api, "getDisagreements").mockResolvedValue([]);
+    vi.spyOn(api, "getLabelBalance").mockResolvedValue({
+      classes: [],
+      total_boxes: 0,
+      unclassified_boxes: 0,
+      labeled_frames: 0,
+      background_frames: 0,
+    });
+    renderPanel();
+
+    openDisagreements();
+
+    expect(await screen.findByText(/nothing labelled yet/i)).toBeInTheDocument();
+  });
 });
 
-const balance: LabelBalance = {
-  classes: [
-    { class_id: 4, name: "Car/Jeep/Van", box_count: 42 },
-    { class_id: 8, name: "Bus", box_count: 7 },
-  ],
-  total_boxes: 49,
-  unclassified_boxes: 0,
-  labeled_frames: 30,
-  background_frames: 2,
-};
 
 describe("LabelBalancePanel: what the labeller has produced", () => {
   beforeEach(() => vi.restoreAllMocks());

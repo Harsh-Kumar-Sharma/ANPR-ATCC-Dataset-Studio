@@ -93,11 +93,12 @@ def test_a_canvas_box_agreeing_with_the_detector_is_not_flagged(tmp_path):
     assert _disagreements(project) == []
 
 
-def test_a_box_where_the_detector_found_nothing_is_reported_as_a_miss(tmp_path):
-    """Deliberate, and the most valuable signal here: a human drew a
-    vehicle the detector did not find at all. Dropping it because there
-    is no detection to compare against would throw away the one case
-    that is unambiguously the model's fault."""
+def test_a_box_nothing_the_detector_found_matches_is_reported(tmp_path):
+    """Deliberate, and the most valuable signal here: usually a vehicle
+    the detector did not find at all. Dropping it because there is no
+    detection to compare against would throw away the case most likely
+    to be the model's fault - but the entry only claims that nothing
+    matches, because a box drawn far from its detection lands here too."""
     project, frames, _ = _project_with_queue(tmp_path, "Detector Miss")
     _draw(frames[0], [(CAR_CLASS, SAME_OBJECT), (CAR_CLASS, ELSEWHERE)])
 
@@ -105,7 +106,7 @@ def test_a_box_where_the_detector_found_nothing_is_reported_as_a_miss(tmp_path):
 
     assert len(items) == 1, items
     item = items[0]
-    assert item["kind"] == "missed_detection"
+    assert item["kind"] == "unmatched_box"
     assert item["detector_class"] is None
     assert item["track_id"] is None
     assert item["frame_id"] == frames[0]["id"]

@@ -35,7 +35,9 @@ def get_hard_failed_queue(project_id: str, limit: int = 50, db: Session = Depend
 
 
 @router.get("/disagreements", response_model=list[DisagreementItemRead])
-def get_model_human_disagreements(project_id: str, db: Session = Depends(get_db)) -> list[DisagreementItemRead]:
+def get_model_human_disagreements(
+    project_id: str, limit: int = 50, db: Session = Depends(get_db)
+) -> list[DisagreementItemRead]:
     """Labels worth a second look: a human class the detector's own class
     does not allow for, or a vehicle the human drew and the detector
     never found.
@@ -46,5 +48,5 @@ def get_model_human_disagreements(project_id: str, db: Session = Depends(get_db)
     detection by overlap, and reported as a miss when nothing matches.
     """
     get_project_or_404(db, project_id)
-    items = find_model_human_disagreements(db, project_id)
+    items = find_model_human_disagreements(db, project_id, limit=limit)
     return [DisagreementItemRead(**asdict(item)) for item in items]

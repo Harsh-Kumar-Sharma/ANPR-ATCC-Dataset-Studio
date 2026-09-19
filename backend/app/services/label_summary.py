@@ -14,7 +14,7 @@ they are different questions, not because one is a fallback.
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models.annotation import Annotation
@@ -97,21 +97,42 @@ def label_balance(db: Session, project_id: str) -> LabelBalance:
 
     unclassified = db.scalar(scoped(func.count(Annotation.id)).where(Annotation.class_id.is_(None))) or 0
 
-    labeled_frames = (
+    # A frame somebody has worked on, whichever way they did it.
+    # `Frame.status` is set to "labeled" only by a canvas save - track
+    # review never touches it - so counting status alone reported
+    # "nineteen boxes across zero labelled frames" for a project that
+    # had been reviewed track by track, which is what the real data
+    # looks like. Carrying a human box counts too, and the distinct
+    # count keeps a frame done both ways from being counted twice.
+    worked_on = (
+        select(func.count(func.distinct(Frame.id)))
+        .select_from(Frame)
+        .join(Source, Frame.source_id == Source.id)
+        .outerjoin(Annotation, (Annotation.frame_id == Frame.id) & (Annotation.source == "human"))
+        .where(
+            Source.project_id == project_id,
+            Frame.status != "rejected",
+            or_(Frame.status == "labeled", Annotation.id.is_not(None)),
+        )
+    )
+    labeled_frames = db.scalar(worked_on) or 0
+
+    # Empty on purpose: a human saved the frame and it holds no boxes at
+    # all. Deliberately "no annotation rows whatsoever" rather than "no
+    # human ones", the same rule `query_export_frames` uses and for the
+    # same reason - a frame carrying a box of any kind is not an empty
+    # picture, and the weaker rule is how a hard-reviewed vehicle became
+    # a background image.
+    background_frames = (
         db.scalar(
             select(func.count(Frame.id))
+            .select_from(Frame)
             .join(Source, Frame.source_id == Source.id)
-            .where(Source.project_id == project_id, Frame.status == "labeled")
-        )
-        or 0
-    )
-    frames_with_boxes = (
-        db.scalar(
-            select(func.count(func.distinct(Annotation.frame_id)))
-            .select_from(Annotation)
-            .join(Frame, Annotation.frame_id == Frame.id)
-            .join(Source, Frame.source_id == Source.id)
-            .where(Source.project_id == project_id, Frame.status == "labeled", Annotation.source == "human")
+            .where(
+                Source.project_id == project_id,
+                Frame.status == "labeled",
+                Frame.id.not_in(select(Annotation.frame_id)),
+            )
         )
         or 0
     )
@@ -121,8 +142,5 @@ def label_balance(db: Session, project_id: str) -> LabelBalance:
         total_boxes=sum(c.box_count for c in classes),
         unclassified_boxes=unclassified,
         labeled_frames=labeled_frames,
-        # A labelled frame with no human box on it is one somebody saved
-        # empty. Derived rather than counted separately so the two can
-        # never disagree about the same frames.
-        background_frames=max(0, labeled_frames - frames_with_boxes),
+        background_frames=background_frames,
     )

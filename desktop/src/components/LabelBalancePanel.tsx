@@ -39,7 +39,9 @@ function LabelBalancePanel({ project, refreshKey = 0 }: Props) {
     };
   }, [project.id, refreshKey]);
 
-  const most = balance?.classes[0]?.box_count ?? 0;
+  // From the data rather than from the first row: reading the widest
+  // bar off the server's sort order couples the drawing to it silently.
+  const most = Math.max(0, ...(balance?.classes ?? []).map((c) => c.box_count));
 
   return (
     <div className="label-balance-panel">

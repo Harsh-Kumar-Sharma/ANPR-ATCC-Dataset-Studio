@@ -14,13 +14,14 @@ class QueueItemRead(BaseModel):
 class DisagreementItemRead(BaseModel):
     """One label worth a second look, and why.
 
-    ``class_mismatch`` means the detector saw something there and the
-    human's class does not fit it. ``missed_detection`` means the human
-    drew a vehicle the detector never found - there is no detector class
-    and no track, which is the whole point of the entry.
+    ``class_mismatch`` means detections match that box and none of them
+    allows for the class the human chose. ``unmatched_box`` means
+    nothing the detector found matches it - often a vehicle it missed,
+    though a box drawn far enough from its detection lands here too, so
+    the name claims only what is known.
     """
 
-    kind: Literal["class_mismatch", "missed_detection"]
+    kind: Literal["class_mismatch", "unmatched_box"]
     frame_id: str
     annotation_id: str
     human_class_id: int

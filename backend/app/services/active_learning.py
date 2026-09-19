@@ -27,25 +27,28 @@ class QueueItem:
 #: A human box and a detection are taken to be the same object at this
 #: overlap or better.
 #:
-#: 0.5 is not a round number picked for looking reasonable: it is the
-#: threshold detection benchmarks have used for "correct" since PASCAL
-#: VOC, and it is what every mAP figure anyone compares this model
-#: against means by a match. Using the same number here keeps "the
-#: detector found this vehicle" meaning one thing across the project.
+#: 0.3, matching ``DEFAULT_FRAGMENTATION_IOU_THRESHOLD`` in
+#: ``track_metrics``, because that answers the same question this one
+#: does: are these two boxes the same vehicle? It is deliberately not
+#: the 0.5 that detection benchmarks use for "is this detection correct"
+#: - scoring a detection and associating one with a human's box are
+#: different questions, and the first is the stricter of the two. An
+#: earlier version used 0.5 and reported a human who tightened a loose
+#: box to 70% of each side as a vehicle the detector had missed, which
+#: is an ordinary redraw and a false accusation against the model.
 #:
-#: The failure mode is worth stating. A human who redraws a sloppy
-#: detection much tighter can land below 0.5, and their box is then
-#: reported as a vehicle the detector missed rather than as a class
-#: disagreement. That is the direction to fail in: it sends the case to
-#: a human instead of quietly pairing two boxes that may be different
-#: objects.
-DISAGREEMENT_IOU_THRESHOLD = 0.5
+#: Uncalibrated, like every other threshold here - a reasonable starting
+#: point, not tuned against real footage.
+DISAGREEMENT_IOU_THRESHOLD = 0.3
 
-#: The detector saw something there and the human called it something
-#: the detector's class does not allow for.
+#: The detector matched this box and the human called it something the
+#: detector's class does not allow for.
 KIND_CLASS_MISMATCH = "class_mismatch"
-#: The human drew a box where the detector found nothing.
-KIND_MISSED_DETECTION = "missed_detection"
+#: Nothing the detector found matches this box. Often a vehicle it
+#: missed, which is the most useful case in the queue - but the entry
+#: claims only what is known, because a box drawn far enough from the
+#: detection it belongs to lands here too.
+KIND_UNMATCHED_BOX = "unmatched_box"
 
 
 @dataclass
@@ -141,29 +144,40 @@ COCO_TO_PLAUSIBLE_ATCC_CLASS_IDS: dict[str, set[int]] = {
 }
 
 
-def find_model_human_disagreements(db: Session, project_id: str) -> list[DisagreementItem]:
+def find_model_human_disagreements(db: Session, project_id: str, limit: int = 50) -> list[DisagreementItem]:
     """Every human label worth a second look, whichever way it was drawn.
 
     Two kinds, and the second only exists because canvas labels now
     reach here at all:
 
-    * ``class_mismatch`` - the detector saw something at that box and
-      the human's class is not one the detector's class allows for.
-    * ``missed_detection`` - the human drew a vehicle the detector did
-      not find. There is nothing to disagree with, which is exactly what
-      makes it the most useful example in the queue: it is unambiguously
-      the model's miss rather than a labelling question.
+    * ``class_mismatch`` - detections match that box, and none of them
+      allows for the class the human chose.
+    * ``unmatched_box`` - nothing the detector found matches that box.
+      Often a vehicle it missed, which is the most useful case here; but
+      the entry claims only what is known, because a box drawn far
+      enough from the detection it belongs to lands here too.
 
     How a box finds its detection depends on how it was written. A label
     from track review *is* a detection - it carries the candidate's id -
     so it is matched by that link and never by geometry. A box drawn on
-    the canvas has no such link, so it is matched to the best-overlapping
-    detection on its own frame, at ``DISAGREEMENT_IOU_THRESHOLD`` or
-    better. Guessing is confined to the case that has nothing better.
+    the canvas has no such link, so it is matched against the detections
+    on its own frame at ``DISAGREEMENT_IOU_THRESHOLD`` or better.
+
+    *Every* matching detection is asked, not the best-overlapping one.
+    Two vehicles nearly on top of each other is the ordinary dense case
+    on gantry footage, and picking the single highest-overlap detection
+    flagged a correct label as wrong whenever the other one was the one
+    the human meant - with the tie broken by database row order, so the
+    answer was not even stable. If any matching detection allows for the
+    human's class, there is nothing to report.
 
     Labels on rejected frames are left out. A rejected frame is not going
     to train anything, so queueing its labels would be asking for work
     that changes nothing.
+
+    ``limit`` caps the result, as it does on the two queues either side
+    of this one. Every canvas box the detector missed is an entry, which
+    on real footage is thousands, and the panel renders them in one list.
     """
     class_names = class_names_for(db, project_id)
     annotations = list(
@@ -183,31 +197,36 @@ def find_model_human_disagreements(db: Session, project_id: str) -> list[Disagre
     candidates_by_frame: dict[str, list[FrameCandidate]] = defaultdict(list)
     frame_ids = sorted({annotation.frame_id for annotation in annotations})
     for chunk in chunked(frame_ids):
-        for candidate in db.scalars(select(FrameCandidate).where(FrameCandidate.frame_id.in_(chunk))):
+        # Ordered so the answer cannot depend on row order - the same
+        # determinism the export query goes out of its way to keep.
+        for candidate in db.scalars(
+            select(FrameCandidate).where(FrameCandidate.frame_id.in_(chunk)).order_by(FrameCandidate.id)
+        ):
             candidates_by_frame[candidate.frame_id].append(candidate)
     candidates_by_id = {c.id: c for group in candidates_by_frame.values() for c in group}
 
-    disagreements = []
+    disagreements: list[DisagreementItem] = []
     for annotation in annotations:
-        candidate = _detection_for(annotation, candidates_by_frame, candidates_by_id)
+        matches = _detections_for(annotation, candidates_by_frame, candidates_by_id)
+        if matches is None:
+            continue  # nothing can be said about this one; see _detections_for
         human_class_name = class_names.get(annotation.class_id, str(annotation.class_id))
 
-        if candidate is None:
+        if not matches:
             disagreements.append(
                 DisagreementItem(
-                    kind=KIND_MISSED_DETECTION,
+                    kind=KIND_UNMATCHED_BOX,
                     frame_id=annotation.frame_id,
                     annotation_id=annotation.id,
                     human_class_id=annotation.class_id,
                     human_class_name=human_class_name,
                 )
             )
-            continue
-
-        plausible = COCO_TO_PLAUSIBLE_ATCC_CLASS_IDS.get(candidate.detector_class)
-        if plausible is None:
-            continue  # unmapped detector class - no basis to flag anything
-        if annotation.class_id not in plausible:
+        elif not _any_allows(annotation.class_id, matches):
+            # Named after the first matching detection that has an
+            # opinion, so the message quotes a class the detector
+            # actually gave rather than an arbitrary one.
+            named = next(c for c in matches if c.detector_class in COCO_TO_PLAUSIBLE_ATCC_CLASS_IDS)
             disagreements.append(
                 DisagreementItem(
                     kind=KIND_CLASS_MISMATCH,
@@ -215,38 +234,62 @@ def find_model_human_disagreements(db: Session, project_id: str) -> list[Disagre
                     annotation_id=annotation.id,
                     human_class_id=annotation.class_id,
                     human_class_name=human_class_name,
-                    detector_class=candidate.detector_class,
+                    detector_class=named.detector_class,
                     # Only for a label that was actually made by
                     # reviewing that track. A canvas box matched to a
                     # detection by overlap is not "about" the detection's
                     # track - opening the track would not even show the
                     # box - so the field keeps meaning one thing and the
                     # frame is what a reviewer is sent to instead.
-                    track_id=candidate.track_id if annotation.frame_candidate_id is not None else None,
+                    track_id=named.track_id if annotation.frame_candidate_id is not None else None,
                 )
             )
+
+        if len(disagreements) >= limit:
+            break
+
     return disagreements
 
 
-def _detection_for(
+def _any_allows(class_id: int, matches: list[FrameCandidate]) -> bool:
+    """Does any matching detection allow for the class the human chose?
+
+    A detector class nobody has mapped gives no basis to flag anything,
+    so it allows everything - the same "no opinion" the earlier
+    single-detection version expressed by skipping.
+    """
+    for candidate in matches:
+        plausible = COCO_TO_PLAUSIBLE_ATCC_CLASS_IDS.get(candidate.detector_class)
+        if plausible is None or class_id in plausible:
+            return True
+    return False
+
+
+def _detections_for(
     annotation: Annotation,
     candidates_by_frame: dict[str, list[FrameCandidate]],
     candidates_by_id: dict[str, FrameCandidate],
-) -> FrameCandidate | None:
-    """The detection this label is about, or ``None`` if there is none.
+) -> list[FrameCandidate] | None:
+    """Every detection this label could be about.
 
-    A label written through track review names its candidate outright,
-    and that link is the truth - re-deriving it from geometry could only
-    make it worse. Only a canvas box has to be matched, and then only
-    against detections on its own frame.
+    ``None`` means "nothing can be said", which is not the same as an
+    empty list. A label written through track review names its candidate
+    outright, and that link is the truth - re-deriving it from geometry
+    could only make it worse. If that candidate cannot be loaded, the
+    gap is in the data rather than in the model, and answering "the
+    detector missed this" would be the exact opposite of the truth.
+
+    Only a canvas box is matched geometrically, and then against every
+    detection on its own frame rather than only the best-overlapping
+    one.
     """
     if annotation.frame_candidate_id is not None:
-        return candidates_by_id.get(annotation.frame_candidate_id)
-
-    on_frame = candidates_by_frame.get(annotation.frame_id, [])
-    if not on_frame:
-        return None
+        named = candidates_by_id.get(annotation.frame_candidate_id)
+        return [named] if named is not None else None
 
     box = tuple(annotation.bbox_json)
-    best = max(on_frame, key=lambda c: iou(box, tuple(c.bbox_json)))
-    return best if iou(box, tuple(best.bbox_json)) >= DISAGREEMENT_IOU_THRESHOLD else None
+    return [
+        candidate
+        for candidate in candidates_by_frame.get(annotation.frame_id, [])
+        if iou(box, tuple(candidate.bbox_json)) >= DISAGREEMENT_IOU_THRESHOLD
+    ]

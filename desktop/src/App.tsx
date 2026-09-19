@@ -99,14 +99,13 @@ function App() {
    *  and no track. The frame is fetched rather than looked up locally
    *  because nothing outside the Label tab holds the queue. */
   async function selectFrameById(frameId: string) {
-    try {
-      const frame = await api.getFrame(frameId);
-      setTab("label");
-      labelFrameNow(frame);
-    } catch {
-      // Deleted, or the backend is down. The panel the user clicked from
-      // is still there; taking them nowhere is better than a blank canvas.
-    }
+    // Deliberately lets the failure through. The app has no toast, so
+    // the panel the user clicked from is the only place that can say
+    // anything - and a button that silently does nothing is worse than
+    // one that says why.
+    const frame = await api.getFrame(frameId);
+    setTab("label");
+    labelFrameNow(frame);
   }
 
   function showLivePreview(runId: string) {

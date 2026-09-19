@@ -98,7 +98,9 @@ function EvaluationPanel({ tracks }: Props) {
                 have not labelled anything", which for a canvas labeller
                 was flatly wrong. */}
             {Object.keys(report.class_distribution).length === 0 && (
-              <li className="empty">No track reviewed in this run. Canvas labels are counted under "Your labels".</li>
+              <li className="empty">
+                No track in this run was accepted or flagged hard. Canvas labels are counted under "Your labels".
+              </li>
             )}
           </ul>
 
