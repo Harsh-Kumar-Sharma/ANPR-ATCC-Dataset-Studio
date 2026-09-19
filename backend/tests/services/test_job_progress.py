@@ -1,5 +1,8 @@
+import pytest
+
 import json
 
+from app.services.jobs import progress as progress_module
 from app.services.jobs.progress import read_progress, write_progress
 
 
@@ -68,3 +71,79 @@ def test_writing_creates_the_directory_it_needs(tmp_path):
     write_progress(path, fraction=0.0, message="starting")
 
     assert read_progress(path) is not None
+
+
+def test_a_reader_mid_read_does_not_break_the_write(tmp_path):
+    """The bug a real detection run hit.
+
+    On Windows a file another process has open cannot be replaced -
+    Python's `open` does not ask for delete sharing - and the app polls
+    this file while the worker writes it. The reader's grip lasts one
+    small read, so the collision is a race rather than a standoff, but
+    over a three-minute run with thousands of writes it is routine. It
+    used to reach the worker as a PermissionError that killed the run.
+    """
+    import threading
+
+    path = tmp_path / "progress.json"
+    write_progress(path, fraction=0.1, message="first")
+
+    reading = threading.Event()
+    done = threading.Event()
+
+    def poll_like_the_app():
+        with open(path, encoding="utf-8") as reader:
+            reader.read()
+            reading.set()
+            # Held for longer than a real read, so the write is
+            # guaranteed to collide rather than merely likely to.
+            done.wait(0.05)
+
+    poller = threading.Thread(target=poll_like_the_app)
+    poller.start()
+    reading.wait(1.0)
+
+    write_progress(path, fraction=0.2, message="second")
+
+    done.set()
+    poller.join(1.0)
+    assert read_progress(path).message == "second"
+
+
+def test_the_replace_is_retried_rather_than_given_up_on(tmp_path, monkeypatch):
+    """A reader's grip lasts microseconds, so waiting briefly is the
+    whole fix. Deterministic here rather than relying on a race."""
+    import os as os_module
+
+    path = tmp_path / "progress.json"
+    real_replace = os_module.replace
+    attempts = {"count": 0}
+
+    def flaky_replace(src, dst):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(progress_module.os, "replace", flaky_replace)
+
+    write_progress(path, fraction=0.5, message="through the retries")
+
+    assert attempts["count"] == 3
+    assert read_progress(path).message == "through the retries"
+
+
+def test_a_replace_that_never_succeeds_still_raises(tmp_path, monkeypatch):
+    """Retrying is not swallowing. A file that genuinely cannot be
+    written should say so - the caller decides whether that matters."""
+    path = tmp_path / "progress.json"
+
+    def always_denied(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(progress_module.os, "replace", always_denied)
+
+    with pytest.raises(PermissionError):
+        write_progress(path, fraction=0.5, message="never lands")
+
+    assert list(tmp_path.glob("*.tmp")) == [], "the temp file goes even when the replace never works"

@@ -47,8 +47,29 @@ def run_job(job_id: str) -> int:
         params = dict(job.params_json or {})
         progress_file = runner.progress_path(job_id)
 
+        # Progress is how the work is described, not the work. A status
+        # file that cannot be written is worth one line in the log and
+        # nothing else - it used to reach here as a PermissionError from
+        # an atomic replace the app had the file open for, and it killed
+        # three-minute detection runs outright.
+        progress_failed = False
+
         def report(fraction: float, message: str | None = None) -> None:
-            write_progress(progress_file, fraction=fraction, message=message)
+            nonlocal progress_failed
+            try:
+                write_progress(progress_file, fraction=fraction, message=message)
+            except OSError:
+                if not progress_failed:
+                    # Once. A worker that cannot write progress cannot
+                    # write it on every tick either, and four thousand
+                    # identical lines is a log nobody reads.
+                    progress_failed = True
+                    logger.warning(
+                        "Job %s cannot write its progress file (%s); the job itself is unaffected",
+                        job_id,
+                        progress_file,
+                        exc_info=True,
+                    )
 
         runner.mark_running(db, job_id)
         report(0.0, "Starting")

@@ -236,3 +236,49 @@ def test_selection_does_not_cache_the_frames_it_reads(tmp_path, project):
     assert written == [], "selection must not leave decoded frames on disk"
     with SessionLocal() as db:
         assert all(f.image_path is None for f in db.query(Frame).filter(Frame.source_id == source_id))
+
+
+def test_a_progress_write_that_fails_does_not_kill_the_job(project, monkeypatch):
+    """A three-minute detection run died because a status file could not
+    be replaced. Progress is how the work is described, not the work -
+    it must never be able to destroy what it reports on."""
+    def refuse_to_write(*args, **kwargs):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(worker, "write_progress", refuse_to_write)
+    monkeypatch.setitem(
+        worker.HANDLERS,
+        "detect",
+        JobHandler(run=lambda db, params, report: (report(0.5, "halfway"), {"run_id": "r-9"})[1]),
+    )
+    job = _submit(project)
+
+    assert worker.run_job(job.id) == worker.EXIT_OK
+
+    with SessionLocal() as db:
+        finished = db.get(Job, job.id)
+        assert finished.status == "succeeded"
+        assert finished.result_json == {"run_id": "r-9"}
+
+
+def test_a_progress_failure_is_reported_once_rather_than_every_tick(project, monkeypatch, caplog):
+    """A worker that cannot write progress will fail on every tick. One
+    line saying so is a diagnosis; four thousand is a log nobody reads."""
+    def refuse_to_write(*args, **kwargs):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(worker, "write_progress", refuse_to_write)
+
+    def tick_a_lot(db, params, report):
+        for i in range(20):
+            report(i / 20, f"tick {i}")
+        return {}
+
+    monkeypatch.setitem(worker.HANDLERS, "detect", JobHandler(run=tick_a_lot))
+    job = _submit(project)
+
+    with caplog.at_level("WARNING"):
+        assert worker.run_job(job.id) == worker.EXIT_OK
+
+    complaints = [r for r in caplog.records if "progress" in r.getMessage().lower()]
+    assert len(complaints) == 1, f"expected one warning, got {len(complaints)}"

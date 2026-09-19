@@ -14,17 +14,34 @@ Every write replaces the whole file atomically, so a reader either sees
 the previous update or the next one, never half of one. Readers still
 treat a corrupt file as "nothing reported yet": on Windows the atomic
 replace is the common case, not a guarantee worth betting the API on.
+
+Windows also makes the *writer* fragile in a way POSIX does not. A file
+opened by another process cannot be replaced there - Python's ``open``
+does not ask for delete sharing - so the app polling this file can make
+the worker's replace fail with "Access is denied". That is not an
+exceptional condition here, it is the normal shape of the thing: one
+writer ticking, one reader polling. The write retries for a moment
+rather than failing, because a reader's grip lasts microseconds.
 """
 
 import json
 import logging
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: How long to keep trying the replace before giving up, and how long to
+#: wait between attempts. A reader holds the file for the length of one
+#: small read, so the first retry almost always wins; the rest of the
+#: budget is for a virus scanner or an indexer that grabbed it. Kept
+#: short because a worker blocked here is a worker not doing its job.
+_REPLACE_ATTEMPTS = 8
+_REPLACE_FIRST_WAIT = 0.005
 
 
 @dataclass(frozen=True)
@@ -66,10 +83,34 @@ def write_progress(path: Path | str, *, fraction: float, message: str | None) ->
             json.dump(payload, stream)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(handle.name, path)
+        _replace_with_retries(handle.name, path)
     except BaseException:
         Path(handle.name).unlink(missing_ok=True)
         raise
+
+
+def _replace_with_retries(source: str, destination: Path) -> None:
+    """``os.replace``, waiting out a reader that has the target open.
+
+    Windows refuses to replace a file another process has open, and the
+    app polls this one while the worker writes it - so the failure is
+    routine rather than exceptional, and it used to reach the worker as
+    a PermissionError that killed the whole run.
+
+    Still raises if it never succeeds. Retrying is not swallowing: a
+    file that genuinely cannot be written is worth hearing about, and
+    the caller decides whether it matters.
+    """
+    wait = _REPLACE_FIRST_WAIT
+    for attempt in range(1, _REPLACE_ATTEMPTS + 1):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS:
+                raise
+            time.sleep(wait)
+            wait *= 2
 
 
 def read_progress(path: Path | str) -> Progress | None:
