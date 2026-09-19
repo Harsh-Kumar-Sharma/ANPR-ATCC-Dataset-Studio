@@ -154,3 +154,39 @@ the annotations a *track review* produced: the join runs through the frame
 candidate, so a plate typed on a canvas-drawn box is not counted. That is
 inherent to a per-track metric, and the docstring says so now instead of
 implying coverage it does not have.
+
+## The fix to the fix
+
+Verifying the fixes found that one of them was a regression and two
+claims were still false.
+
+**The migration grew a new way to delete a reading it never moved.** A
+current reading of "!!!" normalises to nothing, so nothing was written -
+and the code then cleared every row on the track anyway, including an
+earlier correction that said something real. The parent commit got that
+case right. It also still deleted a superseded reading whose text
+differed from the one that moved, which is exactly what its own
+docstring, the commit message and these notes all said could not happen.
+
+There is one rule now, and it is the rule the documents describe: **a
+row goes only when its own reading is already accounted for** - empty,
+or equal to the plate the annotation ends up carrying. Everything else
+stays, and the log says how many and why, in rows rather than a mix of
+rows and tracks.
+
+**A failed review does create a label.** `setHasLabel(decision !==
+"failed")` was simply wrong: the review writes a human annotation
+whatever it decided, and the server accepts a plate against it. Flagging
+the last track in the list left the field disabled, telling the user to
+review a track they had just reviewed.
+
+**Removing the source label from the OCR list reopened the leak it had
+just closed elsewhere.** `plate-readings` learned to filter to model
+rows; the track-review list did not, and the same commit replaced
+"model - 92%" with "92% confident". A human reading the migration left
+behind would have headed that list at 100%, wearing the badge that means
+the model was surest about it. The list filters to model rows too.
+
+**And a model reading that canonicalises to nothing** was offered on the
+canvas as a "(no text)" button that clears the plate when pressed. The
+dedupe pass drops them.

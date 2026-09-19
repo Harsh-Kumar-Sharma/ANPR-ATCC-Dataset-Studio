@@ -105,6 +105,11 @@ def plate_readings_for_frame(db: Session, frame_id: str) -> list[PlateReading]:
 
     best: dict[str, PlateReading] = {}
     for row in rows:
+        if not row.normalized_text:
+            # The model read something that canonicalises to nothing.
+            # Offering it gave the canvas a "(no text)" button that
+            # clears the plate when pressed, which is not a suggestion.
+            continue
         # Ordered most confident first, so the first of a repeated
         # reading is the one worth keeping.
         best.setdefault(

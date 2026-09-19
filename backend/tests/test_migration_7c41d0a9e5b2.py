@@ -239,7 +239,6 @@ def test_the_reading_the_old_ui_showed_as_current_is_the_one_that_moves(migrated
 
     with engine.connect() as connection:
         assert _plate(connection, ids["annotation"]) == "MH12AB9999", "the current reading, not the superseded one"
-        assert _human_rows_left(connection) == 0, "both are versions of the same field; the current one survives"
 
 
 def test_a_conflicting_reading_is_kept_rather_than_deleted(migrated_db):
@@ -330,3 +329,100 @@ def _load_migration():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_a_current_reading_that_says_nothing_does_not_take_the_others_with_it(migrated_db):
+    """A correction of "!!!" normalises to nothing. It is the current
+    reading, so nothing is written - and the earlier reading it replaced
+    must still be there, not deleted along with it."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True)
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="dl 3c 1234", normalized="DL3C1234", selected=0)
+        _human_row(connection, ids, text="!!!", normalized="", selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) is None
+        kept = connection.execute(
+            text("SELECT normalized_text FROM ocr_candidates WHERE source = 'human'")
+        ).scalars().all()
+        assert kept == ["DL3C1234"], "the reading that says nothing goes; the one that says something stays"
+
+
+def test_a_superseded_reading_with_different_text_is_kept(migrated_db):
+    """Only the current reading lands on the annotation, so an earlier
+    one saying something else is a value with nowhere to go - and the
+    rule this migration states is that those are left alone."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True)
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="mh 12 ab 1234", normalized="MH12AB1234", selected=0)
+        _human_row(connection, ids, text="mh 12 ab 9999", normalized="MH12AB9999", selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "MH12AB9999"
+        kept = connection.execute(
+            text("SELECT normalized_text FROM ocr_candidates WHERE source = 'human'")
+        ).scalars().all()
+        assert kept == ["MH12AB1234"], "its text is nowhere else, so it stays"
+
+
+def test_a_superseded_reading_that_agrees_is_cleared_away(migrated_db):
+    """Saying the same thing twice is not a second value."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True)
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="mh 12 ab 1234", normalized="MH12AB1234", selected=0)
+        _human_row(connection, ids, text="MH12AB1234", normalized="MH12AB1234", selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "MH12AB1234"
+        assert _human_rows_left(connection) == 0
+
+
+def test_a_reading_the_annotation_disagrees_with_is_kept_even_when_superseded(migrated_db):
+    """The conflict rule applies to every row, not just the current one."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True, attributes={"plate_text": "KA01AA1111"})
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="mh 12 ab 1234", normalized="MH12AB1234", selected=0)
+        _human_row(connection, ids, text="KA01AA1111", normalized="KA01AA1111", selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "KA01AA1111"
+        kept = connection.execute(
+            text("SELECT normalized_text FROM ocr_candidates WHERE source = 'human'")
+        ).scalars().all()
+        assert kept == ["MH12AB1234"], "the one that agrees goes, the one that does not stays"
+
+
+def test_a_stored_reading_is_canonicalised_rather_than_copied(migrated_db):
+    """`normalized_text` is a column somebody could have hand-edited. The
+    migration writes what the app would store, not what the row claims."""
+    cfg, engine = migrated_db
+    command.upgrade(cfg, BEFORE)
+    with engine.begin() as connection:
+        ids = _seed(connection, with_annotation=True)
+        connection.execute(text("DELETE FROM ocr_candidates"))
+        _human_row(connection, ids, text="mh 12 ab 1234", normalized="mh 12 ab 1234", selected=1)
+
+    command.upgrade(cfg, THIS)
+
+    with engine.connect() as connection:
+        assert _plate(connection, ids["annotation"]) == "MH12AB1234"

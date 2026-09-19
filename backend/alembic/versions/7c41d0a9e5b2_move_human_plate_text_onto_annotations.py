@@ -10,11 +10,12 @@ This moves them onto the annotation for the same track, into
 ``attributes['plate_text']`` - which is where a plate typed on the
 labelling canvas already goes - so there is one home rather than two.
 
-Nothing a person typed is destroyed. A row is deleted only once its
-reading is safely on the annotation, or once the annotation already says
-the same thing. Everything else is left exactly where it is: a track
-with no label to attach to, a reading the annotation's own plate
-disagrees with, a reading too long for the attribute validator to
+**One rule decides what is deleted: a row goes only when its own reading
+is already accounted for.** That means the reading is empty (it says
+nothing), or it equals the plate the annotation ends up carrying. Every
+other row stays exactly where it is, whatever the reason - no label to
+attach to, a plate the annotation disagrees with, an earlier correction
+saying something else, a reading too long for the attribute validator to
 accept. Those are counted and reported rather than resolved, because
 resolving them means choosing between two things a person wrote and this
 migration cannot see which they meant.
@@ -57,6 +58,17 @@ def _normalize(text: str) -> str:
     return _NON_ALNUM.sub("", (text or "").upper())
 
 
+def _reading(row) -> str:
+    """What this row says, in the form the app would store it.
+
+    ``normalized_text`` is canonicalised again rather than trusted: it is
+    a column, and a column can have been hand-edited or written by an
+    older rule. Re-running the normaliser is free and makes the
+    comparison below one between like and like.
+    """
+    return _normalize(row.normalized_text or row.text)
+
+
 def upgrade() -> None:
     connection = op.get_bind()
 
@@ -77,14 +89,13 @@ def upgrade() -> None:
     for row in rows:
         by_track[row.track_id].append(row)
 
-    moved = orphaned = conflicted = too_long = 0
+    written = cleared = orphaned = conflicted = too_long = superseded = 0
 
     for track_id, track_rows in by_track.items():
         # The one the old UI showed as current. ``selected`` is what it
-        # displayed; failing that, the most recent, since every earlier
-        # human row on a track is a correction this one replaced.
+        # displayed; failing that, the most recent.
         current = next((r for r in reversed(track_rows) if r.selected), track_rows[-1])
-        reading = current.normalized_text or _normalize(current.text)
+        reading = _reading(current)
 
         annotation = connection.execute(
             sa.text(
@@ -93,7 +104,7 @@ def upgrade() -> None:
                 FROM annotations a
                 JOIN frame_candidates fc ON a.frame_candidate_id = fc.id
                 WHERE fc.track_id = :track_id AND a.source = 'human'
-                ORDER BY a.updated_at, a.rowid
+                ORDER BY a.updated_at DESC, a.rowid DESC
                 LIMIT 1
                 """
             ),
@@ -104,25 +115,13 @@ def upgrade() -> None:
             continue
 
         attributes = json.loads(annotation.attributes) if annotation.attributes else {}
-        existing = attributes.get("plate_text")
+        final_plate = attributes.get("plate_text") or ""
 
-        if existing and existing != reading:
-            # Two different things a person wrote. The annotation's is
-            # the newer by construction, so it stays - but the one it
-            # beat is left where it is rather than deleted.
-            conflicted += len(track_rows)
-            continue
-
-        if not existing:
-            if not reading:
-                # Nothing to move. The rows say nothing, so they go.
-                _delete(connection, track_rows)
-                moved += 0
-                continue
+        if not final_plate and reading:
             if len(reading) > _PLATE_TEXT_MAX_LENGTH:
-                # Writing it would leave a frame the app refuses to
-                # save - the attribute validator checks length and this
-                # path skips it. Left alone and reported.
+                # Writing it would leave a frame the app refuses to save:
+                # the attribute validator checks length and this path
+                # skips it. Left where it is, and reported.
                 too_long += len(track_rows)
                 continue
             attributes["plate_text"] = reading
@@ -130,25 +129,36 @@ def upgrade() -> None:
                 sa.text("UPDATE annotations SET attributes = :attributes WHERE id = :id"),
                 {"attributes": json.dumps(attributes), "id": annotation.id},
             )
-            moved += 1
+            final_plate = reading
+            written += 1
 
-        # Either the reading is now on the annotation or it already said
-        # the same thing. Nothing is lost by clearing the rows.
-        _delete(connection, track_rows)
+        # The one rule. A row whose reading is empty says nothing worth
+        # keeping; a row whose reading is what the annotation now carries
+        # is a duplicate of it. Anything else is a value that exists
+        # nowhere else, so it stays - including an earlier correction the
+        # current one replaced, and every row on a track whose annotation
+        # already disagreed.
+        for row in track_rows:
+            row_reading = _reading(row)
+            if not row_reading or row_reading == final_plate:
+                connection.execute(sa.text("DELETE FROM ocr_candidates WHERE id = :id"), {"id": row.id})
+                cleared += 1
+            elif row is current:
+                conflicted += 1
+            else:
+                superseded += 1
 
     logger.info(
-        "plate text: moved %d reading(s) onto annotations; left %d with no label, "
-        "%d disagreeing with a plate already recorded, %d too long to store",
-        moved,
+        "plate text: wrote %d plate(s) onto annotations and removed %d row(s). Left in place: "
+        "%d with no label to attach to, %d disagreeing with a plate already recorded, "
+        "%d superseded by a later correction saying something else, %d too long to store.",
+        written,
+        cleared,
         orphaned,
         conflicted,
+        superseded,
         too_long,
     )
-
-
-def _delete(connection, rows) -> None:
-    for row in rows:
-        connection.execute(sa.text("DELETE FROM ocr_candidates WHERE id = :id"), {"id": row.id})
 
 
 def downgrade() -> None:

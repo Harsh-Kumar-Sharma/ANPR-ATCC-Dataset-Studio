@@ -144,6 +144,23 @@ describe("TrackReview: the plate card", () => {
     expect(screen.getByText(/accept or flag this track/i)).toBeInTheDocument();
   });
 
+  it("opens the plate field after a failed review too", async () => {
+    // A failed review still writes a human annotation, so there is a
+    // label to hang a plate on. Treating it as no label left the field
+    // disabled on a track that had just been reviewed.
+    vi.spyOn(api, "getAnnotation").mockResolvedValue(null);
+    vi.spyOn(api, "submitReview").mockResolvedValue({
+      track: { ...track, review_status: "failed" },
+      annotation: { ...annotation(), status: "failed", class_id: null },
+    });
+    renderReview();
+
+    await screen.findByLabelText("Plate text");
+    fireEvent.click(screen.getByRole("button", { name: /fail/i }));
+
+    await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>("Plate text")).not.toBeDisabled());
+  });
+
   it("opens the plate field once the track has been reviewed", async () => {
     vi.spyOn(api, "getAnnotation").mockResolvedValue(null);
     vi.spyOn(api, "submitReview").mockResolvedValue({

@@ -138,8 +138,12 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
         bbox_json: bbox,
       });
       setMessage(`Saved as ${decision}.`);
-      // An accepted or hard review creates the label a plate hangs off.
-      setHasLabel(decision !== "failed");
+      // Every decision creates the label a plate hangs off, including
+      // "failed" - the review writes a human annotation whatever it
+      // decided. Excluding failed here left the field disabled, saying
+      // "review this track first", on a track that had just been
+      // reviewed and whose plate the server would have accepted.
+      setHasLabel(true);
       onReviewed(result.track);
       onNavigateTrack(1);
     } catch (e) {

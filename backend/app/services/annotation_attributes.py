@@ -184,6 +184,13 @@ def clean_attributes(attributes: dict | None, stored: dict | None = None) -> dic
             # limit existed, or by a migration - would otherwise make
             # every save of its frame fail over something the panel
             # cannot shorten because it never showed it.
+            #
+            # Excused means dropped, like every other echo this function
+            # forgives: saving the frame removes the over-long value
+            # rather than keeping it. That is the same trade the retired
+            # attribute makes - a value the panel cannot show is a value
+            # nobody is maintaining - and it is the only way out that
+            # leaves the frame saveable.
             if _is_echo(key, value, stored):
                 continue
             raise InvalidAttributeError(f"attribute {key!r} is {len(text)} characters; the most allowed is {max_length}.")

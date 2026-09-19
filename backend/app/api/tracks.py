@@ -111,11 +111,22 @@ def run_track_ocr(
 
 @tracks_router.get("/{track_id}/ocr-candidates", response_model=list[OcrCandidateRead])
 def list_track_ocr_candidates(track_id: str, db: Session = Depends(get_db)) -> list[OcrCandidate]:
-    """Every OCR attempt made for this track, most recent first -
-    all attempts stay traceable, never overwritten."""
+    """Every OCR attempt the model made for this track, most recent
+    first - all attempts stay traceable, never overwritten.
+
+    The model's only. A human reading the plate-text migration could not
+    safely move is left in the table, with its ``selected`` flag and its
+    confidence of 1.0 intact, so without this filter somebody's own
+    typing would head this list wearing the badge that means "the model
+    was surest about this one".
+    """
     _get_track_or_404(db, track_id)
     return list(
-        db.scalars(select(OcrCandidate).where(OcrCandidate.track_id == track_id).order_by(OcrCandidate.created_at.desc()))
+        db.scalars(
+            select(OcrCandidate)
+            .where(OcrCandidate.track_id == track_id, OcrCandidate.source == "model")
+            .order_by(OcrCandidate.created_at.desc())
+        )
     )
 
 
