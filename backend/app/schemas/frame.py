@@ -73,3 +73,20 @@ class DeletedFrameRead(BaseModel):
     #: Whether a decoded image was on disk and is now not. False when
     #: the frame had never been opened, which costs nothing to delete.
     image_removed: bool
+
+
+class SourceQueueRead(BaseModel):
+    """One source's own place in the labelling queue.
+
+    What the source picker shows: which clip it is, and how much of it
+    is still waiting.
+    """
+
+    source_id: str
+    path_or_uri: str
+    type: str
+    total: int
+    pending: int
+    labeled: int
+    rejected: int
+    skipped: int

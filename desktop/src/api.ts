@@ -28,6 +28,7 @@ import type {
   RtspStartResult,
   Source,
   SourceContents,
+  SourceQueue,
   StorageUsage,
   SourceDetections,
   Track,
@@ -166,10 +167,21 @@ export const api = {
 
   frameImageUrl: (frameCandidateId: string) => `${API_BASE}/tracks/frames/${frameCandidateId}/image`,
 
-  listFrames: (projectId: string, status?: string) =>
-    request<Frame[]>(`/projects/${projectId}/frames${query({ status })}`),
+  /** The labelling queue, narrowed to one source when given one -
+   *  which is the only way it stays usable past the first clip. */
+  listFrames: (projectId: string, status?: string, sourceId?: string | null) =>
+    request<Frame[]>(`/projects/${projectId}/frames${query({ status, source_id: sourceId ?? undefined })}`),
   getFrame: (frameId: string) => request<Frame>(`/frames/${frameId}`),
-  getQueueProgress: (projectId: string) => request<QueueProgress>(`/projects/${projectId}/frames/progress`),
+  /** Narrowed by the same source as the list. A progress line counting
+   *  the whole project beside a list showing one clip is worse than no
+   *  progress line. */
+  getQueueProgress: (projectId: string, sourceId?: string | null) =>
+    request<QueueProgress>(
+      `/projects/${projectId}/frames/progress${query({ source_id: sourceId ?? undefined })}`,
+    ),
+  /** Each source with its own progress, most work left first. One call
+   *  rather than one per source. */
+  getQueueBySource: (projectId: string) => request<SourceQueue[]>(`/projects/${projectId}/frames/by-source`),
   /** Decide which of a source's frames are worth labelling. Runs in
    *  the background; frames a human has already touched are left alone. */
   selectFrames: (projectId: string, sourceId: string) =>

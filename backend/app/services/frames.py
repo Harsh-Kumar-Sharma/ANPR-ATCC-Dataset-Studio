@@ -76,29 +76,39 @@ def _require_known_status(status: str) -> None:
         )
 
 
-def _openable_frames(project_id: str):
+def _openable_frames(project_id: str, source_id: str | None = None):
     """Every frame in the project the queue could ever offer.
 
     "Could ever" excludes a frame from a live RTSP session that has no
     stored image: there is no video file to decode it from, so it would
     be a queue entry that errors on click. Written once because the list
     and the progress counts have to agree - if they drift, the totals
-    stop describing the list.
+    stop describing the list. ``source_id`` is part of that: a filtered
+    list beside an unfiltered count is the same drift with a different
+    cause.
     """
-    return (
+    stmt = (
         select(Frame)
         .join(Source, Frame.source_id == Source.id)
         .where(Source.project_id == project_id)
         .where(or_(Source.type == "video", Frame.image_path.is_not(None)))
     )
+    if source_id is not None:
+        stmt = stmt.where(Frame.source_id == source_id)
+    return stmt
 
 
-def list_queue(db: Session, project_id: str, status: str | None = None) -> list[Frame]:
+def list_queue(
+    db: Session, project_id: str, status: str | None = None, source_id: str | None = None
+) -> list[Frame]:
     """A project's frames in labelling order.
 
     Source then frame index, so a session walks one video forward before
-    starting the next. Which frames *deserve* to be in the queue is a
-    later ticket; today every captured frame that can be opened is.
+    starting the next.
+
+    ``source_id`` narrows it to one clip. With three sources the whole
+    list is unusable: you cannot tell whose frames you are looking at,
+    and there is no way to finish one video before starting the next.
 
     "Can be opened" matters: a frame from a live RTSP session has no
     video file to decode it from, so unless its image was written at
@@ -108,7 +118,7 @@ def list_queue(db: Session, project_id: str, status: str | None = None) -> list[
     if status is not None:
         _require_known_status(status)
 
-    stmt = _openable_frames(project_id).order_by(Frame.source_id, Frame.frame_index)
+    stmt = _openable_frames(project_id, source_id).order_by(Frame.source_id, Frame.frame_index)
     if status is not None:
         stmt = stmt.where(Frame.status == status)
     else:
@@ -142,19 +152,84 @@ def _status_from_work(db: Session, frame: Frame) -> str:
     return "labeled" if any(a.source == "human" for a in list_annotations(db, frame.id)) else "pending"
 
 
-def queue_progress(db: Session, project_id: str) -> dict[str, int]:
+def queue_progress(db: Session, project_id: str, source_id: str | None = None) -> dict[str, int]:
     """How far through this project's frames the labelling has got.
 
     Counts every frame the queue would ever offer, rejected included -
     "12 of 400, 3 skipped" is the shape of the answer, so the skipped
-    ones have to be in the total.
+    ones have to be in the total. ``source_id`` narrows it to the same
+    clip the list is showing.
     """
-    openable = _openable_frames(project_id).subquery()
+    openable = _openable_frames(project_id, source_id).subquery()
     rows = db.execute(select(openable.c.status, func.count()).select_from(openable).group_by(openable.c.status)).all()
     counts = {status: 0 for status in FRAME_STATUSES}
     for status, count in rows:
         counts[status] = count
     return {**counts, "total": sum(counts.values())}
+
+
+@dataclass
+class SourceQueue:
+    """One source's own place in the labelling queue.
+
+    What the source picker needs to say which clip still wants work,
+    without asking once per source.
+    """
+
+    source_id: str
+    path_or_uri: str
+    type: str
+    total: int = 0
+    pending: int = 0
+    labeled: int = 0
+    rejected: int = 0
+    skipped: int = 0
+
+    @property
+    def remaining(self) -> int:
+        return self.pending
+
+
+def queue_by_source(db: Session, project_id: str) -> list[SourceQueue]:
+    """Every source of a project with its own progress, most work left
+    first.
+
+    Ordered that way because someone opening the Label tab wants the
+    clip that still needs doing, not whichever happened to be imported
+    first. A source with no frames yet still appears - otherwise it
+    vanishes from the picker and there is no way to see that it has
+    nothing to label.
+    """
+    sources = list(
+        db.scalars(select(Source).where(Source.project_id == project_id).order_by(Source.created_at))
+    )
+    if not sources:
+        return []
+
+    openable = _openable_frames(project_id).subquery()
+    counts: dict[tuple[str, str], int] = {
+        (source_id, status): count
+        for source_id, status, count in db.execute(
+            select(openable.c.source_id, openable.c.status, func.count())
+            .select_from(openable)
+            .group_by(openable.c.source_id, openable.c.status)
+        ).all()
+    }
+
+    queues = []
+    for source in sources:
+        per_status = {status: counts.get((source.id, status), 0) for status in FRAME_STATUSES}
+        queues.append(
+            SourceQueue(
+                source_id=source.id,
+                path_or_uri=source.path_or_uri,
+                type=source.type,
+                total=sum(per_status.values()),
+                **per_status,
+            )
+        )
+    queues.sort(key=lambda q: (q.remaining, q.total), reverse=True)
+    return queues
 
 
 def get_frame(db: Session, frame_id: str) -> Frame:

@@ -12,8 +12,10 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
+from app.core.errors import NotFoundError
 from app.db.models.annotation import Annotation
 from app.db.models.frame import Frame
+from app.db.models.source import Source
 from app.db.session import get_db
 from app.schemas.frame import (
     DeletedFrameRead,
@@ -21,6 +23,7 @@ from app.schemas.frame import (
     FrameRead,
     FrameStatusWrite,
     QueueProgress,
+    SourceQueueRead,
 )
 from app.schemas.ocr import PlateReadingRead
 from app.schemas.review import AnnotationRead
@@ -32,17 +35,60 @@ frames_router = APIRouter(prefix="/frames", tags=["frames"])
 
 
 @project_frames_router.get("", response_model=list[FrameRead])
-def list_frames(project_id: str, status: str | None = None, db: Session = Depends(get_db)) -> list[Frame]:
-    """The project's labelling queue, in labelling order."""
+def list_frames(
+    project_id: str,
+    status: str | None = None,
+    source_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[Frame]:
+    """The project's labelling queue, in labelling order.
+
+    ``source_id`` narrows it to one clip, which is the only way the
+    queue stays usable once a project has more than one source.
+    """
     get_project_or_404(db, project_id)
-    return frames.list_queue(db, project_id, status=status)
+    _require_source_of_project(db, project_id, source_id)
+    return frames.list_queue(db, project_id, status=status, source_id=source_id)
+
+
+@project_frames_router.get("/by-source", response_model=list[SourceQueueRead])
+def get_queue_by_source(project_id: str, db: Session = Depends(get_db)) -> list[SourceQueueRead]:
+    """Each source with its own progress, most work left first.
+
+    One call rather than one per source, so the picker can say which
+    clip still needs doing without a request per row.
+    """
+    get_project_or_404(db, project_id)
+    return [SourceQueueRead(**asdict(queue)) for queue in frames.queue_by_source(db, project_id)]
 
 
 @project_frames_router.get("/progress", response_model=QueueProgress)
-def get_queue_progress(project_id: str, db: Session = Depends(get_db)) -> QueueProgress:
-    """Labelled, rejected and remaining, for this project's whole queue."""
+def get_queue_progress(
+    project_id: str, source_id: str | None = None, db: Session = Depends(get_db)
+) -> QueueProgress:
+    """Labelled, rejected and remaining, for this project's queue.
+
+    Narrowed by ``source_id`` to the same clip the list is showing. A
+    progress line counting the whole project beside a list showing one
+    source is worse than no progress line at all.
+    """
     get_project_or_404(db, project_id)
-    return QueueProgress(**frames.queue_progress(db, project_id))
+    _require_source_of_project(db, project_id, source_id)
+    return QueueProgress(**frames.queue_progress(db, project_id, source_id=source_id))
+
+
+def _require_source_of_project(db: Session, project_id: str, source_id: str | None) -> None:
+    """A source id that is not this project's is an error, not an empty list.
+
+    An empty answer reads identically to "this source has nothing to
+    label", which is the wrong thing to tell someone whose id is stale
+    or mistyped.
+    """
+    if source_id is None:
+        return
+    source = db.get(Source, source_id)
+    if source is None or source.project_id != project_id:
+        raise NotFoundError(f"Source not found in this project: {source_id}")
 
 
 @frames_router.get("/{frame_id}", response_model=FrameRead)

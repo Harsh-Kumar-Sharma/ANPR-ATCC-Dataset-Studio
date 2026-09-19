@@ -2343,3 +2343,44 @@ label.toggle {
   line-height: 1.45;
   color: var(--text-muted);
 }
+
+/* --- choosing which source to label ------------------------------------ */
+
+.queue-source {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.queue-source select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* A source's name opens its frames. It is a button now, so it has to
+   be talked back out of looking like one. */
+.source-list .source-name--link {
+  display: block;
+  width: auto;
+  padding: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+}
+
+.source-list .source-name--link:hover {
+  text-decoration: underline;
+}

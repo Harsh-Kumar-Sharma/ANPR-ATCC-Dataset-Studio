@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api";
 import LabelQueue from "../src/components/LabelQueue";
-import type { Frame, Project, QueueProgress } from "../src/types";
+import type { Frame, Project, QueueProgress, SourceQueue } from "../src/types";
 
 const project: Project = {
   id: "p-1",
@@ -25,6 +25,18 @@ function frame(index: number, status: Frame["status"] = "pending"): Frame {
   };
 }
 
+const sourceQueue = (over: Partial<SourceQueue> = {}): SourceQueue => ({
+  source_id: "s-1",
+  path_or_uri: "C:/clips/gantry_north.mp4",
+  type: "video",
+  total: 3,
+  pending: 3,
+  labeled: 0,
+  rejected: 0,
+  skipped: 0,
+  ...over,
+});
+
 const progress = (over: Partial<QueueProgress> = {}): QueueProgress => ({
   pending: 3,
   labeled: 0,
@@ -46,6 +58,7 @@ describe("LabelQueue", () => {
     window.localStorage.clear();
     vi.spyOn(api, "listFrames").mockResolvedValue([frame(0), frame(1), frame(2)]);
     vi.spyOn(api, "getQueueProgress").mockResolvedValue(progress());
+    vi.spyOn(api, "getQueueBySource").mockResolvedValue([sourceQueue()]);
   });
 
   it("says so plainly when there is nothing to label", async () => {
@@ -131,8 +144,8 @@ describe("LabelQueue", () => {
 
     // Both set-aside statuses are fetched, so check both rather than
     // whichever happened to resolve last.
-    await waitFor(() => expect(listFrames).toHaveBeenCalledWith("p-1", "rejected"));
-    expect(listFrames).toHaveBeenCalledWith("p-1", "skipped");
+    await waitFor(() => expect(listFrames).toHaveBeenCalledWith("p-1", "rejected", null));
+    expect(listFrames).toHaveBeenCalledWith("p-1", "skipped", null);
 
     fireEvent.click(await screen.findByRole("button", { name: /put frame 5 back/i }));
 
@@ -196,6 +209,7 @@ describe("LabelQueue: unsaved work", () => {
     window.localStorage.clear();
     vi.spyOn(api, "listFrames").mockResolvedValue([frame(0), frame(1), frame(2)]);
     vi.spyOn(api, "getQueueProgress").mockResolvedValue(progress());
+    vi.spyOn(api, "getQueueBySource").mockResolvedValue([sourceQueue()]);
   });
 
   it("will not walk away from unsaved boxes without saying so", async () => {
@@ -249,5 +263,90 @@ describe("LabelQueue: unsaved work", () => {
 
     expect(onSelect).not.toHaveBeenCalled();
     expect(await screen.findByRole("alert")).toHaveTextContent(/unsaved/i);
+  });
+});
+
+describe("LabelQueue, choosing a source", () => {
+  const two = [
+    sourceQueue({ source_id: "s-1", path_or_uri: "C:/clips/gantry_north.mp4", pending: 3, total: 3 }),
+    sourceQueue({ source_id: "s-2", path_or_uri: "C:/clips/toll_west.mp4", pending: 1, total: 4, labeled: 3 }),
+  ];
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listFrames").mockResolvedValue([frame(0), frame(1), frame(2)]);
+    vi.spyOn(api, "getQueueProgress").mockResolvedValue(progress());
+    vi.spyOn(api, "getQueueBySource").mockResolvedValue(two);
+  });
+
+  it("offers no choice when there is only one source", async () => {
+    vi.spyOn(api, "getQueueBySource").mockResolvedValue([sourceQueue()]);
+
+    renderQueue();
+    await screen.findByRole("button", { name: /frame 0/i });
+
+    expect(screen.queryByLabelText(/source to label/i)).not.toBeInTheDocument();
+  });
+
+  it("names each source and says how much of it is left", async () => {
+    renderQueue();
+
+    const picker = await screen.findByLabelText(/source to label/i);
+    expect(picker).toHaveTextContent(/gantry_north\.mp4/);
+    expect(picker).toHaveTextContent(/toll_west\.mp4/);
+    expect(picker).toHaveTextContent(/1 left of 4/);
+  });
+
+  it("narrows both the list and the progress line to the chosen source", async () => {
+    renderQueue();
+    const picker = await screen.findByLabelText(/source to label/i);
+
+    fireEvent.change(picker, { target: { value: "s-2" } });
+
+    await waitFor(() => {
+      expect(api.listFrames).toHaveBeenCalledWith(project.id, undefined, "s-2");
+      expect(api.getQueueProgress).toHaveBeenCalledWith(project.id, "s-2");
+    });
+  });
+
+  it("remembers the choice for next time, per project", async () => {
+    const first = renderQueue();
+    fireEvent.change(await screen.findByLabelText(/source to label/i), { target: { value: "s-2" } });
+    await waitFor(() => expect(api.listFrames).toHaveBeenCalledWith(project.id, undefined, "s-2"));
+    first.unmount();
+
+    vi.mocked(api.listFrames).mockClear();
+    renderQueue();
+
+    await waitFor(() => expect(api.listFrames).toHaveBeenCalledWith(project.id, undefined, "s-2"));
+  });
+
+  it("falls back to all sources when the remembered one is gone", async () => {
+    window.localStorage.setItem(`anpr:last-source:${project.id}`, "s-deleted");
+
+    renderQueue();
+
+    // No request is made for the source that no longer exists: it would
+    // answer 404 and strand the tab on an error.
+    await waitFor(() => expect(api.listFrames).toHaveBeenCalledWith(project.id, undefined, null));
+    expect(api.listFrames).not.toHaveBeenCalledWith(project.id, undefined, "s-deleted");
+  });
+
+  it("uses the source the rest of the app picked over the remembered one", async () => {
+    window.localStorage.setItem(`anpr:last-source:${project.id}`, "s-1");
+
+    renderQueue({ sourceId: "s-2" });
+
+    await waitFor(() => expect(api.listFrames).toHaveBeenCalledWith(project.id, undefined, "s-2"));
+  });
+
+  it("tells the rest of the app when the user picks a different source", async () => {
+    const onSourceChange = vi.fn();
+    renderQueue({ onSourceChange });
+
+    fireEvent.change(await screen.findByLabelText(/source to label/i), { target: { value: "s-2" } });
+
+    expect(onSourceChange).toHaveBeenCalledWith("s-2");
   });
 });

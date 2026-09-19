@@ -41,6 +41,10 @@ function App() {
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const [labelFrame, setLabelFrame] = useState<Frame | null>(null);
+  // Which source the Label tab is narrowed to. Undefined means the app
+  // has no opinion and the tab uses what it remembered; null means all
+  // sources, chosen deliberately.
+  const [labelSourceId, setLabelSourceId] = useState<string | null | undefined>(undefined);
   // Reported by the canvas so the queue will not walk away from
   // unsaved boxes without asking.
   const [labelDirty, setLabelDirty] = useState(false);
@@ -80,6 +84,7 @@ function App() {
     setPlayerSource(null);
     setLiveRunId(null);
     setLabelFrame(null);
+    setLabelSourceId(undefined);
   }
 
   function handleReviewed(updated: Track) {
@@ -90,6 +95,17 @@ function App() {
     setSelectedTrackId(track.id);
     setMainView("review");
     setTab("workflow");
+  }
+
+  /** Clicking a source's name goes to its frames, and only its
+   *  frames. The open frame is cleared: it probably belongs to a
+   *  different clip, and leaving it on screen contradicts the list. */
+  function labelSource(source: Source) {
+    setLabelSourceId(source.id);
+    setLabelFrame(null);
+    setLabelDirty(false);
+    setTab("label");
+    setMainView("review");
   }
 
   function watchSource(source: Source) {
@@ -218,7 +234,12 @@ function App() {
         <div className="sidebar-content">
           {tab === "workflow" && (
             <>
-              <SourcePanel project={project} onProcessed={refreshJobs} onWatch={watchSource} />
+              <SourcePanel
+                project={project}
+                onProcessed={refreshJobs}
+                onWatch={watchSource}
+                onLabel={labelSource}
+              />
               <JobsPanel
                 jobs={jobs}
                 error={jobsError}
@@ -235,7 +256,9 @@ function App() {
               selectedFrameId={labelFrame?.id ?? null}
               dirty={labelDirty}
               refreshKey={queueVersion}
+              sourceId={labelSourceId}
               onSelect={labelFrameNow}
+              onSourceChange={setLabelSourceId}
             />
           )}
           {tab === "live" && (

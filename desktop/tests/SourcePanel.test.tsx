@@ -94,3 +94,21 @@ describe("SourcePanel: choosing frames", () => {
     expect(screen.queryByRole("button", { name: /choose frames/i })).not.toBeInTheDocument();
   });
 });
+
+describe("SourcePanel: getting to a source's frames", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listSources").mockResolvedValue([source]);
+  });
+
+  it("opens this source's frames when its name is clicked", async () => {
+    // Not knowing which frames came from which clip is the complaint
+    // this answers, and the name is the obvious thing to click.
+    const onLabel = vi.fn();
+    render(<SourcePanel project={project} onProcessed={vi.fn()} onWatch={vi.fn()} onLabel={onLabel} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^atcc1\.mp4$/i }));
+
+    expect(onLabel).toHaveBeenCalledWith(expect.objectContaining({ id: "s-1" }));
+  });
+});

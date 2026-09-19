@@ -474,3 +474,18 @@ export interface Reclaimed {
   reclaimed_bytes: number;
   detail: string;
 }
+
+/** One source's own place in the labelling queue.
+ *
+ *  What the source picker shows: which clip it is, and how much of it
+ *  is still waiting. */
+export interface SourceQueue {
+  source_id: string;
+  path_or_uri: string;
+  type: string;
+  total: number;
+  pending: number;
+  labeled: number;
+  rejected: number;
+  skipped: number;
+}

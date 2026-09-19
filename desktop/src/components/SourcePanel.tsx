@@ -1,29 +1,15 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { IconAlert, IconCheck, IconFilm, IconPlay, IconX } from "../Icons";
+import { sourceLabel } from "../sourceLabel";
 import type { Project, Source, SourceContents } from "../types";
 
 interface Props {
   project: Project;
   onProcessed: () => void;
   onWatch: (source: Source) => void;
-}
-
-/** What to call a source on screen.
- *
- *  The filename for a video. For a live stream the last path segment is
- *  the channel number - both cameras in a real project displayed as
- *  "1" - so it is named by host and channel instead, with any
- *  credentials in the URL left out of the UI. */
-function sourceLabel(source: Source): string {
-  if (source.type !== "rtsp") return source.path_or_uri.split(/[\\/]/).pop() ?? source.path_or_uri;
-  try {
-    const url = new URL(source.path_or_uri);
-    const channel = url.pathname.split("/").filter(Boolean).pop();
-    return channel ? `${url.hostname} · ch ${channel}` : url.hostname;
-  } catch {
-    return source.path_or_uri;
-  }
+  /** Open the Label tab already narrowed to this source. */
+  onLabel?: (source: Source) => void;
 }
 
 /** Bytes as something a person can weigh a decision against. */
@@ -45,7 +31,7 @@ function readableSize(bytes: number): string {
   return `${shown.toFixed(shown < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
-function SourcePanel({ project, onProcessed, onWatch }: Props) {
+function SourcePanel({ project, onProcessed, onWatch, onLabel }: Props) {
   const [sources, setSources] = useState<Source[]>([]);
   const [path, setPath] = useState("");
   const [targetFps, setTargetFps] = useState(5);
@@ -213,9 +199,16 @@ function SourcePanel({ project, onProcessed, onWatch }: Props) {
       <ul className="source-list">
         {sources.map((s) => (
           <li key={s.id}>
-            <span className="source-name" title={s.path_or_uri}>
+            {/* The name is the way into this source's frames: not
+                knowing which frames came from which clip is the
+                complaint this answers. */}
+            <button
+              className="source-name source-name--link"
+              title={`Label the frames from ${sourceLabel(s)}`}
+              onClick={() => onLabel?.(s)}
+            >
               {sourceLabel(s)}
-            </span>
+            </button>
             <button
               className="source-remove"
               data-testid="remove-source"
