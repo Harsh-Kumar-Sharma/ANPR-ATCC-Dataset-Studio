@@ -2,17 +2,20 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
 from app.services.class_definitions import class_schema_for
 from app.core.errors import NotFoundError
+from app.db.models.dataset_item import DatasetItem
 from app.db.models.dataset_version import DatasetVersion
 from app.db.session import get_db
 from app.ml.yolo_detector import DEFAULT_MODEL_WEIGHTS
 from app.schemas.active_learning import RetrainingHandoffResult
 from app.schemas.dataset import DatasetExportRequest, DatasetExportResult, DatasetVersionRead, ValidationResultRead
+from app.schemas.storage import ReclaimedRead
+from app.services.cascade import directory_size, remove_tree
 from app.services.dataset_export import export_dataset_version
 from app.services.dataset_validator import validate_export
 from app.services.retraining_handoff import write_retraining_handoff
@@ -73,6 +76,38 @@ def list_dataset_versions(project_id: str, db: Session = Depends(get_db)) -> lis
 @datasets_router.get("/{dataset_version_id}", response_model=DatasetVersionRead)
 def get_dataset_version(dataset_version_id: str, db: Session = Depends(get_db)) -> DatasetVersion:
     return _get_dataset_version_or_404(db, dataset_version_id)
+
+
+@datasets_router.delete("/{dataset_version_id}", response_model=ReclaimedRead)
+def delete_dataset_version(dataset_version_id: str, db: Session = Depends(get_db)) -> ReclaimedRead:
+    """Delete an exported dataset version and its files.
+
+    The version is a snapshot, not the work it was made from: the
+    labels stay, and the same frames export again next time. What goes
+    is the copy on disk - usually the largest single thing a project
+    holds - and the rows indexing it.
+
+    It also releases the frames it was holding. A frame in an exported
+    version cannot be deleted, because the manifest names it; once the
+    version is gone, it can be.
+    """
+    version = _get_dataset_version_or_404(db, dataset_version_id)
+    project = get_project_or_404(db, version.project_id)
+    export_dir = _manifest_path(project.workspace_path, version).parent
+    reclaimed = directory_size(export_dir)
+
+    db.execute(delete(DatasetItem).where(DatasetItem.dataset_version_id == version.id))
+    db.delete(version)
+    db.commit()
+    # After the commit, like every other delete here: files left behind
+    # can be removed by hand, rows pointing at files that are gone
+    # cannot be reasoned about.
+    remove_tree(export_dir)
+
+    return ReclaimedRead(
+        reclaimed_bytes=reclaimed,
+        detail=f"Deleted dataset version v{version.version}. The labels it was made from are untouched.",
+    )
 
 
 @datasets_router.get("/{dataset_version_id}/manifest")

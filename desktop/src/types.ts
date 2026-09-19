@@ -442,3 +442,35 @@ export interface DeletedFrame {
   /** False when the frame had never been opened, so no image existed. */
   image_removed: boolean;
 }
+
+/** One project's footprint, split the way a person would decide. */
+export interface ProjectUsage {
+  project_id: string;
+  name: string;
+  source_videos_bytes: number;
+  track_crops_bytes: number;
+  frame_images_bytes: number;
+  exports_bytes: number;
+  total_bytes: number;
+}
+
+/** A workspace directory belonging to no project. */
+export interface OrphanWorkspace {
+  path: string;
+  bytes: number;
+}
+
+/** Where the disk went. */
+export interface StorageUsage {
+  free_bytes: number;
+  total_bytes: number;
+  app_bytes: number;
+  job_files_bytes: number;
+  projects: ProjectUsage[];
+  orphan_workspaces: OrphanWorkspace[];
+}
+
+export interface Reclaimed {
+  reclaimed_bytes: number;
+  detail: string;
+}

@@ -19,6 +19,7 @@ import type {
   ProcessingRun,
   Project,
   ProjectClass,
+  Reclaimed,
   ProjectContents,
   QueueProgress,
   QueueItem,
@@ -27,6 +28,7 @@ import type {
   RtspStartResult,
   Source,
   SourceContents,
+  StorageUsage,
   SourceDetections,
   Track,
   TrackReviewResult,
@@ -208,6 +210,25 @@ export const api = {
   getFramePlateReadings: (frameId: string) =>
     request<PlateReading[]>(`/frames/${frameId}/plate-readings`),
 
+  /** Where the disk went, across every project, plus what is left on
+   *  the drive. */
+  getStorageUsage: () => request<StorageUsage>("/storage"),
+  /** Delete decoded frame images. They are a cache of the source
+   *  video and come back the next time a frame is opened; labels and
+   *  frame rows are untouched. */
+  clearFrameImages: (projectId: string, sourceId?: string) =>
+    request<Reclaimed>("/storage/clear-frame-images", {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, source_id: sourceId ?? null }),
+    }),
+  /** Remove the progress file and log of every finished job. */
+  clearJobFiles: () => request<Reclaimed>("/storage/clear-job-files", { method: "POST" }),
+  /** Delete workspace directories belonging to no project. */
+  removeOrphanWorkspaces: () => request<Reclaimed>("/storage/remove-orphan-workspaces", { method: "POST" }),
+  /** Delete an exported dataset version and its files. The labels it
+   *  was made from stay - the version is a snapshot, not the work. */
+  deleteDatasetVersion: (datasetVersionId: string) =>
+    request<Reclaimed>(`/dataset-versions/${datasetVersionId}`, { method: "DELETE" }),
   listDatasetVersions: (projectId: string) => request<DatasetVersion[]>(`/projects/${projectId}/dataset-versions`),
   exportDataset: (projectId: string) =>
     request<DatasetExportResult>(`/projects/${projectId}/dataset-versions`, { method: "POST", body: JSON.stringify({}) }),

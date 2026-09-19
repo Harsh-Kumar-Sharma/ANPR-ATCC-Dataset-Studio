@@ -19,6 +19,7 @@ from app.api.projects import router as projects_router
 from app.api.rtsp import router as rtsp_router
 from app.api.rtsp import run_router as rtsp_run_router
 from app.api.sources import router as sources_router
+from app.api.storage import router as storage_router
 from app.api.sources import runs_router as processing_runs_router
 from app.api.tracks import project_tracks_router, tracks_router
 from app.core.config import get_settings
@@ -81,6 +82,7 @@ app.include_router(jobs_router)
 app.include_router(classes_router)
 app.include_router(attributes_router)
 app.include_router(labels_router)
+app.include_router(storage_router)
 app.include_router(project_frames_router)
 app.include_router(frames_router)
 app.include_router(sources_router)

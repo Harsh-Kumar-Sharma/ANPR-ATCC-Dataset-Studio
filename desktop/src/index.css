@@ -2291,3 +2291,55 @@ label.toggle {
   border-color: var(--danger-border);
   color: var(--danger);
 }
+
+/* --- storage ------------------------------------------------------------ */
+
+.storage-free {
+  margin: 0 0 0.6rem;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.storage-breakdown {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.storage-breakdown li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+}
+
+.storage-breakdown li span {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.storage-breakdown li button {
+  padding: 1px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.storage-breakdown li button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.storage-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
