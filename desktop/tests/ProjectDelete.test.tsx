@@ -107,7 +107,7 @@ describe("ProjectPicker: deleting a project", () => {
 
     openDeleteFor("Gantry North");
 
-    expect(await screen.findByText(/2 job\(s\) still running/i)).toBeInTheDocument();
+    expect(await screen.findByText(/2 unfinished job\(s\) or live capture\(s\)/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/type the project name/i), { target: { value: "Gantry North" } });
     expect(screen.getByRole("button", { name: /delete this project/i })).toBeDisabled();
   });
@@ -219,5 +219,76 @@ describe("ProjectPicker: what the confirmation says", () => {
     expect(summary.textContent).toContain("1 label");
     expect(summary.textContent).toContain("2 tracks");
     expect(summary.textContent).not.toContain("1 labels");
+  });
+});
+
+
+describe("ProjectPicker: the confirmation cannot mislead", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listProjects").mockResolvedValue(projects);
+  });
+
+  it("does not show one project's contents under another project's name", async () => {
+    // Click A, then B before A's reply lands. The dialog named B while
+    // showing A's numbers, and derived the busy state from A too.
+    let releaseFirst: (value: ProjectContents) => void = () => {};
+    vi.spyOn(api, "getProjectContents").mockImplementation((id: string) =>
+      id === "p-1"
+        ? new Promise<ProjectContents>((resolve) => {
+            releaseFirst = resolve;
+          })
+        : Promise.resolve(contents({ labels: 7, tracks: 7, frames: 7, sources: 7, dataset_versions: 7 })),
+    );
+    render(<ProjectPicker onSelect={vi.fn()} />);
+    await screen.findByText("Gantry North");
+
+    openDeleteFor("Gantry North");
+    openDeleteFor("Gantry South");
+    expect((await screen.findByTestId("delete-summary")).textContent).toContain("7 labels");
+
+    releaseFirst(contents({ labels: 28 }));
+
+    await waitFor(() => expect(screen.getByTestId("delete-summary").textContent).toContain("7 labels"));
+    expect(screen.getByTestId("delete-summary").textContent).not.toContain("28 labels");
+  });
+
+  it("will not delete while it cannot say what is in the project", async () => {
+    // A confirmation that cannot name what is about to go is not a
+    // confirmation, which is why the counts have their own endpoint.
+    vi.spyOn(api, "getProjectContents").mockRejectedValue(new ApiError(500, "boom", "backend down"));
+    render(<ProjectPicker onSelect={vi.fn()} />);
+    await screen.findByText("Gantry North");
+
+    openDeleteFor("Gantry North");
+    fireEvent.change(await screen.findByLabelText(/type the project name/i), { target: { value: "Gantry North" } });
+
+    expect(screen.getByRole("button", { name: /delete this project/i })).toBeDisabled();
+    expect(screen.getByText(/could not read what is in this project/i)).toBeInTheDocument();
+  });
+
+  it("does not round a size up into the next unit's worth", async () => {
+    // One byte short of a megabyte is 1023.999 KB. Printing "1024 KB"
+    // in the sentence someone is about to act on invites doubt about
+    // the rest of it.
+    vi.spyOn(api, "getProjectContents").mockResolvedValue(contents({ workspace_bytes: 1048575 }));
+    render(<ProjectPicker onSelect={vi.fn()} />);
+    await screen.findByText("Gantry North");
+
+    openDeleteFor("Gantry North");
+
+    const summary = await screen.findByTestId("delete-summary");
+    expect(summary.textContent).toContain("1.0 MB");
+    expect(summary.textContent).not.toContain("1024 KB");
+  });
+
+  it("keeps a decimal for small sizes instead of rounding them away", async () => {
+    vi.spyOn(api, "getProjectContents").mockResolvedValue(contents({ workspace_bytes: 1536 }));
+    render(<ProjectPicker onSelect={vi.fn()} />);
+    await screen.findByText("Gantry North");
+
+    openDeleteFor("Gantry North");
+
+    expect((await screen.findByTestId("delete-summary")).textContent).toContain("1.5 KB");
   });
 });

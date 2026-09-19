@@ -36,7 +36,9 @@ function describeContents(contents: ProjectContents): string {
 
 /** Bytes as something a person can weigh a decision against. */
 function readableSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "an unknown amount";
   if (bytes < 1024) return `${bytes} B`;
+
   const units = ["KB", "MB", "GB", "TB"];
   let value = bytes / 1024;
   let unit = 0;
@@ -44,7 +46,17 @@ function readableSize(bytes: number): string {
     value /= 1024;
     unit += 1;
   }
-  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+
+  // Rounded before the unit is settled, not after. One byte short of a
+  // megabyte is 1023.999 KB, which rounds to 1024 - and printing
+  // "1024 KB" in the sentence someone is about to act on is the kind of
+  // small wrongness that makes them doubt the rest of it.
+  let shown = Number(value.toFixed(value < 10 ? 1 : 0));
+  if (shown >= 1024 && unit < units.length - 1) {
+    shown = 1;
+    unit += 1;
+  }
+  return `${shown.toFixed(shown < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
 function ProjectPicker({ onSelect }: Props) {
@@ -78,7 +90,15 @@ function ProjectPicker({ onSelect }: Props) {
     setError(null);
     setNotice(null);
     try {
-      setContents(await api.getProjectContents(project.id));
+      const loaded = await api.getProjectContents(project.id);
+      // Only if this is still the project being asked about. Clicking
+      // one project then another before the first reply lands would
+      // otherwise show the first project's counts under the second
+      // one's name, on the most destructive confirmation in the app.
+      setDoomed((current) => {
+        if (current?.id === project.id) setContents(loaded);
+        return current;
+      });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     }
@@ -189,7 +209,10 @@ function ProjectPicker({ onSelect }: Props) {
               Delete <strong>{doomed.name}</strong>?
             </p>
             {contents === null ? (
-              <p className="empty">Working out what is in it…</p>
+              // Until this arrives the dialog cannot say what is about
+              // to go, and the confirm button below stays disabled -
+              // that is the whole reason the endpoint exists.
+              <p className="empty">{error ? "Could not read what is in this project." : "Working out what is in it…"}</p>
             ) : (
               <>
                 <p className="delete-summary" data-testid="delete-summary">
@@ -197,8 +220,8 @@ function ProjectPicker({ onSelect }: Props) {
                 </p>
                 {busy && (
                   <p className="error">
-                    <IconAlert /> {contents.running_jobs} job(s) still running. Wait for them to finish, or cancel
-                    them, before deleting this project.
+                    <IconAlert /> {contents.running_jobs} unfinished job(s) or live capture(s). Wait for them to
+                    finish, cancel them, or stop the capture, before deleting this project.
                   </p>
                 )}
               </>
@@ -216,7 +239,11 @@ function ProjectPicker({ onSelect }: Props) {
 
             <div className="delete-confirm-actions">
               <button onClick={() => { setDoomed(null); setContents(null); }}>Cancel</button>
-              <button className="btn-danger" disabled={!nameMatches || busy || deleting} onClick={confirmDelete}>
+              <button
+                className="btn-danger"
+                disabled={contents === null || !nameMatches || busy || deleting}
+                onClick={confirmDelete}
+              >
                 {deleting ? "Deleting…" : "Delete this project"}
               </button>
             </div>

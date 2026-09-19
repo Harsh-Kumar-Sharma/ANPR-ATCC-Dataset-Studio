@@ -304,15 +304,26 @@ def _count_unfinished_work(db: Session, project_id: str, source_ids: list[str]) 
     jobs = _count(db, Job.id, Job.project_id == project_id, Job.status.not_in(TERMINAL_JOB_STATUSES))
     if not source_ids:
         return jobs
-    runs = 0
+
+    # Only the live captures, not every unfinished run. A detect job
+    # creates a run of its own, so counting both would report two things
+    # in flight for one piece of work. An RTSP session is the case a job
+    # count misses entirely: it starts capture threads and a ``running``
+    # run, and never creates a job row.
+    #
+    # Filtered in Python because the marker lives in a JSON column and
+    # there are only ever a handful of unfinished runs to look at.
+    live = 0
     for chunk in _chunked(source_ids):
-        runs += _count(
-            db,
-            ProcessingRun.id,
-            ProcessingRun.source_id.in_(chunk),
-            ProcessingRun.status.in_(UNFINISHED_RUN_STATUSES),
-        )
-    return jobs + runs
+        for run in db.scalars(
+            select(ProcessingRun).where(
+                ProcessingRun.source_id.in_(chunk),
+                ProcessingRun.status.in_(UNFINISHED_RUN_STATUSES),
+            )
+        ):
+            if (run.sampling_config or {}).get("protocol") == "rtsp":
+                live += 1
+    return jobs + live
 
 
 def _ids_in(db: Session, id_column, match_column, values: list[str]) -> list[str]:
