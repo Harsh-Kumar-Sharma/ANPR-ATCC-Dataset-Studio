@@ -2104,3 +2104,88 @@ label.toggle {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* --- deleting a project ------------------------------------------------ */
+
+.project-list li {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.project-list li > button:first-child {
+  flex: 1;
+}
+
+.project-delete {
+  padding: 0 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.project-delete:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+/* Deliberately heavier than the rest of the picker: this is the one
+   control here that destroys something. */
+.delete-confirm {
+  margin-bottom: 0.8rem;
+  padding: 0.7rem;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+}
+
+.delete-confirm-title {
+  margin: 0 0 0.4rem;
+}
+
+.delete-summary {
+  margin: 0 0 0.5rem;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.delete-confirm-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.delete-confirm-name input {
+  padding: 4px 8px;
+  font: inherit;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.delete-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 0.6rem;
+}
+
+.btn-danger {
+  padding: 4px 12px;
+  background: var(--danger, #c0392b);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

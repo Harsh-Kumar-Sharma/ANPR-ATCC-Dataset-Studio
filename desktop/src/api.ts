@@ -18,6 +18,7 @@ import type {
   ProcessingRun,
   Project,
   ProjectClass,
+  ProjectContents,
   QueueProgress,
   QueueItem,
   RetrainingHandoffResult,
@@ -68,6 +69,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /** What deleting a project would destroy. Its own call because a
+   *  confirmation that cannot say what is about to go is not one. */
+  getProjectContents: (projectId: string) => request<ProjectContents>(`/projects/${projectId}/contents`),
+  /** Irreversible. The name must match the project's exactly - the
+   *  interlock against a mis-aimed request. */
+  deleteProject: (projectId: string, name: string) =>
+    request<ProjectContents>(`/projects/${projectId}`, { method: "DELETE", body: JSON.stringify({ name }) }),
   listProjects: () => request<Project[]>("/projects"),
   createProject: (name: string, classPreset?: string) =>
     request<Project>("/projects", {

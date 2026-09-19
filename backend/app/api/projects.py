@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -7,8 +9,9 @@ from app.core.errors import NotFoundError
 from app.core.presets import DEFAULT_PRESET, get_preset
 from app.db.models.project import Project
 from app.db.session import get_db
-from app.schemas.project import ProjectCreate, ProjectRead
+from app.schemas.project import ProjectContentsRead, ProjectCreate, ProjectDeleteRequest, ProjectRead
 from app.services.class_definitions import class_schema_for, seed_project_classes
+from app.services.project_deletion import delete_project, summarize
 from app.services.workspace import create_project_workspace
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -55,6 +58,35 @@ def list_projects(db: Session = Depends(get_db)) -> list[Project]:
 @router.get("/{project_id}", response_model=ProjectRead)
 def get_project(project_id: str, db: Session = Depends(get_db)) -> Project:
     return get_project_or_404(db, project_id)
+
+
+@router.get("/{project_id}/contents", response_model=ProjectContentsRead)
+def get_project_contents(project_id: str, db: Session = Depends(get_db)) -> ProjectContentsRead:
+    """What deleting this project would destroy.
+
+    Its own endpoint because a confirmation that cannot say what is
+    about to go is not a confirmation - and because counting the
+    workspace on disk is slow enough that the delete request should not
+    be the first time anyone pays for it.
+    """
+    project = get_project_or_404(db, project_id)
+    contents = summarize(db, project, get_settings().workspace_root)
+    return ProjectContentsRead(**asdict(contents))
+
+
+@router.delete("/{project_id}", response_model=ProjectContentsRead)
+def remove_project(project_id: str, payload: ProjectDeleteRequest, db: Session = Depends(get_db)) -> ProjectContentsRead:
+    """Delete a project and everything it owns, and say what went.
+
+    Irreversible, and not recoverable from an export manifest the way a
+    single annotation is. The body must name the project exactly, and
+    the request is refused outright while any job is still running
+    against it.
+    """
+    project = get_project_or_404(db, project_id)
+    removed = delete_project(db, project, get_settings().workspace_root, confirm_name=payload.name)
+    db.commit()
+    return ProjectContentsRead(**asdict(removed))
 
 
 @router.get("/{project_id}/class-schema", response_model=list[dict])

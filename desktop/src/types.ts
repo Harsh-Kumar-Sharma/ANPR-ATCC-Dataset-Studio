@@ -395,3 +395,23 @@ export interface PlateReading {
   normalized_text: string;
   confidence: number;
 }
+
+/** What a project holds, in the terms a person would miss it in.
+ *
+ *  Shown before deleting and returned after, so what the confirmation
+ *  promised and what happened can be compared. */
+export interface ProjectContents {
+  sources: number;
+  frames: number;
+  tracks: number;
+  /** Human boxes. Predictions are not counted. */
+  labels: number;
+  dataset_versions: number;
+  /** Usually the bulk of it, and the only part measured in gigabytes. */
+  workspace_bytes: number;
+  /** Any at all and deletion refuses. */
+  running_jobs: number;
+  /** False when there was no directory, or when the server refused to
+   *  delete from where it was. */
+  workspace_removed: boolean;
+}
