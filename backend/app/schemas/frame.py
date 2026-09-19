@@ -16,6 +16,22 @@ class FrameRead(BaseModel):
     selection_reason: str | None
 
 
+class FrameStatusWrite(BaseModel):
+    """Move a frame to a place in the queue by hand - normally to
+    ``rejected`` to skip it, or back to ``pending`` to undo that."""
+
+    status: str
+
+
+class QueueProgress(BaseModel):
+    """How far through the frames the labelling has got."""
+
+    pending: int
+    labeled: int
+    rejected: int
+    total: int
+
+
 class FrameAnnotationWrite(BaseModel):
     """One box as the canvas sends it. Geometry is checked against the
     frame server-side; this only rejects the structurally impossible."""

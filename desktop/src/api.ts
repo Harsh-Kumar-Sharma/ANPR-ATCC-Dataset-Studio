@@ -15,6 +15,7 @@ import type {
   ProcessingRun,
   Project,
   ProjectClass,
+  QueueProgress,
   QueueItem,
   RetrainingHandoffResult,
   RtspSessionStatus,
@@ -136,6 +137,11 @@ export const api = {
   listFrames: (projectId: string, status?: string) =>
     request<Frame[]>(`/projects/${projectId}/frames${query({ status })}`),
   getFrame: (frameId: string) => request<Frame>(`/frames/${frameId}`),
+  getQueueProgress: (projectId: string) => request<QueueProgress>(`/projects/${projectId}/frames/progress`),
+  /** Skip a frame, or put a skipped one back. Boxes already on it
+   *  are untouched either way. */
+  setFrameStatus: (frameId: string, status: Frame["status"]) =>
+    request<Frame>(`/frames/${frameId}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
   /** The full frame, decoded on demand. The canvas's <img> src. */
   fullFrameImageUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/image`,
   getFrameAnnotations: (frameId: string) => request<Annotation[]>(`/frames/${frameId}/annotations`),

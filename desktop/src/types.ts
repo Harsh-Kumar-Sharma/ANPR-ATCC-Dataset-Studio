@@ -96,6 +96,14 @@ export interface ClassUsage {
   label_count: number;
 }
 
+/** How far through the frames the labelling has got. */
+export interface QueueProgress {
+  pending: number;
+  labeled: number;
+  rejected: number;
+  total: number;
+}
+
 /** What deleting a class did to the labels that were using it. */
 export interface ClassDeleteOutcome {
   class_id: number;

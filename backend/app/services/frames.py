@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError, NotFoundError
@@ -93,7 +93,48 @@ def list_queue(db: Session, project_id: str, status: str | None = None) -> list[
     )
     if status is not None:
         stmt = stmt.where(Frame.status == status)
+    else:
+        # A rejected frame has been judged not worth labelling, so it is
+        # not offered again - but it is still reachable by asking for it
+        # by status, which is how the judgement gets undone.
+        stmt = stmt.where(Frame.status != "rejected")
     return list(db.scalars(stmt))
+
+
+def set_status(db: Session, frame: Frame, status: str) -> Frame:
+    """Move a frame to a place in the queue by hand.
+
+    Rejecting says "not worth labelling", not "destroy my work": the
+    boxes already on the frame stay exactly where they are, because the
+    judgement can be reversed by setting it back to pending.
+    """
+    if status not in FRAME_STATUSES:
+        raise InvalidQueueFilterError(
+            f"Unknown frame status: {status!r}. Expected one of {', '.join(FRAME_STATUSES)}."
+        )
+    frame.status = status
+    db.flush()
+    return frame
+
+
+def queue_progress(db: Session, project_id: str) -> dict[str, int]:
+    """How far through this project's frames the labelling has got.
+
+    Counts every frame the queue would ever offer, rejected included -
+    "12 of 400, 3 skipped" is the shape of the answer, so the skipped
+    ones have to be in the total.
+    """
+    rows = db.execute(
+        select(Frame.status, func.count(Frame.id))
+        .join(Source, Frame.source_id == Source.id)
+        .where(Source.project_id == project_id)
+        .where(or_(Source.type == "video", Frame.image_path.is_not(None)))
+        .group_by(Frame.status)
+    ).all()
+    counts = {status: 0 for status in FRAME_STATUSES}
+    for status, count in rows:
+        counts[status] = count
+    return {**counts, "total": sum(counts.values())}
 
 
 def get_frame(db: Session, frame_id: str) -> Frame:

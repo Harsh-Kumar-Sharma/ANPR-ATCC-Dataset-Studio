@@ -13,7 +13,7 @@ from app.api.projects import get_project_or_404
 from app.db.models.annotation import Annotation
 from app.db.models.frame import Frame
 from app.db.session import get_db
-from app.schemas.frame import FrameAnnotationsReplace, FrameRead
+from app.schemas.frame import FrameAnnotationsReplace, FrameRead, FrameStatusWrite, QueueProgress
 from app.schemas.review import AnnotationRead
 from app.services import frames
 
@@ -26,6 +26,13 @@ def list_frames(project_id: str, status: str | None = None, db: Session = Depend
     """The project's labelling queue, in labelling order."""
     get_project_or_404(db, project_id)
     return frames.list_queue(db, project_id, status=status)
+
+
+@project_frames_router.get("/progress", response_model=QueueProgress)
+def get_queue_progress(project_id: str, db: Session = Depends(get_db)) -> QueueProgress:
+    """Labelled, rejected and remaining, for this project's whole queue."""
+    get_project_or_404(db, project_id)
+    return QueueProgress(**frames.queue_progress(db, project_id))
 
 
 @frames_router.get("/{frame_id}", response_model=FrameRead)
@@ -42,6 +49,21 @@ def get_frame_image(frame_id: str, db: Session = Depends(get_db)) -> FileRespons
     # The decode may have recorded image_path on the row.
     db.commit()
     return FileResponse(path, media_type="image/jpeg")
+
+
+@frames_router.put("/{frame_id}/status", response_model=FrameRead)
+def set_frame_status(frame_id: str, payload: FrameStatusWrite, db: Session = Depends(get_db)) -> Frame:
+    """Skip a frame, or put a skipped one back.
+
+    The boxes already on it are untouched either way - rejecting is a
+    judgement about whether the frame is worth labelling, and it can be
+    reversed.
+    """
+    frame = frames.get_frame(db, frame_id)
+    frames.set_status(db, frame, payload.status)
+    db.commit()
+    db.refresh(frame)
+    return frame
 
 
 @frames_router.get("/{frame_id}/annotations", response_model=list[AnnotationRead])

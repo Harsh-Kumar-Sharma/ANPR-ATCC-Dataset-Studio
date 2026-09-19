@@ -44,6 +44,11 @@ def query_approved_items(db: Session, project_id: str) -> list[ApprovedItem]:
     remain available for Phase 8 active learning, just not shipped in
     a training dataset yet.
 
+    A label on a rejected frame is excluded: rejecting a frame means it
+    is not worth labelling, and that has to reach the dataset or the
+    judgement is decorative. The label itself survives, so putting the
+    frame back restores it.
+
     Still track-keyed: it joins through the frame candidate, so it sees
     only labels written through track review. Boxes drawn on the canvas
     have no candidate and are invisible here until export is rewritten
@@ -56,7 +61,13 @@ def query_approved_items(db: Session, project_id: str) -> list[ApprovedItem]:
         .join(Track, FrameCandidate.track_id == Track.id)
         .join(ProcessingRun, Track.run_id == ProcessingRun.id)
         .join(Source, ProcessingRun.source_id == Source.id)
-        .where(Source.project_id == project_id, Annotation.source == "human", Annotation.status == "accepted")
+        .join(Frame, Annotation.frame_id == Frame.id)
+        .where(
+            Source.project_id == project_id,
+            Annotation.source == "human",
+            Annotation.status == "accepted",
+            Frame.status != "rejected",
+        )
         .order_by(Track.id)
     )
     return [

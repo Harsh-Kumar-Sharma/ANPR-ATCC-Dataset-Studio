@@ -1,62 +1,166 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import type { Frame, Project } from "../types";
+import type { Frame, Project, QueueProgress } from "../types";
 
 interface Props {
   project: Project;
   selectedFrameId: string | null;
-  /** Bumped when a frame is saved, so statuses here catch up. */
+  /** True while the open frame has boxes that have not been saved. */
+  dirty?: boolean;
+  /** Bumped when a frame is saved or skipped, so the list catches up. */
   refreshKey?: number;
   onSelect: (frame: Frame) => void;
 }
 
+/** Where the user last was, per project. Browser storage rather than the
+ *  database: it is this machine's view of a shared project, and losing
+ *  it costs a scroll, not work. */
+const lastFrameKey = (projectId: string) => `anpr:last-frame:${projectId}`;
+
+function readLastFrame(projectId: string): string | null {
+  try {
+    return window.localStorage.getItem(lastFrameKey(projectId));
+  } catch {
+    return null;
+  }
+}
+
+function writeLastFrame(projectId: string, frameId: string): void {
+  try {
+    window.localStorage.setItem(lastFrameKey(projectId), frameId);
+  } catch {
+    // Private mode, or storage full. Not worth interrupting labelling.
+  }
+}
+
 /**
- * The frames waiting to be labelled.
+ * The frames waiting to be labelled: what is left, what is done, and
+ * how to walk through them.
  *
- * Deliberately a flat list for now: next/previous, progress, and
- * rejecting a frame are the next ticket. This exists so a frame can be
- * opened at all.
+ * Navigation is guarded rather than blocked. Walking away from unsaved
+ * boxes asks first, because the alternative is either losing work
+ * silently or refusing to move at all, and both are worse than a
+ * question.
  */
-function LabelQueue({ project, selectedFrameId, refreshKey = 0, onSelect }: Props) {
+function LabelQueue({ project, selectedFrameId, dirty = false, refreshKey = 0, onSelect }: Props) {
   const [frames, setFrames] = useState<Frame[]>([]);
+  const [progress, setProgress] = useState<QueueProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The frame the user asked for while unsaved work was open.
+  const [pending, setPending] = useState<Frame | null>(null);
+  const [resumed, setResumed] = useState(false);
+
+  const describe = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+
+  const refresh = useCallback(async () => {
+    try {
+      const [list, counts] = await Promise.all([api.listFrames(project.id), api.getQueueProgress(project.id)]);
+      setFrames(list);
+      setProgress(counts);
+      setError(null);
+      return list;
+    } catch (e) {
+      setError(describe(e));
+      return null;
+    }
+  }, [project.id]);
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .listFrames(project.id)
-      .then((list) => {
-        if (cancelled) return;
-        setFrames(list);
-        setError(null);
-      })
-      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.message : String(e)));
+    refresh().then((list) => {
+      if (cancelled || !list) return;
+      // Put the user back where they were, once, and only if they are
+      // not already looking at something.
+      if (resumed || selectedFrameId !== null) return;
+      setResumed(true);
+      const last = readLastFrame(project.id);
+      const frame = list.find((f) => f.id === last);
+      if (frame) onSelect(frame);
+    });
     return () => {
       cancelled = true;
     };
-  }, [project.id, refreshKey]);
+    // onSelect and selectedFrameId are deliberately not dependencies:
+    // resuming is a one-shot on arrival, not a reaction to selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh, refreshKey]);
 
-  const labeled = frames.filter((f) => f.status === "labeled").length;
+  useEffect(() => {
+    if (selectedFrameId) writeLastFrame(project.id, selectedFrameId);
+  }, [project.id, selectedFrameId]);
+
+  function open(frame: Frame) {
+    if (frame.id === selectedFrameId) return;
+    if (dirty) {
+      setPending(frame);
+      return;
+    }
+    onSelect(frame);
+  }
+
+  const index = frames.findIndex((f) => f.id === selectedFrameId);
+  const step = (by: 1 | -1) => {
+    const next = frames[index === -1 ? (by === 1 ? 0 : frames.length - 1) : index + by];
+    if (next) open(next);
+  };
 
   return (
     <section className="label-queue">
-      <h3>
-        Frames{frames.length > 0 && ` · ${labeled} / ${frames.length} labelled`}
-      </h3>
+      <h3>Frames</h3>
+
+      {progress && progress.total > 0 && (
+        <p className="label-queue__progress" data-testid="queue-progress">
+          {progress.labeled} labelled &middot; {progress.rejected} skipped &middot; {progress.pending} left
+        </p>
+      )}
+
       {error && <p className="label-queue__error">{error}</p>}
+
+      {pending && (
+        <div className="label-queue__prompt" role="alert">
+          <p>This frame has unsaved boxes.</p>
+          <div className="label-queue__prompt-row">
+            <button
+              onClick={() => {
+                const frame = pending;
+                setPending(null);
+                onSelect(frame);
+              }}
+            >
+              Discard and open frame {pending.frame_index}
+            </button>
+            <button onClick={() => setPending(null)}>Stay here</button>
+          </div>
+        </div>
+      )}
+
       {frames.length === 0 ? (
         <p className="label-queue__empty">No frames yet - run detection on a source first.</p>
       ) : (
-        <ul className="label-queue__list">
-          {frames.map((frame) => (
-            <li key={frame.id}>
-              <button className={frame.id === selectedFrameId ? "selected" : ""} onClick={() => onSelect(frame)}>
-                <span>frame {frame.frame_index}</span>
-                <span className={`label-queue__status label-queue__status--${frame.status}`}>{frame.status}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          <div className="label-queue__nav">
+            <button aria-label="Previous frame" disabled={index === 0} onClick={() => step(-1)}>
+              &larr; Prev
+            </button>
+            <button aria-label="Next frame" disabled={index === frames.length - 1} onClick={() => step(1)}>
+              Next &rarr;
+            </button>
+          </div>
+          <ul className="label-queue__list">
+            {frames.map((frame) => (
+              <li key={frame.id}>
+                <button
+                  className={frame.id === selectedFrameId ? "selected" : ""}
+                  onClick={() => open(frame)}
+                  aria-label={`Frame ${frame.frame_index}`}
+                >
+                  <span>frame {frame.frame_index}</span>
+                  <span className={`label-queue__status label-queue__status--${frame.status}`}>{frame.status}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

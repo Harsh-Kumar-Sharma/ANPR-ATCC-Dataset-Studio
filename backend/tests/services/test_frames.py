@@ -593,3 +593,82 @@ def test_editing_a_reviewed_box_keeps_the_decision_it_was_given():
         assert edited.bbox_json == [2, 2, 12, 12]
         assert edited.status == "failed"
         assert db.get(Track, track_id).review_status == "failed"
+
+
+# --- rejecting a frame ---------------------------------------------------------
+
+
+def test_rejecting_a_frame_takes_it_out_of_the_queue():
+    project, source, first = _project_with_frame("Reject Queue")
+    second = _add_frame(source, 1)
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, first.id), "rejected")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert [f.id for f in frames.list_queue(db, project.id)] == [second.id]
+        # Still reachable when asked for by name, so it can be undone.
+        assert [f.id for f in frames.list_queue(db, project.id, status="rejected")] == [first.id]
+
+
+def test_a_rejected_frame_can_be_put_back():
+    project, _, frame = _project_with_frame("Unreject")
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "rejected")
+        db.commit()
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "pending")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert [f.id for f in frames.list_queue(db, project.id)] == [frame.id]
+
+
+def test_rejecting_a_frame_keeps_the_boxes_already_on_it():
+    """Rejecting says "not worth labelling", not "destroy my work" - the
+    frame can be put back."""
+    project, _, frame = _project_with_frame("Reject Keeps Boxes")
+    with SessionLocal() as db:
+        frames.replace_annotations(db, project.id, db.get(Frame, frame.id), [BoxInput(class_id=1, bbox=[0, 0, 10, 10])])
+        db.commit()
+
+    with SessionLocal() as db:
+        frames.set_status(db, db.get(Frame, frame.id), "rejected")
+        db.commit()
+
+    assert len(_boxes_on(frame)) == 1
+
+
+def test_an_unknown_status_cannot_be_set():
+    project, _, frame = _project_with_frame("Bad Status Set")
+
+    with SessionLocal() as db:
+        with pytest.raises(frames.InvalidQueueFilterError):
+            frames.set_status(db, db.get(Frame, frame.id), "done")
+
+
+def test_progress_counts_what_has_been_done():
+    project, source, pending = _project_with_frame("Progress Counts")
+    labeled = _add_frame(source, 1)
+    rejected = _add_frame(source, 2)
+    _add_frame(source, 3)
+
+    with SessionLocal() as db:
+        frames.replace_annotations(db, project.id, db.get(Frame, labeled.id), [])
+        frames.set_status(db, db.get(Frame, rejected.id), "rejected")
+        db.commit()
+
+    with SessionLocal() as db:
+        progress = frames.queue_progress(db, project.id)
+
+    assert progress == {"pending": 2, "labeled": 1, "rejected": 1, "total": 4}
+
+
+def test_progress_is_scoped_to_the_project():
+    mine, _, _ = _project_with_frame("Progress Scope A")
+    _project_with_frame("Progress Scope B")
+
+    with SessionLocal() as db:
+        assert frames.queue_progress(db, mine.id)["total"] == 1

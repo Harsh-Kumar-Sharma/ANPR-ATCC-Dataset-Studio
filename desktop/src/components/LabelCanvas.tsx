@@ -10,6 +10,11 @@ interface Props {
   /** Bumped by the class editor; the canvas reloads its class list. */
   classesVersion?: number;
   onSaved?: (frame: Frame) => void;
+  /** Told whenever the frame gains or loses unsaved boxes, so the
+   *  queue can refuse to walk away from them silently. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Called after the frame is skipped, so the queue moves on. */
+  onRejected?: (frame: Frame) => void;
 }
 
 type Box = FrameAnnotationWrite;
@@ -116,7 +121,7 @@ function fromAnnotation(a: Annotation): Box {
  * position in the project's list, which is what makes a frame with
  * four vehicles labellable without touching the mouse after drawing.
  */
-function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
+function LabelCanvas({ project, frame, classesVersion = 0, onSaved, onDirtyChange, onRejected }: Props) {
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [classes, setClasses] = useState<ProjectClass[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -135,6 +140,13 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
   function describe(e: unknown): string {
     return e instanceof ApiError ? e.message : String(e);
   }
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    // onDirtyChange is a callback prop; re-running on its identity
+    // would fire on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty]);
 
   useEffect(() => {
     let cancelled = false;
@@ -427,6 +439,19 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
     }
   }
 
+  async function reject() {
+    setSaving(true);
+    try {
+      const updated = await api.setFrameStatus(frame.id, "rejected");
+      setError(null);
+      onRejected?.(updated);
+    } catch (e) {
+      setError(describe(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // --- render --------------------------------------------------------------
 
   const classNameOf = (id: number | null) => classes.find((c) => c.id === id)?.name ?? "?";
@@ -527,6 +552,9 @@ function LabelCanvas({ project, frame, classesVersion = 0, onSaved }: Props) {
           {dirty && " (unsaved)"}
         </span>
         {unclassified > 0 && <span className="label-canvas__hint">{unclassified} without a class yet</span>}
+        <button onClick={reject} disabled={saving} title="Not worth labelling - skip it">
+          Skip
+        </button>
         <button className="btn-primary" onClick={save} disabled={saving || !dirty}>
           {saving ? "Saving…" : "Save"}
         </button>

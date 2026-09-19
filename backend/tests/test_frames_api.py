@@ -292,3 +292,90 @@ def test_export_skips_a_canvas_box_with_no_class_rather_than_failing(tmp_path):
     assert unclassified["id"] not in {obj["annotation_id"] for obj in exported}
     # Skipped from the export, not deleted from the frame.
     assert client.get(f"/frames/{queue[-1]['id']}/annotations").json()[0]["id"] == unclassified["id"]
+
+
+# --- ticket 10: skipping frames and seeing progress -----------------------------
+
+
+def test_rejecting_a_frame_takes_it_out_of_the_queue(tmp_path):
+    project, queue = _project_with_frames(tmp_path, "Reject API Project")
+    frame = queue[0]
+
+    rejected = client.put(f"/frames/{frame['id']}/status", json={"status": "rejected"})
+
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+    remaining = client.get(f"/projects/{project['id']}/frames").json()
+    assert frame["id"] not in [f["id"] for f in remaining]
+    assert len(remaining) == len(queue) - 1
+    # Still findable, so the judgement can be undone.
+    assert [f["id"] for f in client.get(f"/projects/{project['id']}/frames", params={"status": "rejected"}).json()] == [
+        frame["id"]
+    ]
+
+
+def test_a_rejected_frame_can_be_put_back(tmp_path):
+    project, queue = _project_with_frames(tmp_path, "Unreject API Project")
+    frame = queue[0]
+    client.put(f"/frames/{frame['id']}/status", json={"status": "rejected"})
+
+    client.put(f"/frames/{frame['id']}/status", json={"status": "pending"})
+
+    assert frame["id"] in [f["id"] for f in client.get(f"/projects/{project['id']}/frames").json()]
+
+
+def test_rejecting_keeps_the_boxes_already_drawn(tmp_path):
+    _, queue = _project_with_frames(tmp_path, "Reject Keeps Boxes Project")
+    frame = queue[0]
+    client.put(f"/frames/{frame['id']}/annotations", json={"annotations": [_box(1, 0, 0, 10, 10)]})
+
+    client.put(f"/frames/{frame['id']}/status", json={"status": "rejected"})
+
+    assert len(client.get(f"/frames/{frame['id']}/annotations").json()) == 1
+
+
+def test_an_unknown_status_is_refused(tmp_path):
+    _, queue = _project_with_frames(tmp_path, "Bad Status API Project")
+
+    response = client.put(f"/frames/{queue[0]['id']}/status", json={"status": "done"})
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_filter"
+
+
+def test_progress_reports_labelled_rejected_and_remaining(tmp_path):
+    project, queue = _project_with_frames(tmp_path, "Progress API Project")
+
+    before = client.get(f"/projects/{project['id']}/frames/progress").json()
+    assert before == {"pending": len(queue), "labeled": 0, "rejected": 0, "total": len(queue)}
+
+    client.put(f"/frames/{queue[0]['id']}/annotations", json={"annotations": []})
+    client.put(f"/frames/{queue[1]['id']}/status", json={"status": "rejected"})
+
+    after = client.get(f"/projects/{project['id']}/frames/progress").json()
+    assert after == {
+        "pending": len(queue) - 2,
+        "labeled": 1,
+        "rejected": 1,
+        "total": len(queue),
+    }
+
+
+def test_a_label_on_a_rejected_frame_does_not_reach_the_dataset(tmp_path):
+    """The judgement has to reach the export or it is decorative."""
+    project, _ = _project_with_frames(tmp_path, "Rejected Export Project")
+    track = client.get(f"/projects/{project['id']}/tracks").json()[0]
+    timeline = client.get(f"/tracks/{track['id']}").json()
+    client.put(
+        f"/tracks/{track['id']}/review",
+        json={"frame_candidate_id": timeline["frames"][0]["id"], "decision": "accepted", "class_id": 1},
+    )
+    annotation = client.get(f"/tracks/{track['id']}/annotation").json()
+
+    client.put(f"/frames/{annotation['frame_id']}/status", json={"status": "rejected"})
+
+    refused = client.post(f"/projects/{project['id']}/dataset-versions", json={})
+    assert refused.status_code == 400
+    assert refused.json()["code"] == "nothing_to_export"
+    # The label itself survives, so putting the frame back restores it.
+    assert client.get(f"/tracks/{track['id']}/annotation").status_code == 200

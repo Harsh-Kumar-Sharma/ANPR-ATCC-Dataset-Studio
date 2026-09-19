@@ -1911,3 +1911,74 @@ label.toggle {
   font-size: 12px;
   color: var(--text-muted);
 }
+
+.label-queue__progress {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.label-queue__nav {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.label-queue__nav button {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.label-queue__nav button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.label-queue__prompt {
+  margin: 0 0 10px;
+  padding: 10px;
+  font-size: 13px;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+}
+
+.label-queue__prompt p {
+  margin: 0 0 8px;
+}
+
+.label-queue__prompt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.label-queue__prompt-row button {
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.label-queue__status--rejected {
+  color: var(--text-muted);
+}
+
+.label-canvas__bar button:not(.btn-primary) {
+  padding: 4px 10px;
+  font-size: 13px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}

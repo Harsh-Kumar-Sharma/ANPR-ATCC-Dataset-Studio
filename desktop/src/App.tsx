@@ -39,6 +39,9 @@ function App() {
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const [labelFrame, setLabelFrame] = useState<Frame | null>(null);
+  // Reported by the canvas so the queue will not walk away from
+  // unsaved boxes without asking.
+  const [labelDirty, setLabelDirty] = useState(false);
   // Bumped when a frame is saved so the queue's statuses catch up.
   const [queueVersion, setQueueVersion] = useState(0);
   // Bumped by the class editor so anything showing classes reloads them.
@@ -86,6 +89,7 @@ function App() {
 
   function labelFrameNow(frame: Frame) {
     setLabelFrame(frame);
+    setLabelDirty(false);
     setMainView("label");
   }
 
@@ -129,6 +133,15 @@ function App() {
         frame={labelFrame}
         classesVersion={classesVersion}
         onSaved={() => setQueueVersion((v) => v + 1)}
+        onDirtyChange={setLabelDirty}
+        onRejected={() => {
+          // A skipped frame leaves the queue, so there is nothing
+          // left to look at until the user picks the next one.
+          setLabelDirty(false);
+          setLabelFrame(null);
+          setMainView("review");
+          setQueueVersion((v) => v + 1);
+        }}
       />
     );
   } else if (mainView === "live" && liveRunId) {
@@ -184,6 +197,7 @@ function App() {
             <LabelQueue
               project={project}
               selectedFrameId={labelFrame?.id ?? null}
+              dirty={labelDirty}
               refreshKey={queueVersion}
               onSelect={labelFrameNow}
             />

@@ -530,3 +530,24 @@ def test_the_remap_target_is_checked_even_when_nothing_is_in_use():
             class_definitions.delete_class(db, project.id, 2, remap_to=99)
         with pytest.raises(InvalidRemapError):
             class_definitions.delete_class(db, project.id, 2, remap_to=2)
+
+
+def test_a_label_on_a_rejected_frame_is_not_dataset_eligible():
+    """Ticket 10: a rejected frame stays out of any dataset. Its labels
+    survive - rejecting is "not worth labelling", not "delete my work" -
+    but nothing exports them."""
+    from app.db.models import Frame as FrameModel
+    from app.services.dataset_query import query_approved_items
+
+    project = _project("Rejected Not Exported")
+    annotation_id = _label_with(project, class_id=2)
+
+    with SessionLocal() as db:
+        assert [i.annotation.id for i in query_approved_items(db, project.id)] == [annotation_id]
+        frame_id = db.get(Annotation, annotation_id).frame_id
+        db.get(FrameModel, frame_id).status = "rejected"
+        db.commit()
+
+    with SessionLocal() as db:
+        assert query_approved_items(db, project.id) == []
+        assert db.get(Annotation, annotation_id) is not None
