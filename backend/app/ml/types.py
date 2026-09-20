@@ -20,6 +20,10 @@ class TrackedDetection:
     bbox_xyxy: tuple[float, float, float, float]
     class_id: int
     confidence: float
+    #: False when the tracker never managed to follow this detection
+    #: across frames and it stands on its own. A real observation
+    #: either way - see ``ByteTrackTracker``.
+    confirmed: bool = True
 
 
 @dataclass(frozen=True)

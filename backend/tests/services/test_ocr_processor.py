@@ -53,7 +53,11 @@ def _make_track_with_ocr_candidates(tmp_path, frame_count=60):
         tracker=ByteTrackTracker(frame_rate=5.0),
     )
 
-    track = db.query(Track).filter(Track.run_id == run.id).one()
+    # The longest track: a stub detector emitting the same box every
+    # frame also leaves one single-frame sighting behind, from the
+    # frame before the tracker had confirmed anything.
+    tracks = db.query(Track).filter(Track.run_id == run.id).all()
+    track = max(tracks, key=lambda t: t.end_ts - t.start_ts)
     return db, track
 
 

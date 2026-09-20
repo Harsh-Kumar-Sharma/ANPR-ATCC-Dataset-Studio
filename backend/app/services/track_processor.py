@@ -23,6 +23,7 @@ from app.services.frame_ranking import (
     select_roles_by_score,
 )
 from app.services.frame_sampler import decode_sampled_frames, sample_frame_timestamps
+from app.services.track_metrics import DEFAULT_FRAGMENTATION_IOU_THRESHOLD, iou
 from app.services.quality_signals import compute_area_ratio, compute_sharpness, is_truncated, sharpness_to_blur_score
 from app.services.run_estimate import STOP_BELOW_BYTES, free_bytes_for
 
@@ -51,6 +52,10 @@ class _Observation:
     bbox: tuple[float, float, float, float]
     class_id: int
     confidence: float
+    #: False when the tracker never managed to follow this detection
+    #: across frames. Still a real observation - see
+    #: ``ByteTrackTracker`` - but it stands alone.
+    confirmed: bool
     #: The pixels, and only when they cannot be recovered - see
     #: ``observe_frame``'s ``keep_crop``. Held in memory until the
     #: track is persisted, so an offline run leaves it None: at two
@@ -107,6 +112,7 @@ def observe_frame(
             bbox=tracked.bbox_xyxy,
             class_id=tracked.class_id,
             confidence=tracked.confidence,
+            confirmed=tracked.confirmed,
             crop=crop if keep_crop else None,
             sharpness_score=sharpness,
             blur_score=sharpness_to_blur_score(sharpness),
@@ -131,6 +137,8 @@ def persist_observations(
     """Rank and persist every accumulated track - the same Phase 2/3
     logic regardless of whether the observations came from a finite
     offline pass or a live capture session."""
+    observations_by_track = drop_sightings_absorbed_by_tracks(observations_by_track)
+
     tracks = []
     # Frames are shared across tracks (two vehicles in one frame are one
     # frame), so resolve each one once per call rather than per track.
@@ -317,3 +325,52 @@ def _crop(image: np.ndarray, bbox_xyxy: tuple[float, float, float, float]) -> np
     if x2 <= x1 or y2 <= y1:
         return None
     return image[y1:y2, x1:x2].copy()
+
+
+#: How close a single sighting has to be to a followed track's first
+#: box to be considered the same vehicle. The same threshold the
+#: fragmentation check uses, for the same reason: it is the number
+#: this project already means by "these two boxes are the same thing".
+ABSORB_IOU_THRESHOLD = DEFAULT_FRAGMENTATION_IOU_THRESHOLD
+
+
+def drop_sightings_absorbed_by_tracks(observations_by_track: ObservationsByTrack) -> ObservationsByTrack:
+    """Remove single sightings that were the start of a followed track.
+
+    ByteTrack confirms a track only on the second consecutive match,
+    so the first frame of every followed vehicle arrives unconfirmed.
+    Keeping it as its own track would report one vehicle as two - a
+    real track plus a one-frame ghost sitting right in front of it.
+
+    A sighting is dropped only when a followed track begins on the
+    very next processed frame, in the same place. "Next processed"
+    rather than "next index": sampling at 5fps from a 10fps source
+    numbers consecutive frames 0, 2, 4, so counting in indices would
+    have missed every one of them.
+
+    That pairing is what makes this safe for the case single
+    sightings exist for. A number plate at 7fps has moved clean off
+    its own last position by the next frame, so it overlaps nothing
+    and is kept.
+    """
+    processed = sorted({o.frame_index for observations in observations_by_track.values() for o in observations})
+    if not processed:
+        return observations_by_track
+
+    next_processed = {earlier: later for earlier, later in zip(processed, processed[1:])}
+    starts: dict[int, list[tuple[float, float, float, float]]] = {}
+    for observations in observations_by_track.values():
+        if any(o.confirmed for o in observations):
+            starts.setdefault(observations[0].frame_index, []).append(observations[0].bbox)
+
+    kept: ObservationsByTrack = {}
+    for track_id, observations in observations_by_track.items():
+        if len(observations) == 1 and not observations[0].confirmed:
+            sighting = observations[0]
+            following = next_processed.get(sighting.frame_index)
+            if following is not None and any(
+                iou(sighting.bbox, start) >= ABSORB_IOU_THRESHOLD for start in starts.get(following, [])
+            ):
+                continue
+        kept[track_id] = observations
+    return kept

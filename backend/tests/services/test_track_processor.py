@@ -9,7 +9,7 @@ from app.db.models.source import Source
 from app.db.models.track import Track
 from app.db.session import SessionLocal
 from app.ml.bytetrack_tracker import ByteTrackTracker
-from app.services.track_processor import process_source
+from app.services.track_processor import _Observation, drop_sightings_absorbed_by_tracks, process_source
 from app.services.workspace import create_project_workspace
 from tests.stub_detector import StubDetector
 from tests.video_factory import create_synthetic_video
@@ -55,6 +55,9 @@ def test_process_source_persists_track_with_frame_candidates(tmp_path):
         assert result_run.status == "completed"
         assert result_run.sampled_frame_count == 15  # 30 frames @10fps sampled at 5fps
 
+        # One, still: this vehicle is followed, so the unconfirmed
+        # first frame is absorbed into its track rather than left
+        # standing as a one-frame ghost in front of it.
         tracks = db.query(Track).filter(Track.run_id == run.id).all()
         assert len(tracks) == 1
         track = tracks[0]
@@ -140,3 +143,79 @@ def test_process_source_with_no_detections_produces_no_tracks(tmp_path):
 
         assert result_run.status == "completed"
         assert db.query(Track).filter(Track.run_id == run.id).count() == 0
+
+
+# --- detections the tracker cannot follow -------------------------------------
+
+
+def _sighting(frame_index: int, x: float, confirmed: bool = False) -> _Observation:
+    return _Observation(
+        frame_index=frame_index,
+        timestamp_ms=frame_index * 140,
+        bbox=(x, 500.0, x + 90.0, 530.0),
+        class_id=0,
+        confidence=0.55,
+        confirmed=confirmed,
+        crop=None,
+        sharpness_score=100.0,
+        blur_score=0.5,
+        area_ratio=0.01,
+        truncated=False,
+        frame_width=1920,
+        frame_height=1080,
+    )
+
+
+def test_a_plate_the_tracker_could_never_follow_is_kept():
+    """The bug this closes: a real model detected a real number plate
+    in nine frames out of ten and the app persisted nothing.
+
+    Each sighting is its own track because the plate moves clean off
+    its own last position between frames - which is exactly why the
+    tracker could not follow it.
+    """
+    sightings = {1_000_000 + i: [_sighting(i, 200.0 + i * 320)] for i in range(4)}
+
+    kept = drop_sightings_absorbed_by_tracks(sightings)
+
+    assert len(kept) == 4
+
+
+def test_the_unconfirmed_first_frame_of_a_followed_vehicle_is_absorbed():
+    """Otherwise one vehicle is reported as two: a real track, and a
+    one-frame ghost sitting right in front of it."""
+    followed = [_sighting(2, 12.0, confirmed=True), _sighting(4, 14.0, confirmed=True)]
+    ghost = [_sighting(0, 10.0)]
+
+    kept = drop_sightings_absorbed_by_tracks({1_000_000: ghost, 0: followed})
+
+    assert list(kept) == [0]
+
+
+def test_a_sighting_somewhere_else_in_the_frame_is_not_absorbed():
+    """Two vehicles is two vehicles, however close in time."""
+    followed = [_sighting(2, 12.0, confirmed=True), _sighting(4, 14.0, confirmed=True)]
+    elsewhere = [_sighting(0, 1500.0)]
+
+    kept = drop_sightings_absorbed_by_tracks({1_000_000: elsewhere, 0: followed})
+
+    assert len(kept) == 2
+
+
+def test_absorbing_counts_processed_frames_not_indices():
+    """Sampling at 5fps from a 10fps source numbers consecutive
+    frames 0, 2, 4 - counting in indices missed every one of them."""
+    followed = [_sighting(10, 12.0, confirmed=True), _sighting(15, 14.0, confirmed=True)]
+    ghost = [_sighting(5, 10.0)]
+
+    kept = drop_sightings_absorbed_by_tracks({1_000_000: ghost, 0: followed})
+
+    assert list(kept) == [0]
+
+
+def test_a_followed_track_is_never_dropped():
+    followed = [_sighting(0, 10.0, confirmed=True)]
+
+    kept = drop_sightings_absorbed_by_tracks({0: followed})
+
+    assert list(kept) == [0]
