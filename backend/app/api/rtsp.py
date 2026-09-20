@@ -16,7 +16,7 @@ from app.ml.models import DEFAULT_MODEL_ID
 from app.schemas.rtsp import LiveCameraRead, RtspSessionStatusRead, RtspStartRequest, RtspStartResult
 from app.services.rtsp_session import KeepFrames, RtspCaptureSession
 from app.services.live_reconcile import UNFINISHED as UNFINISHED_LIVE, settle as settle_live_run
-from app.services import live_cameras
+from app.services import empty_sources, live_cameras
 from app.services.rtsp_session_registry import get_session, register_session
 from app.services.rtsp_source import ConnectionProvider, RtspSourceAdapter, default_connection_provider
 
@@ -174,7 +174,11 @@ def stop_rtsp_session(run_id: str, db: Session = Depends(get_db)) -> RtspSession
     if run.status in UNFINISHED_LIVE:
         settle_live_run(db, run)
         db.commit()
-    return RtspSessionStatusRead(
+
+    # Read before tidying. A session that caught nothing has its
+    # source removed below, and the run goes with it - reading the
+    # row afterwards asks about something that no longer exists.
+    answer = RtspSessionStatusRead(
         run_id=run_id,
         connected=False,
         reconnect_attempts=0,
@@ -184,6 +188,8 @@ def stop_rtsp_session(run_id: str, db: Session = Depends(get_db)) -> RtspSession
         stopped=True,
         error=run.error_message,
     )
+    _clear_away_empty_sources(db)
+    return answer
 
 
 @run_router.get("/{run_id}/rtsp/preview.jpg")
@@ -228,3 +234,17 @@ def forget_live_camera(project_id: str, camera_id: str, db: Session = Depends(ge
     get_project_or_404(db, project_id)
     live_cameras.forget(db, camera_id)
     db.commit()
+
+
+def _clear_away_empty_sources(db: Session) -> None:
+    """Tidy up after a session that caught nothing.
+
+    Best effort, and never at the cost of the answer: the user
+    pressed Stop, and a failure to tidy must not turn that into an
+    error.
+    """
+    try:
+        empty_sources.remove_empty(db)
+    except Exception:  # noqa: BLE001 - tidying is not worth failing a stop
+        logger.warning("Could not clear away empty live sources", exc_info=True)
+        db.rollback()

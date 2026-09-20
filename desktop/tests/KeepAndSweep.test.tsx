@@ -38,6 +38,7 @@ const started: RtspStartResult = {
     is_processing: false,
     is_frozen: false,
     ground_truth_vehicle_count: null,
+    stored_frames: 0,
   },
   run: {
     id: "run-live",

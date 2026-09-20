@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
 from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError
+from app.db.models.frame import Frame
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.session import get_db
@@ -79,8 +80,25 @@ def list_sources(project_id: str, db: Session = Depends(get_db)) -> list[SourceR
     get_project_or_404(db, project_id)
     sources = list(db.scalars(select(Source).where(Source.project_id == project_id).order_by(Source.created_at.desc())))
     running_source_ids = set(db.scalars(select(ProcessingRun.source_id).where(ProcessingRun.status == "running")))
+
+    # One grouped count rather than one query per source: what the
+    # list needs is "does this hold anything", and asking per row
+    # turns a five-camera project into six round trips.
+    held = dict(
+        db.execute(
+            select(Frame.source_id, func.count(Frame.id))
+            .where(Frame.source_id.in_([s.id for s in sources]))
+            .group_by(Frame.source_id)
+        ).all()
+    )
+
     return [
-        SourceRead.model_validate(source).model_copy(update={"is_processing": source.id in running_source_ids})
+        SourceRead.model_validate(source).model_copy(
+            update={
+                "is_processing": source.id in running_source_ids,
+                "stored_frames": held.get(source.id, 0),
+            }
+        )
         for source in sources
     ]
 

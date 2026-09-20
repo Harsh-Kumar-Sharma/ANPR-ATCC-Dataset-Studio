@@ -252,7 +252,13 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
               <IconX />
             </button>
             <span className="meta">
-              {s.width}x{s.height} @ {s.fps}fps · {s.frame_count} frames
+              {/* A live stream has no known length, so frame_count is a
+                  0 sentinel and saying "0 frames" for one holding
+                  three hundred is how empty sources became hard to
+                  tell from full ones. */}
+              {s.type === "rtsp"
+                ? `live · ${s.fps}fps · ${s.stored_frames} frame(s) saved`
+                : `${s.width}x${s.height} @ ${s.fps}fps · ${s.frame_count} frames`}
             </span>
             <div className="source-actions">
               {s.type === "video" && (

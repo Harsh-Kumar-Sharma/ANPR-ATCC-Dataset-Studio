@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
+from app.db.models.frame import Frame
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.session import SessionLocal
@@ -134,7 +135,10 @@ def test_stopping_a_capture_the_registry_forgot_settles_it_instead_of_refusing()
 
     assert response.status_code == 200, response.text
     assert response.json()["stopped"] is True
-    assert client.get(f"/processing-runs/{run_id}").json()["status"] == "failed"
+    # The row itself is gone with its source: this capture caught
+    # nothing, and an empty source is swept away on stop. What
+    # matters here is that Stop answered rather than refusing.
+    assert client.get(f"/processing-runs/{run_id}").status_code == 404
 
 
 def test_stopping_a_run_that_never_existed_is_still_a_404():
@@ -143,9 +147,19 @@ def test_stopping_a_run_that_never_existed_is_still_a_404():
     assert response.status_code == 404
 
 
-def test_stopping_an_already_settled_run_does_not_rewrite_its_ending():
+def test_stopping_a_settled_run_that_kept_something_does_not_rewrite_its_ending():
+    """A run holding frames survives the stop, so stopping twice has
+    something to be idempotent about. One that caught nothing is
+    swept away with its source and there is nothing left to rewrite.
+    """
     project = _project("Stop Twice")
-    _, run_id = _abandoned_live_run(project)
+    source_id, run_id = _abandoned_live_run(project)
+    with SessionLocal() as db:
+        db.add(
+            Frame(source_id=source_id, frame_index=0, timestamp_ms=0,
+                  width=64, height=48, image_path="/tmp/kept.jpg")
+        )
+        db.commit()
     client.post(f"/processing-runs/{run_id}/rtsp/stop")
     first = client.get(f"/processing-runs/{run_id}").json()
 

@@ -29,6 +29,11 @@ class SourceRead(BaseModel):
     is_frozen: bool
     ground_truth_vehicle_count: int | None
     is_processing: bool = False
+    #: Frames this source actually holds, which is not ``frame_count``.
+    #: For a live stream ``frame_count`` is a 0 sentinel - there is no
+    #: known length - so the list was reading "0 frames" for a source
+    #: holding three hundred.
+    stored_frames: int = 0
 
 
 class SourceContentsRead(BaseModel):

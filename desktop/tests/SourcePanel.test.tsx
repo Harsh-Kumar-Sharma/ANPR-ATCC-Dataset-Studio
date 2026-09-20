@@ -26,6 +26,7 @@ const source: Source = {
   is_processing: false,
   is_frozen: false,
   ground_truth_vehicle_count: null,
+  stored_frames: 0,
 };
 
 const job: Job = {
@@ -110,5 +111,32 @@ describe("SourcePanel: getting to a source's frames", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^atcc1\.mp4$/i }));
 
     expect(onLabel).toHaveBeenCalledWith(expect.objectContaining({ id: "s-1" }));
+  });
+});
+
+describe("SourcePanel: how many frames a source holds", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listModels").mockResolvedValue([]);
+  });
+
+  it("says what a live source actually holds, not its sentinel zero", async () => {
+    // A live stream has no known length, so frame_count is 0. Saying
+    // "0 frames" for a source holding three hundred is how empty
+    // sources became impossible to tell from full ones.
+    vi.spyOn(api, "listSources").mockResolvedValue([
+      { ...source, type: "rtsp", path_or_uri: "rtsp://10.0.0.4/ch1", frame_count: 0, stored_frames: 303 },
+    ]);
+    render(<SourcePanel project={project} onProcessed={vi.fn()} onWatch={vi.fn()} />);
+
+    expect(await screen.findByText(/303 frame\(s\) saved/i)).toBeInTheDocument();
+    expect(screen.queryByText(/· 0 frames/)).not.toBeInTheDocument();
+  });
+
+  it("still describes a video by its own numbers", async () => {
+    vi.spyOn(api, "listSources").mockResolvedValue([{ ...source, frame_count: 9000, stored_frames: 12 }]);
+    render(<SourcePanel project={project} onProcessed={vi.fn()} onWatch={vi.fn()} />);
+
+    expect(await screen.findByText(/9000 frames/)).toBeInTheDocument();
   });
 });

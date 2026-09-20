@@ -20,6 +20,9 @@ export interface Source {
   is_frozen: boolean;
   ground_truth_vehicle_count: number | null;
   is_processing: boolean;
+  /** Frames this source actually holds, which is not `frame_count`:
+   *  a live stream's frame_count is a 0 sentinel. */
+  stored_frames: number;
 }
 
 export interface ProcessingRun {

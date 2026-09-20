@@ -31,7 +31,7 @@ from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.services.jobs.runner import reconcile_jobs
 from app.db.session import engine
-from app.services import schema_state
+from app.services import empty_sources, schema_state
 from app.services.live_reconcile import reconcile_live_captures
 
 configure_logging()
@@ -71,6 +71,18 @@ async def lifespan(_app: FastAPI):
             logger.warning("Settled %d live capture(s) left running by a previous session", len(settled))
     except Exception:
         logger.exception("Could not settle live captures on startup")
+
+    # And clear away the sources those captures left behind holding
+    # nothing. After a few attempts at getting a camera working, the
+    # Sources list is otherwise five identical rows reading "0 frames"
+    # with the one that matters somewhere among them.
+    try:
+        with SessionLocal() as db:
+            removed = empty_sources.remove_empty(db)
+        if removed:
+            logger.info("Removed %d live source(s) that captured nothing", len(removed))
+    except Exception:
+        logger.exception("Could not remove empty live sources on startup")
 
     # Said loudly, once, at startup: a database behind the code is the
     # most confusing failure this app has, because it surfaces as "An

@@ -33,6 +33,7 @@ const source: Source = {
   is_processing: false,
   is_frozen: false,
   ground_truth_vehicle_count: null,
+  stored_frames: 0,
 };
 
 const job: Job = {
