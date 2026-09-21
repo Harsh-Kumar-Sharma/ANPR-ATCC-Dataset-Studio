@@ -51,3 +51,14 @@ class TrackTimeline(BaseModel):
 class ProcessingRunTracksResult(BaseModel):
     run: ProcessingRunRead
     tracks: list[TrackRead]
+
+
+class TrackSweepRead(BaseModel):
+    """What clearing out the unaccepted detections would take, or took."""
+
+    kept: int
+    deleted: int
+    frames_deleted: int
+    #: Held back because a dataset version already names them.
+    held: int
+    bytes_freed: int

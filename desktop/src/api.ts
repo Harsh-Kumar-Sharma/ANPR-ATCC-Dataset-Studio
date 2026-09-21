@@ -33,6 +33,7 @@ import type {
   SuggestedBox,
   SchemaUpgradeResult,
   Sweep,
+  TrackSweep,
   TrainingRun,
   TrainingStarted,
   Source,
@@ -201,6 +202,14 @@ export const api = {
     request<SourceDetections>(
       `/projects/${projectId}/sources/${sourceId}/detections${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`,
     ),
+
+  /** What deleting the unaccepted detections would take. */
+  previewTrackSweep: (projectId: string) =>
+    request<TrackSweep>(`/projects/${projectId}/tracks/sweep`),
+
+  /** Keep what was accepted or flagged; delete the rest. */
+  sweepUnacceptedTracks: (projectId: string) =>
+    request<TrackSweep>(`/projects/${projectId}/tracks/sweep`, { method: "POST" }),
 
   listTracks: (projectId: string) => request<Track[]>(`/projects/${projectId}/tracks`),
   getTrackTimeline: (trackId: string) => request<TrackTimeline>(`/tracks/${trackId}`),

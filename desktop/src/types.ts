@@ -605,3 +605,13 @@ export interface SuggestedBox {
   detector_class: string;
   detector_confidence: number;
 }
+
+/** What clearing out the unaccepted detections would take, or took. */
+export interface TrackSweep {
+  kept: number;
+  deleted: number;
+  frames_deleted: number;
+  /** Held back because a dataset version already names them. */
+  held: number;
+  bytes_freed: number;
+}

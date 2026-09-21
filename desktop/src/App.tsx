@@ -321,7 +321,16 @@ function App() {
                 onDismiss={dismissJob}
                 onClearFinished={clearFinishedJobs}
               />
-              <TrackBrowser tracks={tracks} selectedTrackId={selectedTrackId} onSelect={selectTrack} />
+              <TrackBrowser
+                tracks={tracks}
+                selectedTrackId={selectedTrackId}
+                onSelect={selectTrack}
+                project={project}
+                onSwept={() => {
+                  refreshTracks();
+                  setQueueVersion((v) => v + 1);
+                }}
+              />
             </>
           )}
           {tab === "label" && (

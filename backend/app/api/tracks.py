@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends, Response
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -11,12 +13,13 @@ from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.models.track import Track
 from app.db.session import get_db
+from app.services import track_sweep
 from app.services.crops import crop_jpeg
 from app.ml.factory import get_default_ocr_engine
 from app.ml.plate_ocr import PlateOcrEngine
 from app.schemas.ocr import OcrCandidateRead, PlateTextWrite
 from app.schemas.review import AnnotationRead, TrackReviewRequest, TrackReviewResult
-from app.schemas.track import FrameCandidateRead, TrackRead, TrackTimeline
+from app.schemas.track import FrameCandidateRead, TrackRead, TrackSweepRead, TrackTimeline
 from app.services.ocr_processor import run_ocr_for_track
 from app.services.plate_text import set_track_plate_text
 from app.services.review import get_human_annotation, submit_review
@@ -30,6 +33,42 @@ def _get_track_or_404(db: Session, track_id: str) -> Track:
     if track is None:
         raise NotFoundError(f"Track not found: {track_id}")
     return track
+
+
+@project_tracks_router.get("/sweep", response_model=TrackSweepRead)
+def preview_track_sweep(
+    project_id: str, run_id: str | None = None, db: Session = Depends(get_db)
+) -> TrackSweepRead:
+    """What deleting the unaccepted detections would take.
+
+    Asked before the button: a confirmation that cannot say what is
+    about to go is not one.
+    """
+    get_project_or_404(db, project_id)
+    return TrackSweepRead(**asdict(track_sweep.preview(db, project_id, run_id=run_id)))
+
+
+@project_tracks_router.post("/sweep", response_model=TrackSweepRead)
+def sweep_unaccepted_tracks(
+    project_id: str, run_id: str | None = None, db: Session = Depends(get_db)
+) -> TrackSweepRead:
+    """Keep what was accepted or flagged hard; delete the rest.
+
+    Reviewing leaves a list of a hundred detections nobody wants.
+    Deleting those one at a time is tidying, not reviewing.
+
+    Frames left holding nothing go with them. Anything a dataset
+    version already names is held back - a version is the record of
+    what a model was trained on, and it has to keep describing real
+    rows.
+    """
+    get_project_or_404(db, project_id)
+    done, images = track_sweep.sweep(db, project_id, run_id=run_id)
+    db.commit()
+    # After the commit, deliberately: a file left behind can be
+    # deleted later, a row pointing at a file that has gone cannot.
+    track_sweep.remove_swept_images(images)
+    return TrackSweepRead(**asdict(done))
 
 
 @project_tracks_router.get("", response_model=list[TrackRead])
