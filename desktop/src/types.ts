@@ -228,6 +228,7 @@ export interface DatasetExportResult {
   /** Labelled frames left out of the export entirely, because not one of
    *  their boxes had a class yet. */
   frames_skipped_unclassified: number;
+  frames_skipped_unrecoverable: number;
   validation: { valid: boolean; errors: string[]; warnings: string[] };
 }
 

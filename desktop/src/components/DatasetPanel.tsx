@@ -37,6 +37,7 @@ function DatasetPanel({ project }: Props) {
       // dataset look bigger than it is.
       const background = result.background_frames ?? 0;
       const dropped = result.frames_skipped_unclassified ?? 0;
+      const lost = result.frames_skipped_unrecoverable ?? 0;
       setMessage(
         `v${result.dataset_version.version}: ${result.counts.total} full frame(s)` +
           (background ? ` (${background} labelled empty)` : "") +
@@ -46,6 +47,10 @@ function DatasetPanel({ project }: Props) {
           // user ends up wondering why they labelled fifty frames and
           // exported forty-five.
           (dropped ? ` ${dropped} labelled frame(s) left out - no class on their boxes yet.` : "") +
+          // Different from the line above, and worth its own: this
+          // work cannot be finished by going back and classifying a
+          // box. The pixels are gone.
+          (lost ? ` ${lost} labelled frame(s) left out - their image is gone.` : "") +
           (warnings.length ? ` ${warnings.length} warning(s).` : ""),
       );
       setWarnings(warnings);

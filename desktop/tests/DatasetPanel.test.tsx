@@ -27,6 +27,7 @@ function exportResult(overrides: Partial<DatasetExportResult> = {}): DatasetExpo
     background_frames: 0,
     frames_with_unclassified_boxes: 0,
     frames_skipped_unclassified: 0,
+    frames_skipped_unrecoverable: 0,
     validation: { valid: true, errors: [], warnings: [] },
     ...overrides,
   };
@@ -99,5 +100,36 @@ describe("DatasetPanel: what an export reports", () => {
     fireEvent.click(screen.getByRole("button", { name: /export dataset version/i }));
 
     expect(await screen.findByText(/no accepted annotation/)).toBeInTheDocument();
+  });
+});
+
+describe("DatasetPanel: frames whose image is gone", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listDatasetVersions").mockResolvedValue([]);
+  });
+
+  it("says how many were left out, and why", async () => {
+    // Two frames of a live stream that was never recorded used to take
+    // the whole export down. Now they are skipped - but skipping in
+    // silence would be the same work quietly not landing.
+    vi.spyOn(api, "exportDataset").mockResolvedValue(
+      exportResult({ frames_skipped_unrecoverable: 2 }),
+    );
+    render(<DatasetPanel project={project} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /export dataset version/i }));
+
+    expect(await screen.findByText(/2 labelled frame\(s\) left out - their image is gone/i)).toBeTruthy();
+  });
+
+  it("says nothing about them when none were lost", async () => {
+    vi.spyOn(api, "exportDataset").mockResolvedValue(exportResult());
+    render(<DatasetPanel project={project} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /export dataset version/i }));
+
+    await screen.findByText(/validation passed/i);
+    expect(screen.queryByText(/image is gone/i)).toBeNull();
   });
 });

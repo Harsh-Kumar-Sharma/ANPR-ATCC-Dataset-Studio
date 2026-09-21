@@ -26,7 +26,7 @@ from app.db.models.source import Source
 from app.services.annotation_attributes import InvalidAttributeError, clean_attributes
 from app.services.annotations import delete_annotations
 from app.services.class_definitions import is_valid_class_id
-from app.services.frame_materializer import materialize_frames
+from app.services.frame_materializer import can_materialize, materialize_frames
 
 
 class InvalidBoxError(AppError):
@@ -250,17 +250,10 @@ def project_of(db: Session, frame: Frame) -> Project:
 
 
 def full_frame_available(db: Session, frame: Frame) -> bool:
-    """Can this frame's full image be shown, now or after a decode?
-
-    Cheap on purpose - a stat, never a decode. A frame of an offline
-    video can always be recovered while the file is there; a frame of
-    a live stream only if it was written at capture time, because
-    the stream cannot be read a second time.
-    """
-    if frame.image_path and Path(frame.image_path).is_file():
-        return True
-    source = db.get(Source, frame.source_id)
-    return source is not None and source.type == "video" and Path(source.path_or_uri).is_file()
+    """Whether this frame's whole image can be shown. See
+    ``frame_materializer.can_materialize`` - same question, asked by
+    the review UI."""
+    return can_materialize(db, frame)
 
 
 def frame_image_path(db: Session, frame: Frame) -> Path:

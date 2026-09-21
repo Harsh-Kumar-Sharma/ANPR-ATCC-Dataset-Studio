@@ -39,6 +39,21 @@ def get_or_create_frame(
     return frame
 
 
+def can_materialize(db: Session, frame: Frame) -> bool:
+    """Can this frame's pixels be had, now or after a decode?
+
+    Cheap on purpose - a stat, never a decode. A frame of an offline
+    video can always be recovered while the file is there. A frame of
+    a live stream only if its image was written at capture time: the
+    stream cannot be read a second time, and the source's path is an
+    rtsp:// URL that no decoder will open as a file.
+    """
+    if frame.image_path and Path(frame.image_path).is_file():
+        return True
+    source = db.get(Source, frame.source_id)
+    return source is not None and source.type == "video" and Path(source.path_or_uri).is_file()
+
+
 def materialize_frames(
     db: Session, frames: list[Frame], source: Source, workspace_path: Path
 ) -> dict[str, Path]:

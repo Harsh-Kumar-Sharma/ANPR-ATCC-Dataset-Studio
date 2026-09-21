@@ -133,6 +133,13 @@ def validate_export(export_dir: Path, manifest: dict, num_classes: int) -> Valid
             "label file, so the objects they mark are exported as background."
         )
 
+    lost = manifest.get("frames_skipped_unrecoverable", 0)
+    if lost:
+        result.warnings.append(
+            f"{lost} labelled frame(s) were left out of this dataset because their image is gone. "
+            "A live stream cannot be decoded twice, and an imported video has to still be there."
+        )
+
     skipped = manifest.get("frames_skipped_unclassified", 0)
     if skipped:
         result.warnings.append(

@@ -21,7 +21,7 @@ from app.services.annotations import chunked
 from app.services.dataset_query import ExportFrame, query_export_frames
 from app.services.dataset_split import SPLIT_TEST, SPLIT_TRAIN, SPLIT_VAL, compute_split
 from app.services.dataset_validator import ValidationResult, validate_export
-from app.services.frame_materializer import materialize_frames
+from app.services.frame_materializer import can_materialize, materialize_frames
 from app.services.yolo_export import format_yolo_label_line, normalize_yolo_bbox
 
 
@@ -91,6 +91,25 @@ def export_dataset_version(
         )
 
     frames_skipped_unclassified = len(export_frames) - len(planned)
+
+    # Frames whose pixels are simply gone. A live stream cannot be
+    # decoded a second time, so a frame captured from one before its
+    # image was written has nothing left behind it - and its source's
+    # path is an rtsp:// URL that no decoder will open as a file.
+    #
+    # Skipped and counted rather than fatal. Two unrecoverable frames
+    # used to take the whole export down with them, which left the
+    # other forty-five perfectly good labelled frames unexportable and
+    # the person with an error message about a camera address.
+    recoverable = [p for p in planned if can_materialize(db, p.frame)]
+    frames_skipped_unrecoverable = len(planned) - len(recoverable)
+    if not recoverable:
+        raise DatasetExportError(
+            f"Nothing to export: all {frames_skipped_unrecoverable} labelled frame(s) have lost their "
+            "images. Frames captured from a live stream can only be exported if the stream was "
+            "recorded, and frames from an imported video need that file still to be present."
+        )
+    planned = recoverable
     track_by_annotation = _tracks_by_annotation(db, export_frames)
 
     frames_by_id = {p.frame.id: p.frame for p in planned}
@@ -259,6 +278,11 @@ def export_dataset_version(
         #: boxes had a class. Recorded so an export that quietly shrank
         #: can say by how much and why.
         "frames_skipped_unclassified": frames_skipped_unclassified,
+        #: Labelled frames left out because their image is gone and
+        #: cannot be decoded again. Recorded because the work was
+        #: done and did not land, and the person should not have to
+        #: infer that from a count that shrank.
+        "frames_skipped_unrecoverable": frames_skipped_unrecoverable,
         "items": manifest_items,
     }
     (export_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -285,6 +309,7 @@ def manifest_summary(manifest: dict) -> dict:
         "background_frames": int(manifest.get("background_frames", 0)),
         "frames_with_unclassified_boxes": int(manifest.get("frames_with_unclassified_boxes", 0)),
         "frames_skipped_unclassified": int(manifest.get("frames_skipped_unclassified", 0)),
+        "frames_skipped_unrecoverable": int(manifest.get("frames_skipped_unrecoverable", 0)),
     }
 
 

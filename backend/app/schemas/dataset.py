@@ -55,4 +55,8 @@ class DatasetExportResult(BaseModel):
     #: of their boxes had a class. Reported so an export that shrank can
     #: say by how much.
     frames_skipped_unclassified: int = 0
+    #: Labelled frames left out because their image is gone - a live
+    #: capture that was never recorded, or an imported video that has
+    #: since moved. Reported so the work that did not land is visible.
+    frames_skipped_unrecoverable: int = 0
     validation: ValidationResultRead
