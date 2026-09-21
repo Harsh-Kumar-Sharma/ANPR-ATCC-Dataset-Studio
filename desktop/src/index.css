@@ -130,7 +130,10 @@ textarea {
 }
 
 /* ---------- Buttons ---------- */
-button {
+/* A link that does what a button does - a download has to be a real
+   link so the browser writes the file itself - should look like one. */
+button,
+a.button {
   cursor: pointer;
   border: 1px solid var(--border-strong);
   background: var(--bg-surface);
@@ -149,7 +152,13 @@ button {
   gap: 0.4rem;
 }
 
-button:hover:not(:disabled) {
+a.button {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled),
+a.button:hover {
   background: var(--bg-hover);
   border-color: var(--border-strong);
 }
@@ -768,6 +777,12 @@ label {
 }
 
 /* ---------- Dataset panel ---------- */
+.dataset-version-size {
+  color: var(--text-muted);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
 .dataset-version-list {
   list-style: none;
   padding: 0;

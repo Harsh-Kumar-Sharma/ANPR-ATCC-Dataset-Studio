@@ -21,6 +21,7 @@ function exportResult(overrides: Partial<DatasetExportResult> = {}): DatasetExpo
       created_at: "2026-09-19T00:00:00+00:00",
       split_seed: 42,
       config_snapshot_json: {},
+      bytes_on_disk: 13 * 1024 * 1024,
     },
     counts: { train: 40, val: 5, test: 5, total: 50 },
     object_counts: { train: 60, val: 8, test: 7, total: 75 },
@@ -131,5 +132,46 @@ describe("DatasetPanel: frames whose image is gone", () => {
 
     await screen.findByText(/validation passed/i);
     expect(screen.queryByText(/image is gone/i)).toBeNull();
+  });
+});
+
+describe("DatasetPanel: taking a version away", () => {
+  const version = {
+    id: "dv-1",
+    project_id: "p-1",
+    version: 4,
+    created_at: "2026-09-19T00:00:00+00:00",
+    split_seed: 42,
+    config_snapshot_json: {},
+    bytes_on_disk: 13 * 1024 * 1024,
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listDatasetVersions").mockResolvedValue([version]);
+  });
+
+  it("offers each version as a download", async () => {
+    render(<DatasetPanel project={project} />);
+
+    const link = await screen.findByRole("link", { name: /download zip/i });
+    expect(link).toHaveAttribute("href", api.datasetArchiveUrl("dv-1"));
+    expect(link).toHaveAttribute("download");
+  });
+
+  it("says what it weighs before you click it", async () => {
+    render(<DatasetPanel project={project} />);
+
+    expect(await screen.findByText(/13 MB/)).toBeTruthy();
+  });
+
+  it("says nothing about a size it does not know", async () => {
+    // A version whose files have been deleted weighs nothing, and
+    // "0 B" beside a download link would be a lie about what is there.
+    vi.spyOn(api, "listDatasetVersions").mockResolvedValue([{ ...version, bytes_on_disk: 0 }]);
+    render(<DatasetPanel project={project} />);
+
+    await screen.findByRole("link", { name: /download zip/i });
+    expect(screen.queryByText(/0 B/)).toBeNull();
   });
 });

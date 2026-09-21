@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog, shell } from "electron";
 import { spawn, ChildProcess } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,38 @@ async function waitForBackend(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
+/**
+ * Let the app save a file the user asked for.
+ *
+ * Without this a download link does nothing visible: Electron picks
+ * a folder on its own and says so to nobody, so a dataset zip the
+ * user asked for lands somewhere they have to go hunting for. They
+ * choose where it goes, and it is revealed when it lands.
+ */
+function handleDownloads(window: BrowserWindow): void {
+  window.webContents.session.on("will-download", (_event, item) => {
+    const chosen = dialog.showSaveDialogSync(window, {
+      title: "Save dataset",
+      defaultPath: item.getFilename(),
+      filters: [{ name: "Zip archive", extensions: ["zip"] }],
+    });
+
+    if (!chosen) {
+      item.cancel();
+      return;
+    }
+
+    item.setSavePath(chosen);
+    item.once("done", (_doneEvent, state) => {
+      // Only on success: showing the folder after a failed download
+      // points at a file that is not there.
+      if (state === "completed") {
+        shell.showItemInFolder(chosen);
+      }
+    });
+  });
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -67,6 +99,8 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
     },
   });
+
+  handleDownloads(mainWindow);
 
   if (VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(VITE_DEV_SERVER_URL);

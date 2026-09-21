@@ -26,6 +26,9 @@ class DatasetVersionRead(BaseModel):
     created_at: datetime
     split_seed: int
     config_snapshot_json: dict
+    #: How large this version is on disk, which is roughly how large
+    #: its download will be. Shown so a click is an informed one.
+    bytes_on_disk: int = 0
 
 
 class ValidationResultRead(BaseModel):

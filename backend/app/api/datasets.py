@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from app.schemas.active_learning import RetrainingHandoffResult
 from app.schemas.dataset import DatasetExportRequest, DatasetExportResult, DatasetVersionRead, ValidationResultRead
 from app.schemas.storage import ReclaimedRead
 from app.services.cascade import directory_size, remove_tree
+from app.services.dataset_archive import archive_bytes, archive_name, stream_archive
 from app.services.dataset_export import export_dataset_version
 from app.services.dataset_validator import validate_export
 from app.services.retraining_handoff import write_retraining_handoff
@@ -64,12 +66,19 @@ def create_dataset_version(
 
 
 @project_datasets_router.get("", response_model=list[DatasetVersionRead])
-def list_dataset_versions(project_id: str, db: Session = Depends(get_db)) -> list[DatasetVersion]:
-    get_project_or_404(db, project_id)
-    return list(
-        db.scalars(
-            select(DatasetVersion).where(DatasetVersion.project_id == project_id).order_by(DatasetVersion.version.desc())
-        )
+def list_dataset_versions(project_id: str, db: Session = Depends(get_db)) -> list[DatasetVersionRead]:
+    project = get_project_or_404(db, project_id)
+    versions = db.scalars(
+        select(DatasetVersion).where(DatasetVersion.project_id == project_id).order_by(DatasetVersion.version.desc())
+    )
+    return [_read(project.workspace_path, version) for version in versions]
+
+
+def _read(workspace_path: str, version: DatasetVersion) -> DatasetVersionRead:
+    """One version, with what it weighs on disk."""
+    export_dir = _manifest_path(workspace_path, version).parent
+    return DatasetVersionRead.model_validate(version).model_copy(
+        update={"bytes_on_disk": archive_bytes(export_dir)}
     )
 
 
@@ -183,4 +192,33 @@ def create_retraining_handoff(dataset_version_id: str, db: Session = Depends(get
         instructions_path=paths["instructions_path"],
         data_yaml_content=Path(paths["data_yaml_path"]).read_text(encoding="utf-8"),
         instructions_content=Path(paths["instructions_path"]).read_text(encoding="utf-8"),
+    )
+
+
+@datasets_router.get("/{dataset_version_id}/archive")
+def download_dataset_archive(dataset_version_id: str, db: Session = Depends(get_db)) -> StreamingResponse:
+    """This dataset version as one zip, for training somewhere else.
+
+    Streamed rather than built on disk: a second copy of the dataset
+    is the one thing a drive with single-digit gigabytes free cannot
+    take, and the archive is sent as it is read.
+
+    The ``data.yaml`` inside is not the one on disk. That one holds
+    this machine's absolute path, which is precisely what breaks the
+    moment the dataset is anywhere else.
+    """
+    version = _get_dataset_version_or_404(db, dataset_version_id)
+    project = get_project_or_404(db, version.project_id)
+    manifest_path = _manifest_path(project.workspace_path, version)
+    export_dir = manifest_path.parent
+    if not export_dir.is_dir():
+        raise NotFoundError(f"Export directory not found on disk for dataset version: {dataset_version_id}")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    class_names = _snapshot_class_names(manifest, export_dir, db, project.id)
+    filename = archive_name(project.name, version.version)
+    return StreamingResponse(
+        stream_archive(export_dir, class_names, base_model=DEFAULT_MODEL_WEIGHTS),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

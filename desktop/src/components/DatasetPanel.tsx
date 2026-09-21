@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { IconAlert, IconBox, IconCheck } from "../Icons";
+import { readableSize } from "./StoragePanel";
 import type { DatasetVersion, Project } from "../types";
 
 interface Props {
@@ -104,7 +105,15 @@ function DatasetPanel({ project }: Props) {
           <li key={v.id}>
             <span>
               v{v.version} · seed {v.split_seed}
+              {/* What it weighs, so the click below is an informed one. */}
+              {v.bytes_on_disk > 0 && <em className="dataset-version-size"> · {readableSize(v.bytes_on_disk)}</em>}
             </span>
+            {/* A plain link, not a fetch: the server streams the zip and
+                the browser writes it straight to disk, so nothing holds
+                the whole dataset in memory on the way past. */}
+            <a className="button" href={api.datasetArchiveUrl(v.id)} download>
+              Download ZIP
+            </a>
             <button onClick={() => handleRetrainingHandoff(v)}>Retraining handoff</button>
           </li>
         ))}

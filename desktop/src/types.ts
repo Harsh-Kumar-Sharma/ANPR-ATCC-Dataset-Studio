@@ -211,6 +211,9 @@ export interface DatasetVersion {
   created_at: string;
   split_seed: number;
   config_snapshot_json: Record<string, unknown>;
+  /** What this version weighs on disk, which is roughly what its
+   *  download weighs. */
+  bytes_on_disk: number;
 }
 
 export interface DatasetExportResult {

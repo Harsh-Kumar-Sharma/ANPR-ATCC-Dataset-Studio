@@ -251,6 +251,13 @@ export const api = {
    *  are untouched either way. */
   setFrameStatus: (frameId: string, status: Frame["status"]) =>
     request<Frame>(`/frames/${frameId}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+  /** This dataset version as one zip, for training on another
+   *  machine. Streamed by the server, so it is a URL rather than a
+   *  fetch: a 13 MB body held in memory to re-serve it is pointless
+   *  when the browser can save it straight to disk. */
+  datasetArchiveUrl: (datasetVersionId: string) =>
+    `${API_BASE}/dataset-versions/${datasetVersionId}/archive`,
+
   /** The full frame, decoded on demand. The canvas's <img> src. */
   fullFrameImageUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/image`,
 
