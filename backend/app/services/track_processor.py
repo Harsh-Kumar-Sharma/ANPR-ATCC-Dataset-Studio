@@ -23,6 +23,7 @@ from app.services.frame_ranking import (
     select_roles_by_score,
 )
 from app.services.frame_sampler import decode_sampled_frames, sample_frame_timestamps
+from app.services.sighting_linker import link_single_sightings
 from app.services.track_metrics import DEFAULT_FRAGMENTATION_IOU_THRESHOLD, iou
 from app.services.quality_signals import compute_area_ratio, compute_sharpness, is_truncated, sharpness_to_blur_score
 from app.services.run_estimate import STOP_BELOW_BYTES, free_bytes_for
@@ -138,6 +139,11 @@ def persist_observations(
     logic regardless of whether the observations came from a finite
     offline pass or a live capture session."""
     observations_by_track = drop_sightings_absorbed_by_tracks(observations_by_track)
+    # Then join what is left of one vehicle into one track. A plate
+    # the tracker could never follow arrives as a sighting per
+    # frame, and seventeen entries for one car going past is not a
+    # review queue.
+    observations_by_track = link_single_sightings(observations_by_track)
 
     tracks = []
     # Frames are shared across tracks (two vehicles in one frame are one
