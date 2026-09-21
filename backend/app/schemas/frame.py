@@ -100,3 +100,16 @@ class SweepRead(BaseModel):
     #: Held back because a dataset version already names them.
     held: int
     bytes_freed: int
+
+
+class SuggestedBoxRead(BaseModel):
+    """A box the model found, offered to the canvas to start from.
+
+    Not an annotation: nothing is saved until the user saves, which
+    is what makes correcting one the same gesture as accepting it.
+    """
+
+    frame_candidate_id: str
+    bbox_json: list[float]
+    detector_class: str
+    detector_confidence: float

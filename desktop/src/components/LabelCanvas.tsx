@@ -11,6 +11,7 @@ import type {
   PlateReading,
   Project,
   ProjectClass,
+  SuggestedBox,
 } from "../types";
 
 interface Props {
@@ -115,6 +116,12 @@ function fromAnnotation(a: Annotation): Box {
   return { id: a.id, class_id: a.class_id, bbox_json: a.bbox_json, attributes: a.attributes };
 }
 
+/** A model's box as an unsaved one. No id: it is not a row yet, and
+ *  saving is what makes it one. */
+function fromSuggestion(s: SuggestedBox): Box {
+  return { id: null, class_id: null, bbox_json: s.bbox_json as Bbox, attributes: {} };
+}
+
 /**
  * Label a frame: draw boxes, move and resize them, give each a class,
  * and save the lot as the frame's complete set - from the keyboard
@@ -150,6 +157,21 @@ function LabelCanvas({
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [dirty, setDirty] = useState(false);
+  // How many of the boxes on screen came from the model and have
+  // not been saved. Shown so nobody mistakes a suggestion for work
+  // someone already did.
+  const [suggested, setSuggested] = useState(0);
+  // Whether the user has touched this frame since it opened, read by
+  // the loader from a ref because it lands after that decision was
+  // made.
+  const working = useRef(false);
+
+  /** The user has changed something. Both the flag the rest of the
+   *  app reads and the ref the loader checks. */
+  function markWorked() {
+    working.current = true;
+    setDirty(true);
+  }
   const [saving, setSaving] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [confirmingSkip, setConfirmingSkip] = useState(false);
@@ -181,11 +203,31 @@ function LabelCanvas({
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .getFrameAnnotations(frame.id)
-      .then((annotations) => {
+    working.current = false;
+    // Both at once, and written once. Fetching the suggestions after
+    // the annotations left a second window in which they landed on
+    // top of a box the user had already drawn and wiped it out.
+    //
+    // Suggestions are what the model found. They are not labels:
+    // nothing is written until Save, which makes correcting one the
+    // same gesture as accepting it. A failure to fetch them leaves an
+    // empty canvas rather than an error - drawing by hand still works.
+    Promise.all([
+      api.getFrameAnnotations(frame.id),
+      api.getFrameSuggestions(frame.id).catch(() => []),
+    ])
+      .then(([annotations, suggestions]) => {
         if (cancelled) return;
-        setBoxes(annotations.map(fromAnnotation));
+        // Someone started drawing while this was in flight. Their
+        // work wins: overwriting it with what the frame looked like
+        // before they touched it is the worst thing this could do.
+        if (working.current) return;
+        // A frame the model detected a plate in used to open
+        // completely empty, and had to be drawn from scratch next to
+        // a review screen that already knew where the plate was.
+        const startFrom = annotations.length > 0 ? annotations.map(fromAnnotation) : suggestions.map(fromSuggestion);
+        setBoxes(startFrom);
+        setSuggested(annotations.length > 0 ? 0 : suggestions.length);
         setSelected(null);
         setDirty(false);
         setError(null);
@@ -291,7 +333,7 @@ function LabelCanvas({
   function updateSelected(change: (box: Box) => Box) {
     if (selected === null) return;
     setBoxes((prev) => prev.map((b, i) => (i === selected ? change(b) : b)));
-    setDirty(true);
+    markWorked();
   }
 
   // --- mouse ---------------------------------------------------------------
@@ -341,7 +383,7 @@ function LabelCanvas({
       const next = [...boxesRef.current, { id: null, class_id: null, bbox_json: [x1, y1, x2, y2] as Bbox, attributes: {} }];
       setBoxes(next);
       setSelected(next.length - 1);
-      setDirty(true);
+      markWorked();
       return;
     }
     const final =
@@ -349,7 +391,7 @@ function LabelCanvas({
         ? shifted(d.origin, px - d.startX, py - d.startY, frame.width, frame.height)
         : resized(d.origin, d.handle, px, py, frame.width, frame.height);
     setBox(d.index, final);
-    if (!sameBox(final, d.origin)) setDirty(true);
+    if (!sameBox(final, d.origin)) markWorked();
   }
 
   const dragging = drag !== null;
@@ -396,7 +438,7 @@ function LabelCanvas({
     // the frame entirely: the box that slid into this slot, or the last
     // one if they deleted the end of the list.
     setSelected(remaining === 0 ? null : Math.min(selected, remaining - 1));
-    setDirty(true);
+    markWorked();
   }
 
   function assignClass(classId: number | null) {
@@ -409,7 +451,7 @@ function LabelCanvas({
     const after = shifted(before, dx, dy, frame.width, frame.height);
     if (sameBox(before, after)) return;
     setBox(selected, after);
-    setDirty(true);
+    markWorked();
   }
 
   useEffect(() => {
@@ -684,6 +726,13 @@ function LabelCanvas({
       <div className="label-canvas__bar">
         <span>
           frame {frame.frame_index} &middot; {boxes.length} box{boxes.length === 1 ? "" : "es"}
+          {/* Said plainly: these are the model's, nothing is saved,
+              and the class is still yours to pick. */}
+          {suggested > 0 && dirty === false && (
+            <span className="label-canvas__suggested">
+              {" "}&middot; {suggested} from the model - check, set the class, then Save
+            </span>
+          )}
           {dirty && " (unsaved)"}
         </span>
         {unclassified > 0 && <span className="label-canvas__hint">{unclassified} without a class yet</span>}

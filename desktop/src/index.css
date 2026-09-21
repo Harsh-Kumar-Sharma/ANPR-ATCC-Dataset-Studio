@@ -2847,3 +2847,7 @@ label.toggle {
   font-size: 12px;
   color: var(--text-secondary);
 }
+
+.label-canvas__suggested {
+  color: var(--text-muted);
+}

@@ -25,6 +25,7 @@ from app.schemas.frame import (
     FrameStatusWrite,
     QueueProgress,
     SourceQueueRead,
+    SuggestedBoxRead,
     SweepRead,
 )
 from app.schemas.ocr import PlateReadingRead
@@ -131,6 +132,25 @@ def _require_source_of_project(db: Session, project_id: str, source_id: str | No
 @frames_router.get("/{frame_id}", response_model=FrameRead)
 def get_frame(frame_id: str, db: Session = Depends(get_db)) -> Frame:
     return frames.get_frame(db, frame_id)
+
+
+@frames_router.get("/{frame_id}/suggestions", response_model=list[SuggestedBoxRead])
+def get_frame_suggestions(frame_id: str, db: Session = Depends(get_db)) -> list[SuggestedBoxRead]:
+    """What the model found on this frame, strongest first.
+
+    The canvas opens with these already drawn, so labelling a frame
+    the model got right is a save rather than a redraw.
+    """
+    frame = frames.get_frame(db, frame_id)
+    return [
+        SuggestedBoxRead(
+            frame_candidate_id=candidate.id,
+            bbox_json=list(candidate.bbox_json),
+            detector_class=candidate.detector_class,
+            detector_confidence=candidate.detector_confidence,
+        )
+        for candidate in frames.suggested_boxes(db, frame)
+    ]
 
 
 @frames_router.get("/{frame_id}/thumbnail")

@@ -594,3 +594,14 @@ export interface SchemaUpgradeResult {
   /** Where the database was copied before it was changed. */
   backup_path: string | null;
 }
+
+/** A box the model found, offered to the canvas to start from.
+ *
+ *  Not an annotation: nothing is saved until the user saves, which is
+ *  what makes correcting one the same gesture as accepting it. */
+export interface SuggestedBox {
+  frame_candidate_id: string;
+  bbox_json: number[];
+  detector_class: string;
+  detector_confidence: number;
+}

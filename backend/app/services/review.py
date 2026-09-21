@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, NotFoundError
 from app.db.models.annotation import Annotation
+from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.project import Project
@@ -83,6 +84,24 @@ def submit_review(db: Session, track: Track, payload: TrackReviewRequest) -> Ann
 
     track.review_status = payload.decision
 
+    # Accepting is labelling. The box is on the frame, the class is
+    # chosen, a human said yes - and until this line the frame stayed
+    # "pending", which is the one state the dataset export refuses to
+    # take. Everything the user accepted was being left out of the
+    # dataset it was accepted for.
+    #
+    # Only for accepted work with a class on it. A track marked hard
+    # or failed is a judgement about the detection, not a label, and
+    # a box with no class exports as "unclassified" anyway.
+    frame = db.get(Frame, frame_candidate.frame_id)
+    if frame is not None and payload.decision == "accepted" and payload.class_id is not None:
+        # Flushed first: this session does not autoflush, so the
+        # annotation just added would not be visible to the query
+        # below and the frame would never look finished.
+        db.flush()
+        if _every_detection_reviewed(db, frame):
+            frame.status = "labeled"
+
     db.commit()
     db.refresh(annotation)
     db.refresh(track)
@@ -95,3 +114,30 @@ def get_human_annotation(db: Session, track_id: str) -> Annotation | None:
         .join(FrameCandidate, Annotation.frame_candidate_id == FrameCandidate.id)
         .where(FrameCandidate.track_id == track_id, Annotation.source == "human")
     )
+
+
+def _every_detection_reviewed(db: Session, frame: Frame) -> bool:
+    """Has a human accounted for everything the model found here?
+
+    Accepting a track is judging one detection, not looking at a
+    whole frame. A frame with two plates on it and one accepted is
+    exactly the "partially labelled" case the export warns about -
+    marking it finished would both hide that warning and teach the
+    model that the second plate is background.
+
+    So the frame becomes labelled only once nothing the detector
+    found on it is left unanswered. Which, for a frame with one
+    vehicle in it, is the moment it is accepted.
+    """
+    detections = db.scalars(select(FrameCandidate.id).where(FrameCandidate.frame_id == frame.id)).all()
+    if not detections:
+        return False
+
+    answered = set(
+        db.scalars(
+            select(Annotation.frame_candidate_id).where(
+                Annotation.frame_id == frame.id, Annotation.frame_candidate_id.is_not(None)
+            )
+        )
+    )
+    return all(detection in answered for detection in detections)

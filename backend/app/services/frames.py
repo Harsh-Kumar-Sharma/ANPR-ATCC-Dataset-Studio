@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError, ConflictError, NotFoundError
 from app.db.models.annotation import Annotation
 from app.db.models.frame import FRAME_STATUSES, SET_ASIDE_STATUSES, Frame
+from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.project import Project
 from app.db.models.source import Source
 from app.services.annotation_attributes import InvalidAttributeError, clean_attributes
@@ -267,6 +268,27 @@ def list_annotations(db: Session, frame_id: str) -> list[Annotation]:
     return list(
         db.scalars(
             select(Annotation).where(Annotation.frame_id == frame_id).order_by(Annotation.updated_at, Annotation.id)
+        )
+    )
+
+
+def suggested_boxes(db: Session, frame: Frame) -> list[FrameCandidate]:
+    """What the model found on this frame, for the canvas to open with.
+
+    A frame the model detected a plate in used to open completely
+    empty, because the canvas shows annotations and a detection is
+    not one. So every frame had to be drawn from scratch, next to a
+    review screen that already knew exactly where the plate was.
+
+    These are suggestions, not labels. Nothing is written until the
+    user saves - which is what makes correcting one the same gesture
+    as accepting it.
+    """
+    return list(
+        db.scalars(
+            select(FrameCandidate)
+            .where(FrameCandidate.frame_id == frame.id)
+            .order_by(FrameCandidate.detector_confidence.desc())
         )
     )
 

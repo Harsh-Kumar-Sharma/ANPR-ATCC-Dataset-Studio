@@ -10,6 +10,10 @@ class FrameCandidateRead(BaseModel):
 
     id: str
     track_id: str
+    #: The full frame this detection sits on - what the labelling
+    #: canvas works with. Null only for candidates from before full
+    #: frames were captured.
+    frame_id: str | None
     frame_index: int
     timestamp_ms: int
     image_path: str | None

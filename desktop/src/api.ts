@@ -30,6 +30,7 @@ import type {
   ModelInfo,
   RunEstimate,
   SchemaState,
+  SuggestedBox,
   SchemaUpgradeResult,
   Sweep,
   TrainingRun,
@@ -247,6 +248,10 @@ export const api = {
   /** A small picture of a frame, for showing many at once. Its own
    *  endpoint because it never decodes a full-size image to disk. */
   frameThumbnailUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/thumbnail`,
+
+  /** What the model found on a frame, for the canvas to open with. */
+  getFrameSuggestions: (frameId: string) =>
+    request<SuggestedBox[]>(`/frames/${frameId}/suggestions`),
   /** What a box can carry besides its class. One list, shared with the
    *  validation on the way back in. */
   listAttributeDefinitions: () => request<AttributeDefinition[]>("/annotation-attributes"),

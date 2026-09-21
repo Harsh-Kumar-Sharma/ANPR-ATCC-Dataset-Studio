@@ -723,3 +723,52 @@ describe("LabelCanvas: saving", () => {
     for (const k of ["[", "]", "1", "9", "0", "Del", "S", "Esc"]) expect(hints).toContain(k);
   });
 });
+
+describe("LabelCanvas: opening with what the model found", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
+    vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
+    drawnAtHalfSize();
+  });
+
+  it("starts from the model's boxes when nothing is saved yet", async () => {
+    // The frame used to open completely empty next to a review
+    // screen that already knew exactly where the plate was.
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([]);
+    vi.spyOn(api, "getFrameSuggestions").mockResolvedValue([
+      { frame_candidate_id: "fc-1", bbox_json: [10, 20, 90, 60], detector_class: "plate", detector_confidence: 0.8 },
+    ]);
+
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    expect(await screen.findByTestId("label-box")).toBeInTheDocument();
+    expect(await screen.findByText(/from the model/i)).toBeInTheDocument();
+  });
+
+  it("prefers what was saved over what the model thinks", async () => {
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([annotation([10, 10, 60, 40])]);
+    const suggestions = vi.spyOn(api, "getFrameSuggestions").mockResolvedValue([
+      { frame_candidate_id: "fc-1", bbox_json: [0, 0, 5, 5], detector_class: "plate", detector_confidence: 0.9 },
+    ]);
+
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    await screen.findByTestId("label-box");
+    expect(suggestions).toHaveBeenCalled();
+    expect(screen.queryByText(/from the model/i)).not.toBeInTheDocument();
+  });
+
+  it("opens empty rather than erroring when suggestions cannot be had", async () => {
+    // Drawing by hand still works, which is what matters.
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([]);
+    vi.spyOn(api, "getFrameSuggestions").mockRejectedValue(new Error("offline"));
+
+    render(<LabelCanvas project={project} frame={frame} />);
+
+    await screen.findByTestId("label-stage");
+    expect(screen.queryByTestId("label-box")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
