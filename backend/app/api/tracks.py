@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
 from app.core.errors import NotFoundError
+from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.ocr_candidate import OcrCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
 from app.db.models.track import Track
 from app.db.session import get_db
+from app.services import frames as frames_service
 from app.services import track_sweep
 from app.services.crops import crop_jpeg
 from app.ml.factory import get_default_ocr_engine
@@ -95,10 +97,20 @@ def get_track_timeline(track_id: str, db: Session = Depends(get_db)) -> TrackTim
     frames = list(
         db.scalars(select(FrameCandidate).where(FrameCandidate.track_id == track_id).order_by(FrameCandidate.frame_index))
     )
+    # Whether each detection's whole frame can be shown behind it.
+    # A stat per frame, never a decode.
     return TrackTimeline(
         track=TrackRead.model_validate(track),
-        frames=[FrameCandidateRead.model_validate(f) for f in frames],
+        frames=[
+            FrameCandidateRead.model_validate(f).model_copy(update={"full_frame": _has_full_frame(db, f)})
+            for f in frames
+        ],
     )
+
+
+def _has_full_frame(db: Session, candidate: FrameCandidate) -> bool:
+    frame = db.get(Frame, candidate.frame_id) if candidate.frame_id else None
+    return frame is not None and frames_service.full_frame_available(db, frame)
 
 
 @tracks_router.get("/frames/{frame_candidate_id}/image")

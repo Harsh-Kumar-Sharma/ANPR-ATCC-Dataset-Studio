@@ -26,6 +26,8 @@ const track: Track = {
 const candidate: FrameCandidate = {
   id: "fc-1",
   track_id: "t-1",
+  frame_id: "f-1",
+  full_frame: false,
   frame_index: 0,
   timestamp_ms: 0,
   image_path: "/nowhere.jpg",

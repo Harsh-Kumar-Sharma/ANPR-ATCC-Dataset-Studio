@@ -61,6 +61,11 @@ export interface FrameCandidateFlags {
 export interface FrameCandidate {
   id: string;
   track_id: string;
+  /** The full frame this detection sits on. Null only for detections
+   *  from before full frames were captured. */
+  frame_id: string | null;
+  /** Whether that whole frame can be shown behind the detection. */
+  full_frame: boolean;
   frame_index: number;
   timestamp_ms: number;
   image_path: string;

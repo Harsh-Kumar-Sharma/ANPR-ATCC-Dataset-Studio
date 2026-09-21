@@ -249,6 +249,20 @@ def project_of(db: Session, frame: Frame) -> Project:
     return project
 
 
+def full_frame_available(db: Session, frame: Frame) -> bool:
+    """Can this frame's full image be shown, now or after a decode?
+
+    Cheap on purpose - a stat, never a decode. A frame of an offline
+    video can always be recovered while the file is there; a frame of
+    a live stream only if it was written at capture time, because
+    the stream cannot be read a second time.
+    """
+    if frame.image_path and Path(frame.image_path).is_file():
+        return True
+    source = db.get(Source, frame.source_id)
+    return source is not None and source.type == "video" and Path(source.path_or_uri).is_file()
+
+
 def frame_image_path(db: Session, frame: Frame) -> Path:
     """Where this frame's image is on disk, decoding it from the source
     video if it has never been needed before.

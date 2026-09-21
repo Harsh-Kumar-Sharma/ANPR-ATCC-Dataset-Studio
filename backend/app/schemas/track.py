@@ -24,6 +24,11 @@ class FrameCandidateRead(BaseModel):
     sharpness_score: float | None
     area_ratio: float | None
     flags_json: dict | None
+    #: Whether the whole frame can be shown behind this detection.
+    #: Review wants the vehicle the plate is on, not a 200x40 cut-out
+    #: of the plate - but a live frame that was never written cannot
+    #: be recovered, so the crop stays the fallback.
+    full_frame: bool = False
 
 
 class TrackRead(BaseModel):

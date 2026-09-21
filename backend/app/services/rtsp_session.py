@@ -21,6 +21,15 @@ from app.services.track_processor import ObservationsByTrack, _Observation, obse
 
 logger = logging.getLogger(__name__)
 
+#: How many frames a session will write because a detection landed on
+#: them, however long it runs.
+#:
+#: Unbounded is not an option on the disk this app is built for, but
+#: the ceiling is high: these are the frames the session exists to
+#: produce, and a session that hits it has already given a person
+#: more labelling than a day's work.
+DETECTED_FRAME_LIMIT = 5000
+
 
 @dataclass
 class KeepFrames:
@@ -116,7 +125,13 @@ class RtspCaptureSession:
         # of this source lives, so deleting the source takes them too.
         self._frames_dir = frames_root(workspace_path) / source_id if source_id else None
         self._saved: list[_SavedFrame] = []
+        self._saved_indexes: set[int] = set()
         self._frames_saved = 0
+        #: Counted apart from the total so that frames kept because a
+        #: detection landed on them cannot eat the sampling setting's
+        #: budget, or the other way round.
+        self._sampled_saved = 0
+        self._detected_saved = 0
 
         self._observations_by_track: ObservationsByTrack = {}
         self._preview = LivePreview()
@@ -208,26 +223,7 @@ class RtspCaptureSession:
                 drained = self._buffer.drain()
 
             for item in drained:
-                tracked = observe_frame(
-                    self._observations_by_track,
-                    item.payload,
-                    item.frame_index,
-                    item.timestamp_ms,
-                    self._detector,
-                    self._tracker,
-                    # A live frame is gone once it has been processed:
-                    # there is no file to cut the crop out of later.
-                    keep_crop=True,
-                )
-                self._maybe_keep_frame(item)
-                # Published per processed frame, not once per drained batch.
-                # When detection is slower than capture the buffer backs up and
-                # a single batch can span hundreds of frames, so a batch-level
-                # publish froze the preview for the whole batch (measured on a
-                # real 1080p clip: one new preview frame in 8 seconds while 854
-                # frames arrived). LivePreview throttles, so this does not
-                # JPEG-encode every frame.
-                self._publish_preview(item.payload, tracked)
+                self._process_one(item)
 
             capture_done = self._capture_finished.is_set()
             if capture_done and not drained:
@@ -242,25 +238,83 @@ class RtspCaptureSession:
 
         self._persist(status="failed" if self._status_snapshot().error else "completed", finalize=True)
 
+    def _process_one(self, item) -> None:
+        """Detect, track, and keep whatever of this frame is worth keeping."""
+        tracked = observe_frame(
+            self._observations_by_track,
+            item.payload,
+            item.frame_index,
+            item.timestamp_ms,
+            self._detector,
+            self._tracker,
+            # A live frame is gone once it has been processed:
+            # there is no file to cut the crop out of later.
+            keep_crop=True,
+        )
+        self._maybe_keep_frame(item)
+        if tracked:
+            self._keep_detected_frame(item)
+        # Published per processed frame, not once per drained batch.
+        # When detection is slower than capture the buffer backs up and
+        # a single batch can span hundreds of frames, so a batch-level
+        # publish froze the preview for the whole batch (measured on a
+        # real 1080p clip: one new preview frame in 8 seconds while 854
+        # frames arrived). LivePreview throttles, so this does not
+        # JPEG-encode every frame.
+        self._publish_preview(item.payload, tracked)
+
+    def _keep_detected_frame(self, item) -> None:
+        """Write the full frame a detection landed on, asked for or not.
+
+        The crop alone is not enough. Reviewing a plate means seeing
+        the vehicle it is on, and labelling means a frame to draw on -
+        neither of which a 200x40 cut-out gives you. A live stream
+        cannot be decoded a second time, so if this frame is not
+        written now those pixels are gone: the detection survives as a
+        row pointing at a frame nobody can open, which is how a real
+        workspace ended up with 333 frames without images and every
+        accepted detection missing from the Label tab.
+        """
+        if self._detected_saved >= DETECTED_FRAME_LIMIT:
+            return
+        if self._write_frame(item):
+            self._detected_saved += 1
+
     def _maybe_keep_frame(self, item) -> None:
-        """Write one captured frame to disk, if it is one we are keeping.
+        """Write one captured frame to disk, if sampling asked for it.
+
+        Separate from the detected frames above: this is the setting
+        that keeps frames whether or not the model found anything,
+        for when the model is wrong or there is no model worth
+        trusting yet.
+        """
+        keep = self._keep_frames
+        if not keep.enabled:
+            return
+        if self._sampled_saved >= keep.max_frames:
+            return
+        if keep.every > 1 and item.frame_index % keep.every != 0:
+            return
+        if self._write_frame(item):
+            self._sampled_saved += 1
+
+    def _write_frame(self, item) -> bool:
+        """Write one captured frame to disk and queue its database row.
 
         Written here in the processing thread rather than at capture:
         the capture thread's job is to not miss frames, and a JPEG
         encode in that loop is the kind of thing that makes it miss
         frames.
 
-        A failure to write is logged and dropped. Losing a frame we
-        were keeping out of interest is not worth ending a live
-        capture over.
+        A failure to write is logged and dropped. Losing one frame is
+        not worth ending a live capture over.
         """
-        keep = self._keep_frames
-        if not keep.enabled or self._frames_dir is None:
-            return
-        if self._frames_saved >= keep.max_frames:
-            return
-        if keep.every > 1 and item.frame_index % keep.every != 0:
-            return
+        if self._frames_dir is None:
+            return False
+        # Sampling and detection both want this frame often enough
+        # that writing it twice would be the normal case.
+        if item.frame_index in self._saved_indexes:
+            return False
 
         path = self._frames_dir / f"frame_{item.frame_index:06d}.jpg"
         try:
@@ -269,7 +323,7 @@ class RtspCaptureSession:
                 raise OSError(f"cv2 could not write {path}")
         except OSError:
             logger.warning("Could not keep frame %s of the live session", item.frame_index, exc_info=True)
-            return
+            return False
 
         height, width = item.payload.shape[:2]
         self._saved.append(
@@ -281,9 +335,11 @@ class RtspCaptureSession:
                 path=path,
             )
         )
+        self._saved_indexes.add(item.frame_index)
         self._frames_saved += 1
         with self._lock:
             self._status.frames_saved = self._frames_saved
+        return True
 
     def _persist_saved_frames(self, db) -> None:
         """Give the frames written since last time their database rows.
@@ -330,8 +386,11 @@ class RtspCaptureSession:
             run = db.get(ProcessingRun, self._run_id)
             if run is None:
                 return
-            tracks = persist_observations(db, run, self._observations_by_track, self._tracks_root, self._detector.class_names)
+            # Frames first: they and the detections resolve to the
+            # same rows, and this way a row is never briefly a frame
+            # with no image that something else could act on.
             self._persist_saved_frames(db)
+            tracks = persist_observations(db, run, self._observations_by_track, self._tracks_root, self._detector.class_names)
             self._observations_by_track.clear()
             with self._lock:
                 self._status.tracks_persisted += len(tracks)

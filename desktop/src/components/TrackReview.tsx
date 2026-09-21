@@ -22,6 +22,9 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
   const [classId, setClassId] = useState<number | "">("");
   const [bbox, setBbox] = useState<Bbox>([0, 0, 0, 0]);
   const [rendered, setRendered] = useState({ width: 0, height: 0 });
+  /** The image's own pixel size, which is the frame's when the whole
+   *  frame is shown - the box is in those coordinates. */
+  const [natural, setNatural] = useState({ width: 0, height: 0 });
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -197,18 +200,28 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
   if (!timeline) return <p className="placeholder">Loading track…</p>;
   if (!currentFrame) return <p className="placeholder">This track has no frame candidates.</p>;
 
-  // The saved image is already cropped to the frame's own detected bbox
-  // (see docs/HANDOFF.md Phase 4 note), so the overlay maps the edited
-  // bbox back into the crop's local pixel space using that frame's
-  // original bbox as the origin - not the full source frame.
+  // The whole frame, with the detection drawn on it, whenever the
+  // pixels can be had: a tight cut-out of a number plate is not
+  // something a person can judge a detection on, and it is not what
+  // a labelling dataset is made of. A live frame that was never
+  // written cannot be recovered, so the crop stays the fallback.
+  const wholeFrame = currentFrame.full_frame && currentFrame.frame_id !== null;
+  const imageSrc = wholeFrame
+    ? api.fullFrameImageUrl(currentFrame.frame_id as string)
+    : api.frameImageUrl(currentFrame.id);
+
+  // The bbox is in full-frame pixels either way. What changes is the
+  // origin the image starts at and how many pixels of it are shown:
+  // the whole frame starts at 0,0, a crop starts at its own box.
   const originalBbox = currentFrame.bbox_json;
-  const originalWidth = Math.max(1, originalBbox[2] - originalBbox[0]);
-  const originalHeight = Math.max(1, originalBbox[3] - originalBbox[1]);
-  const scaleX = rendered.width / originalWidth;
-  const scaleY = rendered.height / originalHeight;
+  const origin = wholeFrame ? [0, 0] : [originalBbox[0], originalBbox[1]];
+  const spanX = wholeFrame ? Math.max(1, natural.width) : Math.max(1, originalBbox[2] - originalBbox[0]);
+  const spanY = wholeFrame ? Math.max(1, natural.height) : Math.max(1, originalBbox[3] - originalBbox[1]);
+  const scaleX = rendered.width / spanX;
+  const scaleY = rendered.height / spanY;
   const overlay = {
-    x: (bbox[0] - originalBbox[0]) * scaleX,
-    y: (bbox[1] - originalBbox[1]) * scaleY,
+    x: (bbox[0] - origin[0]) * scaleX,
+    y: (bbox[1] - origin[1]) * scaleY,
     width: Math.max(0, bbox[2] - bbox[0]) * scaleX,
     height: Math.max(0, bbox[3] - bbox[1]) * scaleY,
   };
@@ -234,11 +247,12 @@ function TrackReview({ project, track, onReviewed, onNavigateTrack, classesVersi
           <div className="frame-image-wrap">
             <img
               ref={imgRef}
-              src={api.frameImageUrl(currentFrame.id)}
+              src={imageSrc}
               alt={`Frame ${currentFrame.frame_index}`}
               onLoad={(e) => {
                 const el = e.currentTarget;
                 setRendered({ width: el.clientWidth, height: el.clientHeight });
+                setNatural({ width: el.naturalWidth, height: el.naturalHeight });
               }}
             />
             <svg className="bbox-overlay">
