@@ -101,3 +101,27 @@ describe("FrameGrid", () => {
     expect(container.querySelectorAll("img")).toHaveLength(0);
   });
 });
+
+describe("FrameGrid: coming back to where you were", () => {
+  it("brings the frame you were labelling back into view", () => {
+    // Labelling from the sheet is: pick the hundredth picture, label
+    // it, come back. Coming back to the top of two hundred
+    // thumbnails means finding your place again every single time.
+    const intoView = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+
+    render(<FrameGrid frames={many} selectedFrameId="f-14" onOpen={vi.fn()} onClose={vi.fn()} />);
+
+    expect(intoView).toHaveBeenCalledTimes(1);
+    expect(intoView.mock.instances[0]).toBe(screen.getByRole("button", { name: /label frame 14/i }));
+    intoView.mockRestore();
+  });
+
+  it("scrolls nothing when no frame is open", () => {
+    const intoView = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+
+    render(<FrameGrid frames={many} selectedFrameId={null} onOpen={vi.fn()} onClose={vi.fn()} />);
+
+    expect(intoView).not.toHaveBeenCalled();
+    intoView.mockRestore();
+  });
+});

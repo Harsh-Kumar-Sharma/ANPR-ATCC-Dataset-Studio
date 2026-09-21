@@ -244,7 +244,7 @@ function App() {
         />
         {/* Under the image, where the work is - not only in the
             sidebar the user has to look away to reach. */}
-        <FrameNav queue={frameQueue} />
+        <FrameNav queue={frameQueue} onShowGrid={() => setMainView("grid")} />
       </>
     );
   } else if (mainView === "grid") {

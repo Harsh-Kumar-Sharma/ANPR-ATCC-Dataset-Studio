@@ -5,6 +5,8 @@ import UnsavedPrompt from "./UnsavedPrompt";
 
 interface Props {
   queue: FrameQueue;
+  /** Back to the contact sheet, where this frame was picked from. */
+  onShowGrid?: () => void;
 }
 
 /**
@@ -18,7 +20,7 @@ interface Props {
  * Ctrl/Cmd with the arrow keys does the same thing. Bare arrows are
  * taken: they nudge the selected box by a pixel.
  */
-function FrameNav({ queue }: Props) {
+function FrameNav({ queue, onShowGrid }: Props) {
   const { index, frames, pending } = queue;
 
   useEffect(() => {
@@ -38,6 +40,13 @@ function FrameNav({ queue }: Props) {
   return (
     <div className="frame-nav">
       <div className="frame-nav__row">
+        {/* The way back. Picking the hundredth picture, labelling it
+            and then having no route to the sheet is a dead end. */}
+        {onShowGrid && (
+          <button className="frame-nav__grid" onClick={onShowGrid}>
+            &#9638; All frames
+          </button>
+        )}
         <button
           aria-label="Previous frame in the queue"
           disabled={!queue.canStep(-1)}

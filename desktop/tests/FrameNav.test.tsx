@@ -53,11 +53,12 @@ interface HarnessProps {
   dirty?: boolean;
   sourceId?: string | null;
   onSelect?: (frame: Frame) => void;
+  onShowGrid?: () => void;
 }
 
 /** The sidebar and the nav strip over one queue, which is how they run:
  *  the whole point is that there is only one list. */
-function Harness({ startAt = null, dirty = false, sourceId, onSelect }: HarnessProps) {
+function Harness({ startAt = null, dirty = false, sourceId, onSelect, onShowGrid }: HarnessProps) {
   const [selected, setSelected] = useState<string | null>(startAt);
   const queue = useFrameQueue({
     project,
@@ -72,7 +73,7 @@ function Harness({ startAt = null, dirty = false, sourceId, onSelect }: HarnessP
   return (
     <>
       <LabelQueue queue={queue} selectedFrameId={selected} project={project} />
-      <FrameNav queue={queue} />
+      <FrameNav queue={queue} onShowGrid={onShowGrid} />
     </>
   );
 }
@@ -193,5 +194,34 @@ describe("FrameNav", () => {
     fireEvent.click(screen.getByRole("button", { name: /^frame 2$/i }));
 
     await waitFor(() => expect(screen.getByTestId("frame-position")).toHaveTextContent("3 of 3"));
+  });
+});
+
+describe("FrameNav: getting back to the contact sheet", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listFrames").mockResolvedValue([frame(0), frame(1), frame(2)]);
+    vi.spyOn(api, "getQueueProgress").mockResolvedValue(progress);
+    vi.spyOn(api, "getQueueBySource").mockResolvedValue([sourceQueue()]);
+  });
+
+  it("offers the way back to the sheet a frame was picked from", async () => {
+    // Picking the hundredth picture, labelling it and then having no
+    // route back to the sheet is a dead end.
+    const onShowGrid = vi.fn();
+    render(<Harness startAt="f-1" onShowGrid={onShowGrid} />);
+    await screen.findByTestId("frame-position");
+
+    fireEvent.click(screen.getByRole("button", { name: /all frames/i }));
+
+    expect(onShowGrid).toHaveBeenCalled();
+  });
+
+  it("offers nothing when there is no sheet to go back to", async () => {
+    render(<Harness startAt="f-1" />);
+    await screen.findByTestId("frame-position");
+
+    expect(screen.queryByRole("button", { name: /all frames/i })).not.toBeInTheDocument();
   });
 });

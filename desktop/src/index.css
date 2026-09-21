@@ -2840,3 +2840,10 @@ label.toggle {
 .training-runs__forget {
   margin-top: 3px;
 }
+
+.frame-nav__grid {
+  min-width: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { api } from "../api";
 import type { Frame } from "../types";
 import { IconX } from "../Icons";
@@ -9,6 +10,14 @@ interface Props {
   onOpen: (frame: Frame) => void;
   onClose: () => void;
 }
+
+/** Where the sheet was scrolled to when it was last closed.
+ *
+ *  Module-level rather than component state because the grid
+ *  unmounts the moment a frame is opened - which is exactly when the
+ *  position needs to survive. Per session, deliberately: it is a
+ *  scroll offset, not a preference worth storing. */
+let lastOffset = 0;
 
 /**
  * Every frame at once, as pictures.
@@ -24,6 +33,34 @@ interface Props {
  * to disk.
  */
 function FrameGrid({ frames, selectedFrameId, onOpen, onClose }: Props) {
+  const list = useRef<HTMLUListElement>(null);
+  const selected = useRef<HTMLButtonElement>(null);
+
+  // Come back where you left off. Labelling from the sheet is: pick
+  // the hundredth picture, label it, come back - and coming back to
+  // the top of two hundred thumbnails means finding your place again
+  // every single time.
+  useEffect(() => {
+    if (selected.current) {
+      // The frame just labelled, in the middle of the view. Better
+      // than a saved offset: it is right even when the list has
+      // changed underneath, which it does as frames get labelled.
+      selected.current.scrollIntoView({ block: "center" });
+      return;
+    }
+    if (list.current) list.current.scrollTop = lastOffset;
+    // Once, on open. Scrolling the user somewhere while they browse
+    // would be worse than not restoring at all.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const element = list.current;
+    return () => {
+      if (element) lastOffset = element.scrollTop;
+    };
+  }, []);
+
   return (
     <div className="frame-grid">
       <div className="player-header">
@@ -36,10 +73,11 @@ function FrameGrid({ frames, selectedFrameId, onOpen, onClose }: Props) {
       {frames.length === 0 ? (
         <p className="live-waiting">Nothing in the queue to show.</p>
       ) : (
-        <ul className="frame-grid__items">
+        <ul className="frame-grid__items" ref={list}>
           {frames.map((frame) => (
             <li key={frame.id}>
               <button
+                ref={frame.id === selectedFrameId ? selected : undefined}
                 className={`frame-grid__item${frame.id === selectedFrameId ? " selected" : ""}`}
                 onClick={() => onOpen(frame)}
                 aria-label={`Label frame ${frame.frame_index}`}
