@@ -297,3 +297,78 @@ def test_the_api_removes_a_model_you_imported(tmp_path, monkeypatch, loads_fine)
 
     assert removed.status_code == 204
     assert "gantry_v3" not in [m["id"] for m in client.get("/models").json()]
+
+
+# --- a model belongs to a project --------------------------------------------
+
+
+def test_a_model_is_offered_to_the_project_it_was_brought_into(tmp_path, loads_fine):
+    """Eleven models across three projects, none of the menu saying
+    which belongs to which, is the complaint this answers."""
+    models = tmp_path / "models"
+    import_model(_a_checkpoint(tmp_path / "gantry_v3.pt"), models, project_id="p-anpr")
+
+    mine = [m.id for m in registry.list_models(models, project_id="p-anpr")]
+    theirs = [m.id for m in registry.list_models(models, project_id="p-atcc")]
+
+    assert "gantry_v3" in mine
+    assert "gantry_v3" not in theirs
+
+
+def test_the_builtins_are_offered_to_every_project(tmp_path):
+    """They detect COCO classes, which belong to nobody."""
+    models = tmp_path / "models"
+
+    offered = [m.id for m in registry.list_models(models, project_id="p-anything")]
+
+    assert "yolo26n" in offered and "yolo26s" in offered
+
+
+def test_a_model_nobody_owns_is_offered_everywhere(tmp_path):
+    """A file dropped into the directory by hand has no owner.
+    Hiding it from everyone would be a worse answer than showing it
+    to everyone."""
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "dropped_in.pt").write_bytes(b"weights")
+
+    assert "dropped_in" in [m.id for m in registry.list_models(models, project_id="p-one")]
+    assert "dropped_in" in [m.id for m in registry.list_models(models, project_id="p-two")]
+
+
+def test_asking_without_a_project_still_shows_everything(tmp_path, loads_fine):
+    models = tmp_path / "models"
+    import_model(_a_checkpoint(tmp_path / "a.pt"), models, project_id="p-one")
+    import_model(_a_checkpoint(tmp_path / "b.pt"), models, project_id="p-two")
+
+    assert {"a", "b"} <= {m.id for m in registry.list_models(models)}
+
+
+def test_recording_an_owner_does_not_forget_what_the_model_detects(tmp_path, loads_fine):
+    """The sidecar holds both, and one write must not lose the other."""
+    models = tmp_path / "models"
+    import_model(_a_checkpoint(tmp_path / "gantry_v3.pt"), models, project_id="p-anpr")
+
+    registry.write_sidecar(models, "gantry_v3", project_id="p-other")
+
+    model = registry.get_model("gantry_v3", models)
+    assert model.classes == ["plate", "vehicle"]
+    assert model.project_id == "p-other"
+
+
+def test_the_api_narrows_the_list_to_a_project(tmp_path, monkeypatch, loads_fine):
+    from fastapi.testclient import TestClient
+
+    from app.core.config import get_settings
+    from app.main import app
+
+    models = tmp_path / "models"
+    monkeypatch.setattr(get_settings(), "model_weights_dir", models, raising=False)
+    client = TestClient(app)
+    client.post("/models", json={"path": str(_a_checkpoint(tmp_path / "mine.pt")), "project_id": "p-one"})
+
+    mine = client.get("/models", params={"project_id": "p-one"}).json()
+    theirs = client.get("/models", params={"project_id": "p-two"}).json()
+
+    assert "mine" in [m["id"] for m in mine]
+    assert "mine" not in [m["id"] for m in theirs]

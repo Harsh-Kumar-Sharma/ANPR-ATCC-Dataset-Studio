@@ -59,6 +59,7 @@ const model: ModelInfo = {
   bytes: 5_544_453,
   note: "Fastest.",
   classes: [],
+  project_id: null,
 };
 
 const estimate = (over: Partial<RunEstimate> = {}): RunEstimate => ({

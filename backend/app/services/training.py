@@ -24,7 +24,7 @@ from app.core.errors import AppError, ConflictError, NotFoundError
 from app.db.models.dataset_version import DatasetVersion
 from app.db.models.project import Project
 from app.db.models.training_run import TrainingRun
-from app.ml.models import WEIGHTS_SUFFIX, get_model
+from app.ml.models import WEIGHTS_SUFFIX, get_model, write_sidecar
 from app.ml.weights import ensure_weights
 from app.services.model_import import safe_id
 from app.services.run_estimate import free_bytes_for
@@ -349,6 +349,17 @@ def adopt_weights(best: Path, weights_dir: Path, run: TrainingRun, version: int)
     weights_dir.mkdir(parents=True, exist_ok=True)
     destination = weights_dir / f"{model_id}{WEIGHTS_SUFFIX}"
     shutil.copy2(best, destination)
+
+    # Owned by the project whose labels made it. A model trained on
+    # one project's classes is noise in every other project's menu.
+    write_sidecar(
+        weights_dir,
+        model_id,
+        label=model_id,
+        project_id=run.project_id,
+        trained_from=run.base_model_id,
+        dataset_version=version,
+    )
     return model_id
 
 

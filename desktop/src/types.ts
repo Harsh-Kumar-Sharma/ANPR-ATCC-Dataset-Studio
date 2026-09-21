@@ -511,6 +511,9 @@ export interface ModelInfo {
   note: string;
   /** What a custom model detects, as its checkpoint reports it. */
   classes: string[];
+  /** Which project owns it. Null for a built-in, and for a file
+   *  dropped into the models directory by hand. */
+  project_id: string | null;
 }
 
 /** What a detection run would process, and what it would cost.

@@ -21,15 +21,22 @@ router = APIRouter(prefix="/models", tags=["models"])
 
 
 @router.get("", response_model=list[ModelRead])
-def list_models() -> list[ModelRead]:
+def list_models(project_id: str | None = None) -> list[ModelRead]:
     """Every model that can be chosen, built-in or your own.
 
     A built-in with no weights on disk yet is still listed: "not
     downloaded" is a state the first run resolves, not a reason to
     hide the option.
+
+    ``project_id`` narrows the custom ones to that project's own. A
+    model trained on one project's labels detects that project's
+    classes, so it is noise in another project's menu.
     """
     weights_dir = get_settings().resolved_model_weights_dir()
-    return [ModelRead(**asdict(model)) for model in model_registry.list_models(weights_dir)]
+    return [
+        ModelRead(**asdict(model))
+        for model in model_registry.list_models(weights_dir, project_id=project_id)
+    ]
 
 
 @router.post("", response_model=ModelRead, status_code=201)
@@ -42,7 +49,7 @@ def import_a_model(payload: ModelImportRequest) -> ModelRead:
     reaches the user as a failed job.
     """
     weights_dir = get_settings().resolved_model_weights_dir()
-    imported = import_model(Path(payload.path), weights_dir, name=payload.name)
+    imported = import_model(Path(payload.path), weights_dir, name=payload.name, project_id=payload.project_id)
     return ModelRead(**asdict(imported.model))
 
 

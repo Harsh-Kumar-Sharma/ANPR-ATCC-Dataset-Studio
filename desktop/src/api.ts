@@ -162,14 +162,17 @@ export const api = {
     ),
 
   /** Everything that can detect: the built-ins, and your own. */
-  listModels: () => request<ModelInfo[]>("/models"),
+  /** Models this project can use: the built-ins, its own, and any
+   *  nobody has claimed. */
+  listModels: (projectId?: string) =>
+    request<ModelInfo[]>(`/models${query({ project_id: projectId })}`),
 
   /** Take a .pt you trained into the app. The backend loads it as
    *  part of accepting it, so this is slow and can refuse. */
-  importModel: (path: string, name?: string) =>
+  importModel: (path: string, name?: string, projectId?: string) =>
     request<ModelInfo>("/models", {
       method: "POST",
-      body: JSON.stringify({ path, name: name?.trim() || null }),
+      body: JSON.stringify({ path, name: name?.trim() || null, project_id: projectId ?? null }),
     }),
 
   /** Forget a model you imported. Built-ins are refused. */

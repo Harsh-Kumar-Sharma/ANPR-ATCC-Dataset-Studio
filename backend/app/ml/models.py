@@ -7,6 +7,7 @@ chosen, and the rules for turning a chosen id into a file on disk.
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,8 @@ from app.core.errors import AppError, NotFoundError
 #: An id is used to build a path, so it is checked before it ever gets
 #: near one. No separators, no dots leading anywhere: a request for
 #: "../../secrets" is a mistake at best.
+logger = logging.getLogger(__name__)
+
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 #: The weights file extension we recognise as a model.
@@ -74,6 +77,12 @@ class ModelInfo:
     #: those) and for a file dropped into the directory by hand,
     #: which nothing has read yet.
     classes: list[str] = field(default_factory=list)
+    #: Which project this model belongs to. A model trained on one
+    #: project's labels detects that project's classes and is noise
+    #: in every other project's menu. Null means nobody knows - a
+    #: file dropped into the directory by hand - and those are shown
+    #: everywhere rather than hidden from everyone.
+    project_id: str | None = None
 
 
 def _size(path: Path) -> int:
@@ -83,13 +92,19 @@ def _size(path: Path) -> int:
         return 0
 
 
-def list_models(weights_dir: Path) -> list[ModelInfo]:
+def list_models(weights_dir: Path, project_id: str | None = None) -> list[ModelInfo]:
     """Everything that can be chosen: the built-ins, then whatever the
     user has put in the models directory.
 
     Built-ins are listed whether or not their weights are on disk -
     "not downloaded yet" is a state the first run resolves, not a
     reason to hide the option.
+
+    ``project_id`` narrows the custom ones to that project's own.
+    A model trained on one project's labels detects that project's
+    classes, so it is noise in every other project's menu - eleven
+    entries for three projects, none of them saying which is which.
+    Built-ins are never narrowed, and neither is a model nobody owns.
     """
     models = [
         ModelInfo(
@@ -113,6 +128,9 @@ def list_models(weights_dir: Path) -> list[ModelInfo]:
             continue
         extra = _read_sidecar(weights_dir, path.stem)
         classes = [str(c) for c in extra.get("classes", [])]
+        owner = extra.get("project_id") or None
+        if project_id is not None and owner is not None and owner != project_id:
+            continue
         models.append(
             ModelInfo(
                 id=path.stem,
@@ -123,6 +141,7 @@ def list_models(weights_dir: Path) -> list[ModelInfo]:
                 bytes=_size(path),
                 note=_describe_classes(classes),
                 classes=classes,
+                project_id=owner,
             )
         )
     return models
@@ -153,6 +172,20 @@ def _describe_classes(classes: list[str]) -> str:
     shown = ", ".join(classes[:6])
     more = f" and {len(classes) - 6} more" if len(classes) > 6 else ""
     return f"Your own model. Detects: {shown}{more}."
+
+
+def write_sidecar(weights_dir: Path, model_id: str, **fields) -> None:
+    """Record what we know about a model, beside the model.
+
+    Merged into whatever is already there rather than replacing it,
+    so recording an owner does not forget the class list.
+    """
+    known = _read_sidecar(weights_dir, model_id)
+    known.update({key: value for key, value in fields.items() if value is not None})
+    try:
+        sidecar_path(weights_dir, model_id).write_text(json.dumps(known, indent=2), encoding="utf-8")
+    except OSError:
+        logger.warning("Could not write the sidecar for %s", model_id, exc_info=True)
 
 
 def get_model(model_id: str, weights_dir: Path) -> ModelInfo:

@@ -38,6 +38,7 @@ const model = (over: Partial<ModelInfo> = {}): ModelInfo => ({
   bytes: 1,
   note: "Fastest.",
   classes: [],
+  project_id: null,
   ...over,
 });
 

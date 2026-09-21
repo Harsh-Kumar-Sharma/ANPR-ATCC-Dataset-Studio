@@ -31,7 +31,7 @@ from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.services.jobs.runner import reconcile_jobs
 from app.db.session import engine
-from app.services import empty_sources, schema_state
+from app.services import empty_sources, model_ownership, schema_state
 from app.services.live_reconcile import reconcile_live_captures
 
 configure_logging()
@@ -100,6 +100,16 @@ async def lifespan(_app: FastAPI):
             )
     except Exception:
         logger.exception("Could not check whether the database is up to date")
+
+    # Models predate the idea of belonging to a project. Their
+    # training runs know which project they were made for; this reads
+    # that back onto them once, so the menus stop showing every
+    # project every model.
+    try:
+        with SessionLocal() as db:
+            model_ownership.backfill(db, get_settings().resolved_model_weights_dir())
+    except Exception:
+        logger.exception("Could not work out which project older models belong to")
 
     yield
 

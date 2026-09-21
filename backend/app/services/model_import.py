@@ -58,7 +58,9 @@ def safe_id(name: str) -> str:
     return cleaned or "model"
 
 
-def import_model(source_path: Path, weights_dir: Path, name: str | None = None) -> ImportedModel:
+def import_model(
+    source_path: Path, weights_dir: Path, name: str | None = None, project_id: str | None = None
+) -> ImportedModel:
     """Take a `.pt` file into the models directory and check it works.
 
     Checked by loading it, which is slow - seconds - and worth every
@@ -89,7 +91,7 @@ def import_model(source_path: Path, weights_dir: Path, name: str | None = None) 
         staging.unlink(missing_ok=True)
         raise ModelImportError(f"Could not copy {source} into the models directory: {exc}") from exc
 
-    _write_sidecar(weights_dir, model_id, label=name or source.stem, classes=classes)
+    _write_sidecar(weights_dir, model_id, label=name or source.stem, classes=classes, project_id=project_id)
     logger.info("Imported model %s from %s (%d classes)", model_id, source, len(classes))
     return ImportedModel(model=get_model(model_id, weights_dir), classes=classes)
 
@@ -161,7 +163,9 @@ def _read_classes(weights: Path) -> list[str]:
     return classes
 
 
-def _write_sidecar(weights_dir: Path, model_id: str, label: str, classes: list[str]) -> None:
+def _write_sidecar(
+    weights_dir: Path, model_id: str, label: str, classes: list[str], project_id: str | None = None
+) -> None:
     """What we learned about the model, beside the model.
 
     Beside rather than inside the database: the models directory is
@@ -170,9 +174,10 @@ def _write_sidecar(weights_dir: Path, model_id: str, label: str, classes: list[s
     our back is a row that lies.
     """
     try:
-        sidecar_path(weights_dir, model_id).write_text(
-            json.dumps({"label": label, "classes": classes}, indent=2), encoding="utf-8"
-        )
+        body = {"label": label, "classes": classes}
+        if project_id is not None:
+            body["project_id"] = project_id
+        sidecar_path(weights_dir, model_id).write_text(json.dumps(body, indent=2), encoding="utf-8")
     except OSError:
         # The model still works without it; the menu just shows the id
         # and the detector keeps every class, which is the safe way to

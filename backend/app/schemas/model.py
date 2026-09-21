@@ -14,6 +14,9 @@ class ModelRead(BaseModel):
     present: bool
     bytes: int
     note: str = ""
+    #: Which project owns this model. Null for a built-in, and for a
+    #: file dropped into the models directory by hand.
+    project_id: str | None = None
     #: What a custom model detects, as its checkpoint reports it.
     classes: list[str] = []
 
@@ -29,3 +32,6 @@ class ModelImportRequest(BaseModel):
     path: str
     #: What to call it. Defaults to the filename.
     name: str | None = None
+    #: The project bringing it in. A model is offered to the project
+    #: it belongs to rather than to every project in the app.
+    project_id: str | None = None

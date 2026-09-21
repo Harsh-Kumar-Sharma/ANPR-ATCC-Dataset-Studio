@@ -62,6 +62,7 @@ const model = (over: Partial<ModelInfo> = {}): ModelInfo => ({
   bytes: 5_544_453,
   note: "Fastest.",
   classes: [],
+  project_id: null,
   ...over,
 });
 
@@ -200,6 +201,7 @@ describe("Bringing your own model in", () => {
     weights_file: "gantry_v3.pt",
     note: "Your own model. Detects: plate, vehicle.",
     classes: ["plate", "vehicle"],
+    project_id: null,
   });
 
   beforeEach(() => {
@@ -234,7 +236,7 @@ describe("Bringing your own model in", () => {
     fireEvent.click(screen.getByRole("button", { name: /^add model$/i }));
 
     await waitFor(() =>
-      expect(importModel).toHaveBeenCalledWith("C:/runs/detect/train/weights/best.pt", ""),
+      expect(importModel).toHaveBeenCalledWith("C:/runs/detect/train/weights/best.pt", "", project.id),
     );
     await waitFor(() => expect(screen.getByLabelText(/^model$/i)).toHaveValue("gantry_v3"));
   });
@@ -248,7 +250,9 @@ describe("Bringing your own model in", () => {
     fireEvent.change(screen.getByLabelText(/name for this model/i), { target: { value: "Gantry v3" } });
     fireEvent.click(screen.getByRole("button", { name: /^add model$/i }));
 
-    await waitFor(() => expect(importModel).toHaveBeenCalledWith("best.pt", "Gantry v3"));
+    // With the project: a model is offered to the project it
+    // belongs to, not to every project in the app.
+    await waitFor(() => expect(importModel).toHaveBeenCalledWith("best.pt", "Gantry v3", project.id));
   });
 
   it("says what was wrong with a file it would not take", async () => {
@@ -299,5 +303,33 @@ describe("Bringing your own model in", () => {
 
     await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("gantry_v3"));
     await waitFor(() => expect(screen.getByLabelText(/^model$/i)).not.toHaveTextContent(/gantry_v3/));
+  });
+});
+
+describe("Models belong to a project", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listSources").mockResolvedValue([source]);
+    vi.spyOn(api, "listModels").mockResolvedValue(both);
+    vi.spyOn(api, "processSource").mockResolvedValue(submitted);
+  });
+
+  it("asks only for the models this project can use", async () => {
+    // Eleven models across three projects, none of the menu saying
+    // which belongs to which, is the complaint this answers.
+    render(<SourcePanel project={project} onProcessed={vi.fn()} onWatch={vi.fn()} />);
+
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledWith(project.id));
+  });
+
+  it("asks again when the project changes", async () => {
+    const { rerender } = render(<SourcePanel project={project} onProcessed={vi.fn()} onWatch={vi.fn()} />);
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledWith(project.id));
+
+    const other = { ...project, id: "p-2", name: "ATCC" };
+    rerender(<SourcePanel project={other} onProcessed={vi.fn()} onWatch={vi.fn()} />);
+
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledWith("p-2"));
   });
 });

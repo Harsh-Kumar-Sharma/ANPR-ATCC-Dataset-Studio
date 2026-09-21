@@ -30,6 +30,10 @@ export interface ModelChoice {
   error: string | null;
   /** Re-read the list, after importing or removing one. */
   reload: () => Promise<void>;
+  /** The project these models are being chosen for. Carried here so
+   *  an import is recorded against it rather than becoming another
+   *  entry in every other project's menu. */
+  projectId: string;
 }
 
 /**
@@ -47,12 +51,12 @@ export function useModelChoice(projectId: string): ModelChoice {
 
   const reload = useCallback(async () => {
     try {
-      setModels(await api.listModels());
+      setModels(await api.listModels(projectId));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     reload();
@@ -70,7 +74,7 @@ export function useModelChoice(projectId: string): ModelChoice {
     writeLastModel(projectId, next);
   }
 
-  return { models, modelId, choose, error, reload };
+  return { models, modelId, choose, error, reload, projectId };
 }
 
 interface Props {
@@ -105,7 +109,7 @@ function ModelPicker({ choice, label = "Model", disabled = false, id = "model", 
     try {
       // Slow on purpose: the backend loads the checkpoint to check it
       // is one, which is seconds rather than instant.
-      const added = await api.importModel(path.trim(), name);
+      const added = await api.importModel(path.trim(), name, choice.projectId);
       await choice.reload();
       choice.choose(added.id);
       setPath("");
