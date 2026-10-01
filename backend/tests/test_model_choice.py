@@ -35,11 +35,21 @@ class _StubDetector:
 # --- the registry -------------------------------------------------------------
 
 
-def test_both_builtin_models_are_offered(tmp_path):
-    """Two, differing in the way that matters: speed against accuracy."""
+def test_the_three_builtin_models_are_offered_fastest_first(tmp_path):
+    """Three, differing in the way that matters: speed against accuracy."""
     ids = [m.id for m in registry.list_models(tmp_path)]
 
-    assert ids == ["yolo26n", "yolo26s"]
+    assert ids == ["yolo26n", "yolo26s", "yolo26m"]
+
+
+def test_medium_is_offered_but_is_not_the_default(tmp_path):
+    """The default is the first built-in, so adding one in the wrong
+    place silently changes the model every new project detects with."""
+    medium = [m for m in registry.list_models(tmp_path) if m.id == "yolo26m"][0]
+
+    assert medium.kind == "builtin"
+    assert medium.weights_file == "yolo26m.pt"
+    assert DEFAULT_MODEL_ID == "yolo26n"
 
 
 def test_a_builtin_is_offered_before_its_weights_are_downloaded(tmp_path):

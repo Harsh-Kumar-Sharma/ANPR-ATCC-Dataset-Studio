@@ -33,9 +33,10 @@ class BuiltinModel:
     note: str
 
 
-#: The two the user asked for, and no more. A longer menu of models
-#: nobody has tried is a worse starting point than two that differ in
-#: the way that matters: speed against accuracy.
+#: The three the user asked for, and no more: one family, differing
+#: only in the way that matters - speed against accuracy - and listed
+#: fastest first. A longer menu of models nobody has tried is a worse
+#: starting point. Nano must stay first: it is the default.
 BUILTIN_MODELS: tuple[BuiltinModel, ...] = (
     BuiltinModel(
         id="yolo26n",
@@ -48,6 +49,12 @@ BUILTIN_MODELS: tuple[BuiltinModel, ...] = (
         label="YOLO26 small",
         weights_file="yolo26s.pt",
         note="Slower, usually finds more. Worth trying on a clip the nano model struggles with.",
+    ),
+    BuiltinModel(
+        id="yolo26m",
+        label="YOLO26 medium",
+        weights_file="yolo26m.pt",
+        note="Slower again and needs more GPU memory, for hard footage - small plates, night, rain.",
     ),
 )
 
