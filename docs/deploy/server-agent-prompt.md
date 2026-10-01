@@ -228,14 +228,51 @@ restarting must not be able to change the schema of a database full of work.
 ## 5. The shape to build
 
 ```
-studio.highwaynetra.in ──► MLFF nginx :80/:443 ──► studio-web (own nginx, not published)
-                                                      ├─► /        static from desktop/dist
-                                                      └─► /api/*   uvicorn (GPU), prefix stripped
+studio.highwaynetra.in ──► MLFF nginx :80 ──┐
+                                            ├──► studio-web (own nginx)
+http://<server-ip>:<port> ──────────────────┘      ├─► /        static from desktop/dist
+                                                   └─► /api/*   uvicorn (GPU), prefix stripped
 ```
 
-Studio does **not** bind :80. MLFF's nginx already owns :80 and :443 and is the
-`default_server`; Studio's own nginx is reached only over the Docker network (and a
-loopback port for your own testing).
+Studio does **not** bind :80. MLFF's nginx already owns it and is the
+`default_server`.
+
+### Three ways in, and auth has to cover all of them
+
+The user wants Studio reachable **by domain, and by IP, and by port** — the last two
+because the domain and its certificate are still settling. So:
+
+- **By domain**: `studio.highwaynetra.in` through MLFF's nginx, as described below.
+- **By IP and port**: publish studio-web's nginx on a host port as well
+  (`0.0.0.0:<port>`, not just loopback — pick one and tell the user which). That
+  port must be opened in the firewall; say so, because it will not work until it is.
+- **By loopback**: `127.0.0.1:<port>` for your own testing before anything is public.
+
+**Basic auth therefore belongs in Studio's own nginx config, not in MLFF's.** Put it
+anywhere else and the IP:port route is an unauthenticated way straight past it. One
+`auth_basic` covering `/` and `/api/` in Studio's own server block covers every route
+in, whichever direction the request arrived from.
+
+### HTTPS is not available yet — do not redirect to it
+
+**Port 443 is closed at the firewall.** The user is opening it tomorrow. This
+changes the order, and getting it wrong makes the site unreachable rather than
+insecure:
+
+- **Do not add an `80 → 443` redirect while 443 is closed.** Every request would be
+  redirected to a port that refuses connections, and Studio would be unreachable by
+  every route at once. This is exactly the trap in "serve HTTPS first" — the
+  reasoning was right, the port is not open yet.
+- **You can still obtain the certificate today.** The HTTP-01 challenge runs over
+  :80, which is open, through MLFF's existing ACME path. Get it, confirm it, and
+  leave it unused.
+- **Serve plain HTTP for now, behind basic auth**, and say plainly in your report
+  and in the README that **the password is travelling in the clear until 443 is
+  open**. The user knows; write it down anyway.
+- **Leave the switch ready.** The README must say exactly what to change tomorrow to
+  turn HTTPS on — ideally one commented-out block or one `include` to uncomment,
+  plus `nginx -t` and a reload — and how to confirm 443 is actually open first
+  (`ss -lptn 'sport = :443'` plus a request from outside the machine).
 
 ### Co-tenancy rules — MLFF is live, and it is not ours
 
@@ -391,7 +428,11 @@ incoming    -> /incoming  (read-only)      (videos the user scp's in - see below
 
 Do not report "deployed" on the strength of a container that started. Check:
 
-- [ ] `curl -sf -u <user>:<pass> http://127.0.0.1/api/health` returns ok.
+- [ ] `curl -sf -u <user>:<pass> http://127.0.0.1:<port>/api/health` returns ok.
+- [ ] **All three routes in work**, each of them with credentials and each of them
+      401 without: the domain, `http://<server-ip>:<port>/`, and loopback. Test the
+      IP route from another machine, not from the server — a port that answers
+      locally may still be shut at the firewall.
 - [ ] `curl -sI http://studio.highwaynetra.in/` reaches **this** server — check the
       DNS actually resolves here (`dig +short studio.highwaynetra.in`) rather than
       assuming it, and that the request lands on your nginx and not some other one.
@@ -401,8 +442,11 @@ Do not report "deployed" on the strength of a container that started. Check:
 - [ ] `http://studio.highwaynetra.in/` serves the UI in a browser, and the console
       shows no failed requests to `127.0.0.1:8000` (that would mean the build picked
       up the default API base).
-- [ ] If TLS is in place: `https://studio.highwaynetra.in/` works, `:80` redirects to
-      it, and `certbot renew --dry-run` passes.
+- [ ] **Nothing redirects to HTTPS yet.** `curl -sI http://studio.highwaynetra.in/`
+      must return 401, not 301 — a redirect to a closed port would make the site
+      unreachable by every route at once.
+- [ ] The certificate was obtained and `certbot renew --dry-run` passes, even though
+      it is not in use yet.
 - [ ] In the container:
       `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`
       prints a CUDA build and `True`.
@@ -439,8 +483,11 @@ Tell the user plainly:
 - Whether the site is behind basic auth, and whether it is on HTTPS or plain HTTP.
   If it is on plain HTTP, say in so many words that the password is sent in the
   clear on every request — do not let that be something the user discovers later.
-- Which port layout you used: the container bound to :80 directly, or published on
-  a loopback port behind a host nginx that was already there.
+- **The three addresses, written out and ready to use**: the domain, the IP and port,
+  and the loopback one. Say which of them need a firewall port opened before they
+  work.
+- **Exactly what to change tomorrow to turn HTTPS on** once 443 is open, in two or
+  three lines the user can follow without you.
 - Where the basic-auth password file lives on this machine, and the command to add
   or change a user.
 - How to put videos on the server, in one sentence.
