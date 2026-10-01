@@ -239,6 +239,23 @@ loopback port for your own testing).
 
 ### Co-tenancy rules — MLFF is live, and it is not ours
 
+**The MLFF dashboard on :80 must keep running throughout.** The user has said this
+directly: it is not to be stopped, restarted or interrupted at any point, not even
+briefly. Studio runs *alongside* it, never instead of it. Reload only, after
+`nginx -t`. If the only way you can see to make something work is to stop MLFF,
+that is not a trade-off to weigh — stop and ask.
+
+Name-based virtual hosting is what makes this safe: MLFF's nginx is the
+`default_server`, so every request that does not match a specific `server_name` —
+the server's IP, any other domain, the LiDAR devices — keeps going to MLFF exactly
+as it does today. The Studio block matches one hostname and nothing else.
+
+**Before you make the change, establish how MLFF is reached today** (the server's
+IP, its own domain, or both) and write it down. After the reload, confirm that exact
+path still works. Note that `studio.highwaynetra.in` currently shows MLFF only
+because it falls through to the default server; that hostname was mapped for Studio,
+so diverting it is the intended change, not a regression.
+
 The change in `/app/mlff-node` is additive: one new server-block file, plus the
 include line in each template that picks it up. Even so, treat every edit there as
 touching production:
@@ -405,6 +422,8 @@ Do not report "deployed" on the strength of a container that started. Check:
 - [ ] **MLFF is untouched**: its app still loads on its own hostname, and a
       LiDAR-shaped request to `http://<server-ip>/api/` still reaches MLFF, not
       Studio. Check this after every nginx reload, not once at the end.
+- [ ] MLFF's dashboard still opens the way the user opens it — by the path you
+      recorded before you touched anything, not by whatever path happens to work.
 - [ ] Stop the Studio stack entirely and confirm MLFF's nginx still starts and
       serves. Studio being down must never take MLFF with it.
 - [ ] `cd backend && pytest -q` and `cd desktop && npm test` both pass.
