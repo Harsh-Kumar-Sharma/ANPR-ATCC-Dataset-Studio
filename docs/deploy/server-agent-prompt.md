@@ -19,6 +19,27 @@ Read this whole brief before you touch anything. The constraints are not
 decoration; several of them exist because of bugs this project has already been
 through.
 
+### What is already true on that machine
+
+Checked on the server, so do not re-derive it — but do re-check anything that looks
+stale, and **tell the user if reality has moved**:
+
+- **DNS**: `studio.highwaynetra.in` resolves to the server's public IP
+  `160.187.179.196`. Confirmed.
+- **GPU**: RTX 5070, 12 GB — **not** the GTX 1650 that this repo's older comments and
+  planning docs assume. See the GPU notes below; this changes what a correct image
+  looks like.
+- **Docker**: Docker and Compose are installed, `nvidia-smi` works.
+- **No nginx or certbot on the host**, so nothing is holding port 80 and the nginx
+  container can bind it directly. Certbot will have to run in a container or be
+  installed — your call, document which.
+- **No `backend/.venv` on that machine**, so the backend test suite has never run
+  there. Create a venv (or run the suite inside the backend image) before you claim
+  the tests pass; "could not run them" is an acceptable report, "they pass" without
+  having run them is not.
+- **Disk**: ~144 GB free, 84% used. Enough to start, not enough to ignore. The
+  workspace volume is what grows.
+
 ## 1. What the app is
 
 - **Backend**: FastAPI + SQLAlchemy + SQLite, in `backend/`. Entry point is
@@ -83,7 +104,9 @@ working around it.
   `ANPR_WORKSPACE_ROOT` to disposable paths **before importing anything from `app`**.
 - **Both suites must still pass when you are done**: `cd backend && pytest -q`
   (~874 tests) and `cd desktop && npm test` (~319 tests). Run them before you start
-  too, so you know what you inherited.
+  too, so you know what you inherited. Neither has ever run on that machine, so a
+  failure you find at the start is probably environmental and **not** yours to fix
+  as part of this task — report it and carry on.
 - **Do not commit secrets** — no RTSP passwords, no basic-auth hashes, no `.env`
   with real values. Ship a `.env.example`.
 
@@ -153,6 +176,24 @@ inside the API process**, and the session registry is process-local. So:
   python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
   ```
   A `+cpu` suffix or `False` means the image is wrong. **Do not ship it.**
+- **`is_available()` is not enough on this machine.** The GPU here is an RTX 5070
+  (Blackwell, compute capability sm_120) — not the GTX 1650 that the comments in
+  `requirements-gpu.txt` and the planning docs were written against. A torch build
+  without sm_120 kernels can still report `cuda.is_available() == True` and then
+  fail, or fall back, the moment real work starts. So check the architecture list
+  and actually run something:
+  ```
+  python -c "import torch; print(torch.__version__); print(torch.cuda.get_arch_list()); \
+             print(torch.cuda.get_device_name(0)); \
+             print((torch.randn(4096,4096,device='cuda')@torch.randn(4096,4096,device='cuda')).sum().item())"
+  ```
+  `sm_120` must appear in the arch list and the matmul must complete. Then run one
+  real detection through the app and watch `nvidia-smi` show the process.
+- The pinned index is `cu132`, i.e. **CUDA 13.2 — newer than the 12.8 that Blackwell
+  needs**, so the existing pin is most likely correct as it stands. Verify rather
+  than change it: if `cu132` genuinely has no sm_120 wheel for your Python version,
+  report that and propose the change, do not silently edit the pins. They are pinned
+  for a reason written at the top of the file.
 - The cu132 index may not publish wheels for every Python version. Check which
   Python versions it has wheels for and pick the base image accordingly — the
   project requires `>=3.11`. Do not assume.
