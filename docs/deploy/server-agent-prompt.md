@@ -7,8 +7,13 @@ Ubuntu GPU server, in a session whose working directory is the repository root.
 
 You are working on **ANPR-ATCC Dataset Studio**, an existing, working application.
 It currently runs as an Electron desktop app on Windows. Your job is to **deploy it
-as a web app on this Ubuntu server on port 8080**, using Docker, nginx and the
-server's dedicated GPU — **without changing how the application behaves**.
+as a web app on this Ubuntu server, served on port 80 at the domain
+`studio.highwaynetra.in`**, using Docker, nginx and the server's dedicated GPU —
+**without changing how the application behaves**.
+
+The domain's DNS already points at this machine. That means **this is a public
+address**: the moment it is up, anyone on the internet can reach it. Section 6.2 is
+therefore not advice, it is part of the job.
 
 Read this whole brief before you touch anything. The constraints are not
 decoration; several of them exist because of bugs this project has already been
@@ -35,7 +40,7 @@ in it (source, run, track, frame candidate, dataset version) mean specific thing
 
 1. A **GPU-enabled backend container** running uvicorn.
 2. An **nginx container** serving the built frontend and proxying the API, listening
-   on **host port 8080**.
+   on **host port 80** with `server_name studio.highwaynetra.in;`.
 3. A **docker compose file** wiring them together with persistent volumes.
 4. A short **deployment README** with the exact commands to start, stop, update and
    back up.
@@ -166,9 +171,16 @@ holds work, back it up with that service's `backup()` first.
 ## 5. The shape to build
 
 ```
-browser :8080 ──► nginx ──► /        static files from desktop/dist
-                        └─► /api/*   uvicorn (GPU container), prefix stripped
+http://studio.highwaynetra.in ──► nginx :80 ──► /        static from desktop/dist
+                                           └─► /api/*   uvicorn (GPU), prefix stripped
 ```
+
+**Before you bind port 80, check whether something already has it**:
+`sudo ss -lptn 'sport = :80'`. If the host already runs its own nginx, Apache or
+Caddy, **do not fight it** — publish the container on a high port (say `127.0.0.1:8080`)
+and add a server block to the host's existing nginx that proxies
+`studio.highwaynetra.in` to it. Either shape is fine; say in your report which one
+you used and why. What must not happen is two things quietly competing for :80.
 
 The frontend is a single page with no client-side router, so nginx needs
 `try_files $uri /index.html;` and nothing cleverer.
@@ -182,11 +194,17 @@ Suggested files:
 ```
 deploy/Dockerfile.backend     CUDA base, python, requirements-gpu.txt FIRST, then pip install -e .
 deploy/Dockerfile.web         node build stage (VITE_API_BASE=/api) -> nginx stage
-deploy/nginx.conf             static + /api proxy, with the streaming rules above
+deploy/nginx.conf             server_name studio.highwaynetra.in, static + /api proxy,
+                              basic auth, the streaming rules above, ACME challenge path
+deploy/.htpasswd.example      shape only - the real one is generated on the server
 deploy/.env.example           ANPR_* and any auth settings, no real values
-deploy/README.md              start / stop / update / back up / restore
+deploy/README.md              start / stop / update / back up / restore / renew the cert
 docker-compose.yml            the two services, volumes, GPU reservation, restart policy
 ```
+
+Add `deploy/.htpasswd` and any `.env` holding real values to `.gitignore` in the
+same commit that creates the examples, so the real file cannot be committed by
+accident later.
 
 Notes for the web image build: `desktop/package.json`'s `build` script runs
 `tsc -b && vite build`, and `desktop/vite.config.ts` includes `vite-plugin-electron`,
@@ -216,10 +234,28 @@ incoming    -> /incoming  (read-only)      (videos the user scp's in - see below
    referenced by that path in the UI. **Do not build an upload endpoint as part of
    this task** — it is separate work the user has not asked for yet. Just make the
    path route exist and say so in the README.
-2. **There is no authentication at all.** Port 8080 on a reachable server means
-   anyone who can reach it can delete projects and datasets. Add HTTP basic auth in
-   nginx, with the password file mounted from outside the image and **not** in git.
-   If the user has said they want it open, say clearly in your report that it is open.
+2. **There is no authentication at all, and this address is public.** The app has no
+   login, no sessions, no roles: every endpoint is open, including the ones that
+   delete projects, sweep frames and remove dataset versions. On a desktop app that
+   was fine — it only ever listened on localhost. On `studio.highwaynetra.in` it
+   means a stranger with the URL can destroy months of labelling.
+
+   So: **put HTTP basic auth in front of everything before the site is reachable**,
+   not after. The password file is mounted from outside the image and never goes in
+   git; ship only a `.htpasswd.example` and the `htpasswd` command to generate the
+   real one.
+
+   **Then add TLS.** Basic auth over plain HTTP sends the password in cleartext on
+   every request, so HTTP + basic auth is barely better than nothing on a public
+   domain. Use certbot (`certbot --nginx`, or the webroot challenge if nginx is in a
+   container), redirect `:80` to `:443`, and leave `.well-known/acme-challenge/`
+   reachable on `:80` so renewals work. If you cannot get a certificate — DNS not
+   propagated, port 443 blocked — then **say so plainly in your report and tell the
+   user the password is travelling in the clear** rather than leaving them to assume
+   otherwise.
+
+   Serving on port 80 is what was asked for and is the right first milestone. TLS is
+   the second, in the same piece of work, not a "later".
 3. **CORS is wide open** (`allow_origins=["*"]` in `backend/app/main.py`) because the
    desktop app is local-first. Once nginx serves the UI and the API on the same
    origin, this stops mattering for normal use — but note it in your report; do not
@@ -246,10 +282,18 @@ incoming    -> /incoming  (read-only)      (videos the user scp's in - see below
 
 Do not report "deployed" on the strength of a container that started. Check:
 
-- [ ] `curl -sf http://localhost:8080/api/health` returns ok.
-- [ ] `http://localhost:8080/` serves the UI, and the browser console shows no
-      failed requests to `127.0.0.1:8000` (that would mean the build picked up the
-      default API base).
+- [ ] `curl -sf -u <user>:<pass> http://127.0.0.1/api/health` returns ok.
+- [ ] `curl -sI http://studio.highwaynetra.in/` reaches **this** server — check the
+      DNS actually resolves here (`dig +short studio.highwaynetra.in`) rather than
+      assuming it, and that the request lands on your nginx and not some other one.
+- [ ] Without credentials, `curl -sI http://studio.highwaynetra.in/` returns **401**.
+      Check a few API paths too, not just `/`: a basic-auth block that covers the
+      static files and leaves `/api/` open is worse than none, because it looks safe.
+- [ ] `http://studio.highwaynetra.in/` serves the UI in a browser, and the console
+      shows no failed requests to `127.0.0.1:8000` (that would mean the build picked
+      up the default API base).
+- [ ] If TLS is in place: `https://studio.highwaynetra.in/` works, `:80` redirects to
+      it, and `certbot renew --dry-run` passes.
 - [ ] In the container:
       `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`
       prints a CUDA build and `True`.
@@ -274,7 +318,13 @@ Tell the user plainly:
 - Each item in section 7: passed, failed, or not checked and why.
 - Whether the GPU is genuinely being used, with the output you based that on.
 - Whether RTSP cameras are reachable from this server.
-- Whether the deployment is behind authentication or open.
+- Whether the site is behind basic auth, and whether it is on HTTPS or plain HTTP.
+  If it is on plain HTTP, say in so many words that the password is sent in the
+  clear on every request — do not let that be something the user discovers later.
+- Which port layout you used: the container bound to :80 directly, or published on
+  a loopback port behind a host nginx that was already there.
+- Where the basic-auth password file lives on this machine, and the command to add
+  or change a user.
 - How to put videos on the server, in one sentence.
 - Anything you found that this brief got wrong. It was written by reading the code
   on a Windows machine, not by running it here — if reality differs, reality wins,
