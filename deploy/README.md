@@ -179,7 +179,7 @@ MLFF's nginx re-reads it every six hours.
 
 ## The MLFF side
 
-What was added to `/app/mlff-node` (committed there):
+What was added to `/app/mlff-node` (to be committed in MLFF's repo):
 
 - `nginx/sites/studio.conf`: `server_name studio.highwaynetra.in` on
   :80, proxying to `http://172.18.0.1:8090` (MLFF's Docker network

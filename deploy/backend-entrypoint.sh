@@ -13,6 +13,10 @@ DATA_DIR="${ANPR_DATA_DIR:-/app/backend/data}"
 mkdir -p "$DATA_DIR" "${ANPR_WORKSPACE_ROOT:-$DATA_DIR/workspace}" \
          "${ANPR_MODEL_WEIGHTS_DIR:-$DATA_DIR/models}" "${ANPR_JOBS_DIR:-$DATA_DIR/jobs}" \
          "${HOME:-$DATA_DIR/home}"
+# Ultralytics only uses YOLO_CONFIG_DIR if it already exists and is
+# writable; otherwise it silently falls back to /tmp.
+[ -n "${YOLO_CONFIG_DIR:-}" ] && mkdir -p "$YOLO_CONFIG_DIR"
+[ -n "${MPLCONFIGDIR:-}" ] && mkdir -p "$MPLCONFIGDIR"
 
 if [ -z "${ANPR_DATABASE_URL:-}" ] && [ ! -e "$DATA_DIR/app.db" ]; then
   echo "entrypoint: no database at $DATA_DIR/app.db - creating it (alembic upgrade head)"
