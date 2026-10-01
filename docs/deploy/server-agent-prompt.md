@@ -30,9 +30,15 @@ stale, and **tell the user if reality has moved**:
   planning docs assume. See the GPU notes below; this changes what a correct image
   looks like.
 - **Docker**: Docker and Compose are installed, `nvidia-smi` works.
-- **No nginx or certbot on the host**, so nothing is holding port 80 and the nginx
-  container can bind it directly. Certbot will have to run in a container or be
-  installed — your call, document which.
+- **Ports 80 and 443 belong to another live system.** `/app/mlff-node` runs its own
+  nginx, certbot, api-server and MySQL in containers. Its nginx is the
+  `default_server`, which is why `studio.highwaynetra.in` currently shows the MLFF
+  app. Studio cannot bind :80. See the co-tenancy rules below — this is the part of
+  the job with the most to lose.
+- **No nginx or certbot on the host itself** — MLFF's are inside containers, and its
+  `conf.d` is regenerated from `/app/mlff-node/nginx/*.template` every six hours.
+  Anything written straight into the generated config is gone within six hours;
+  anything added to the templates survives.
 - **No `backend/.venv` on that machine**, so the backend test suite has never run
   there. Create a venv (or run the suite inside the backend image) before you claim
   the tests pass; "could not run them" is an acceptable report, "they pass" without
@@ -54,8 +60,10 @@ stale, and **tell the user if reality has moved**:
   `rapidocr` + `onnxruntime` for plate OCR. Torch is pinned to `2.14.0` /
   torchvision `0.29.0` in `backend/pyproject.toml`.
 
-Read `CONTEXT.md` at the repo root first — it is the domain model, and the words
-in it (source, run, track, frame candidate, dataset version) mean specific things.
+The words in this project mean specific things — source, processing run, track,
+frame candidate, dataset version. `CLAUDE.md` points at a `CONTEXT.md` for them, but
+**that file has never existed**; the nearest thing is `docs/agents/domain.md` plus
+the module docstrings, which are unusually thorough. Do not go looking for it.
 
 ## 2. What you must deliver
 
@@ -209,19 +217,53 @@ shows a banner when the database is behind. For a **fresh** deployment with no d
 `alembic upgrade head` from `backend/` is the right call. For a database that already
 holds work, back it up with that service's `backup()` first.
 
+**If you run the migration from the container's entrypoint, make it conditional.**
+An entrypoint that migrates on every start is fine today, when the database is
+empty, and is a liability the first time it restarts on top of real labelling —
+nobody intends an unattended schema change at 3am, and there is no backup in that
+path. Either migrate only when the database file does not exist yet, or put it
+behind an env var that is off by default and documented in the README. The container
+restarting must not be able to change the schema of a database full of work.
+
 ## 5. The shape to build
 
 ```
-http://studio.highwaynetra.in ──► nginx :80 ──► /        static from desktop/dist
-                                           └─► /api/*   uvicorn (GPU), prefix stripped
+studio.highwaynetra.in ──► MLFF nginx :80/:443 ──► studio-web (own nginx, not published)
+                                                      ├─► /        static from desktop/dist
+                                                      └─► /api/*   uvicorn (GPU), prefix stripped
 ```
 
-**Before you bind port 80, check whether something already has it**:
-`sudo ss -lptn 'sport = :80'`. If the host already runs its own nginx, Apache or
-Caddy, **do not fight it** — publish the container on a high port (say `127.0.0.1:8080`)
-and add a server block to the host's existing nginx that proxies
-`studio.highwaynetra.in` to it. Either shape is fine; say in your report which one
-you used and why. What must not happen is two things quietly competing for :80.
+Studio does **not** bind :80. MLFF's nginx already owns :80 and :443 and is the
+`default_server`; Studio's own nginx is reached only over the Docker network (and a
+loopback port for your own testing).
+
+### Co-tenancy rules — MLFF is live, and it is not ours
+
+The change in `/app/mlff-node` is additive: one new server-block file, plus the
+include line in each template that picks it up. Even so, treat every edit there as
+touching production:
+
+- **The Studio server block must never be `default_server`**, and must match only
+  `server_name studio.highwaynetra.in;`. MLFF's LAN LiDAR devices post to
+  `http://<ip>/api/` with no matching Host header, so they land on the default
+  server. If Studio ever becomes the default — or matches on IP — those posts start
+  hitting a FastAPI that knows nothing about them, and a live ingestion path breaks
+  silently. **This is the single most dangerous thing in this task.**
+- **`/api/` is a path both systems use.** Studio's `/api/` lives inside Studio's own
+  server block only. Never add an `/api/` location to MLFF's default server.
+- **After every reload, prove MLFF still works** before you call anything done:
+  `curl -i http://<server-ip>/api/...` must still reach MLFF, and the MLFF app must
+  still load on its own hostname. `nginx -t` passing only means the config parses.
+- **Reload, never restart.** `nginx -s reload` after `nginx -t`, through MLFF's own
+  script if it has one. Do not touch MLFF's compose file, containers or MySQL.
+- **Keep a copy of the server block in this repo** (`deploy/mlff/studio.conf`) with a
+  comment saying where it is installed. The config lives in another repo that will
+  be pulled and redeployed by people who do not know Studio exists; when it
+  disappears, the copy here is how it comes back.
+- **Know the failure mode and say it out loud**: if the MLFF templates are ever
+  replaced wholesale, the include lines go, and Studio becomes unreachable while
+  MLFF carries on. That is the right way round, and the README should say what to
+  re-add.
 
 The frontend is a single page with no client-side router, so nginx needs
 `try_files $uri /index.html;` and nothing cleverer.
@@ -314,10 +356,19 @@ incoming    -> /incoming  (read-only)      (videos the user scp's in - see below
    `backend/.venv/`, `desktop/node_modules/`, `desktop/dist*/`, `desktop/release/`
    and `.git/`. Check before building: `backend/data/` on a working machine can be
    many gigabytes, and without a `.dockerignore` it all goes into the build context.
-7. **Disk.** Frames and exports grow fast; the app already refuses to start a run
-   when free space is low (`backend/app/services/run_estimate.py`). Make sure the
-   workspace volume is on the big disk, not the root filesystem, and say in the
-   README how to check.
+7. **Disk, and it is shared with MLFF.** There is one filesystem on this machine, so
+   Studio's workspace and MLFF's MySQL fill the same 144 GB. Frames and exports grow
+   fast, and the app's own floor is **1 GB**
+   (`SPACE_FLOOR_BYTES` in `backend/app/services/run_estimate.py`) — written for a
+   laptop where filling the disk only hurt the person doing it. Here, Studio
+   happily eating down to 1 GB free would take a live database with it.
+
+   You cannot change that constant as part of this task — it is application code.
+   What you can do: keep the bind mounts somewhere you can watch, put the `df` check
+   and the numbers in the README, and **tell the user plainly** that the two systems
+   share a disk and that Studio's built-in floor is too low to protect MLFF. If
+   there is a second disk or a way to set a quota, say so; that is their call to
+   make, not yours to implement unasked.
 
 ## 7. Verify before you report success
 
@@ -348,7 +399,14 @@ Do not report "deployed" on the strength of a container that started. Check:
       opens and `data.yaml` inside has **no** `path:` line.
 - [ ] If an RTSP camera is reachable: start a live capture and confirm the preview
       updates smoothly (this is the `proxy_buffering off` check).
-- [ ] `docker compose restart` and confirm the app comes back with its data intact.
+- [ ] `docker compose restart` and confirm the app comes back with its data intact —
+      and that the restart did **not** run a migration against a database with data
+      in it.
+- [ ] **MLFF is untouched**: its app still loads on its own hostname, and a
+      LiDAR-shaped request to `http://<server-ip>/api/` still reaches MLFF, not
+      Studio. Check this after every nginx reload, not once at the end.
+- [ ] Stop the Studio stack entirely and confirm MLFF's nginx still starts and
+      serves. Studio being down must never take MLFF with it.
 - [ ] `cd backend && pytest -q` and `cd desktop && npm test` both pass.
 
 ## 8. Report back
