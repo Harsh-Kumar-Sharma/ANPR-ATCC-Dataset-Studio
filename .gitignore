@@ -25,3 +25,8 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# Deployment secrets - generated on the server, never committed.
+# Templates: deploy/.htpasswd.example, deploy/.env.example
+deploy/.htpasswd
+deploy/.env

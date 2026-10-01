@@ -1,0 +1,27 @@
+# HTTPS for studio.highwaynetra.in. DISABLED until port 443 is open at
+# the firewall. INSTALLED AT: /app/mlff-node/nginx/sites/studio-https.conf.disabled
+#
+# HTTPS SWITCH, step 1 of 2: rename to studio-https.conf (so the
+# sites/*.conf include loads it). Step 2 is the redirect in studio.conf.
+# Full procedure, including how to confirm 443 is open first, in
+# deploy/README.md.
+#
+# The certificate was issued through MLFF's ACME path and is renewed by
+# MLFF's certbot container; MLFF's nginx re-reads it every six hours.
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name studio.highwaynetra.in;
+
+    ssl_certificate /etc/letsencrypt/live/studio.highwaynetra.in/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/studio.highwaynetra.in/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    location / {
+        include /etc/nginx/mlff/sites/studio-proxy.inc;
+    }
+}

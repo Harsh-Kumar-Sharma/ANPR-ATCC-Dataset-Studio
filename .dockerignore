@@ -1,0 +1,24 @@
+# Keep the build context small. backend/data/ on a working machine can be
+# many gigabytes of frames and exports; none of it belongs in an image.
+.git/
+.claude/
+.scratch/
+**/__pycache__/
+*.pyc
+
+backend/data/
+backend/runs/
+backend/.venv/
+backend/build/
+backend/dist/
+backend/*.egg-info/
+backend/.env
+
+desktop/node_modules/
+desktop/dist/
+desktop/dist-electron/
+desktop/release/
+
+deploy/.htpasswd
+deploy/.env
+.env

@@ -1,0 +1,90 @@
+# GPU backend: FastAPI + the detached job workers, in one container.
+#
+# Workers are spawned by the API as child processes
+# (app/services/jobs/runner.py) and must see the same database,
+# workspace, models and jobs directories - so they live here too.
+#
+# No CUDA base image: the cu132 torch wheels bundle the CUDA runtime
+# they need. The host driver comes in through the NVIDIA container
+# runtime (see the GPU reservation in docker-compose.yml).
+#
+# Build context is the repo root.
+
+# --- dependencies -----------------------------------------------------
+# Python 3.14 matches the Windows dev environment, and the cu132 index
+# publishes torch 2.14.0 / torchvision 0.29.0 wheels for cp314.
+FROM python:3.14-slim AS deps
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN python -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
+WORKDIR /app/backend
+
+# The CUDA build of torch FIRST. Those wheels are not on PyPI; installing
+# the project alone resolves the "+cpu" wheel and everything silently
+# runs on the CPU. See the header of requirements-gpu.txt.
+COPY backend/requirements-gpu.txt .
+RUN pip install -r requirements-gpu.txt
+
+# The rest of the dependencies, from pyproject alone so this layer is
+# cached across code changes. A stub package lets pip resolve the
+# project without the real source.
+COPY backend/pyproject.toml .
+RUN mkdir app && touch app/__init__.py \
+ && pip install ".[dev]" \
+ && pip uninstall -y anpr-atcc-backend \
+ && rm -rf app build *.egg-info
+
+# ultralytics depends on the GUI build of OpenCV. Both install the same
+# cv2 module, so the GUI one is swapped back out for the headless one
+# the project actually declares - no X11/libGL in a server image.
+RUN pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null; \
+    pip install --force-reinstall --no-deps \
+      "opencv-python-headless==$(pip show opencv-python-headless | sed -n 's/^Version: //p')"
+
+# Refuse to produce an image with a CPU-only torch.
+RUN python -c "import torch, sys; v = torch.__version__; print('torch', v); sys.exit(0 if '+cu' in v else 'torch is not a CUDA build: ' + v)"
+
+# --- runtime ----------------------------------------------------------
+FROM python:3.14-slim
+
+# libgomp: OpenMP for onnxruntime/torch CPU paths. sqlite3: the CLI, for
+# inspecting the database from inside the container.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgomp1 libglib2.0-0 sqlite3 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=deps /opt/venv /opt/venv
+
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # Settings defaults are relative to the backend directory; these are
+    # the same places, spelled out so the volume mounts are obvious.
+    ANPR_ENVIRONMENT=production \
+    ANPR_DATA_DIR=/app/backend/data \
+    ANPR_WORKSPACE_ROOT=/app/backend/data/workspace \
+    ANPR_MODEL_WEIGHTS_DIR=/app/backend/data/models \
+    ANPR_JOBS_DIR=/app/backend/data/jobs \
+    # The container runs as an unprivileged host uid with no home
+    # directory; give ultralytics and matplotlib somewhere to write.
+    HOME=/app/backend/data/home \
+    YOLO_CONFIG_DIR=/app/backend/data/home/ultralytics \
+    MPLCONFIGDIR=/app/backend/data/home/matplotlib
+
+WORKDIR /app/backend
+COPY backend/ .
+RUN pip install --no-deps -e . && chmod -R a+rX /app/backend
+
+COPY deploy/backend-entrypoint.sh /usr/local/bin/backend-entrypoint
+RUN chmod 755 /usr/local/bin/backend-entrypoint
+
+EXPOSE 8000
+ENTRYPOINT ["backend-entrypoint"]
+# ONE uvicorn process, no --reload: startup reconciles jobs and live
+# captures, and several processes doing that against one SQLite file is
+# asking for trouble.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

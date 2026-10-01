@@ -1,0 +1,75 @@
+# ANPR-ATCC Dataset Studio as a web app. See deploy/README.md.
+#
+# Two containers:
+#   backend  FastAPI + detached job workers, on the GPU. No host port.
+#   web      nginx: the built UI, the /api proxy, and basic auth for both.
+#
+# This server also runs MLFF (/app/mlff-node), which owns :80/:443.
+# Studio does not touch those ports; MLFF's nginx proxies
+# studio.highwaynetra.in to the web container's published port (see
+# deploy/mlff/). The two stacks share no Docker network, so either can
+# be brought up or down without the other noticing.
+
+name: studio
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    image: studio-backend:latest
+    container_name: studio-backend
+    restart: unless-stopped
+    # The host user, so files in the data directory stay manageable
+    # without root. Override STUDIO_UID/STUDIO_GID in deploy/.env.
+    user: "${STUDIO_UID:-1000}:${STUDIO_GID:-1000}"
+    env_file:
+      - path: deploy/.env
+        required: false
+    environment:
+      ANPR_DEVICE: ${ANPR_DEVICE:-auto}
+    volumes:
+      # Database, workspace (frames, crops, exports - the big one),
+      # model weights and job logs: all under one directory.
+      - ${STUDIO_DATA_DIR:-/app/studio/data}:/app/backend/data
+      # Videos copied onto the server, imported by path in the UI.
+      - ${STUDIO_INCOMING_DIR:-/app/studio/incoming}:/incoming:ro
+    # PyTorch dataloader workers (training) share tensors through /dev/shm;
+    # Docker's 64 MB default fails as soon as training starts.
+    shm_size: "4gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    image: studio-web:latest
+    container_name: studio-web
+    restart: unless-stopped
+    ports:
+      # http://<server-ip>:8090/ and http://127.0.0.1:8090/ - and the port
+      # MLFF's nginx proxies the domain to. Basic auth covers all three.
+      - "${STUDIO_HTTP_PORT:-8090}:80"
+    volumes:
+      # Generated on the server, never committed. See deploy/README.md.
+      - ./deploy/.htpasswd:/etc/nginx/htpasswd/.htpasswd:ro
+    depends_on:
+      - backend
+    logging: *logging
