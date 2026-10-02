@@ -8,7 +8,8 @@ interface Props {
   selectedFrameId: string | null;
   /** Open one for labelling. */
   onOpen: (frame: Frame) => void;
-  onClose: () => void;
+  /** Offered as an X when the sheet is a view of its own. */
+  onClose?: () => void;
 }
 
 /** Where the sheet was scrolled to when it was last closed.
@@ -65,9 +66,11 @@ function FrameGrid({ frames, selectedFrameId, onOpen, onClose }: Props) {
     <div className="frame-grid">
       <div className="player-header">
         <h2>All frames ({frames.length})</h2>
-        <button className="btn-ghost" onClick={onClose} title="Back to the frame being labelled">
-          <IconX />
-        </button>
+        {onClose && (
+          <button className="btn-ghost" onClick={onClose} title="Back to the frame being labelled">
+            <IconX />
+          </button>
+        )}
       </div>
 
       {frames.length === 0 ? (

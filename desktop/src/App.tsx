@@ -24,13 +24,15 @@ import SourcePanel from "./components/SourcePanel";
 import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
 import VideoPlayer from "./components/VideoPlayer";
-import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconCheck, IconFilm, IconInbox } from "./Icons";
+import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconCheck, IconFilm, IconFolder } from "./Icons";
+import { sourceLabel } from "./sourceLabel";
 import { useFrameQueue } from "./useFrameQueue";
 import { useJobs } from "./useJobs";
 import type { Frame, Project, Source, Track } from "./types";
 
 type Tab = "workflow" | "label" | "live" | "dataset" | "insights";
-type MainView = "review" | "player" | "live" | "label" | "grid";
+/** What the open module is showing: its own page, or one item in it. */
+type MainView = "home" | "review" | "player" | "label";
 
 const TABS: { id: Tab; label: string; icon: JSX.Element }[] = [
   { id: "workflow", label: "Sources", icon: <IconFilm /> },
@@ -45,7 +47,7 @@ function Studio() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("workflow");
-  const [mainView, setMainView] = useState<MainView>("review");
+  const [mainView, setMainView] = useState<MainView>("home");
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const [labelFrame, setLabelFrame] = useState<Frame | null>(null);
@@ -96,7 +98,7 @@ function Studio() {
     setTracks([]);
     setSelectedTrackId(null);
     setTab("workflow");
-    setMainView("review");
+    setMainView("home");
     setPlayerSource(null);
     setLiveRunId(null);
     setLabelFrame(null);
@@ -121,7 +123,7 @@ function Studio() {
     setLabelFrame(null);
     setLabelDirty(false);
     setTab("label");
-    setMainView("review");
+    setMainView("home");
   }
 
   /** A source was removed, taking its tracks and frames with it.
@@ -135,12 +137,12 @@ function Studio() {
     setQueueVersion((v) => v + 1);
     if (playerSource?.id === sourceId) {
       setPlayerSource(null);
-      setMainView("review");
+      setMainView("home");
     }
     if (labelFrame?.source_id === sourceId) {
       setLabelFrame(null);
       setLabelDirty(false);
-      setMainView("review");
+      setMainView("home");
     }
     if (labelSourceId === sourceId) setLabelSourceId(undefined);
   }
@@ -185,7 +187,6 @@ function Studio() {
 
   function showLivePreview(runId: string) {
     setLiveRunId(runId);
-    setMainView("live");
   }
 
   function handleNavigateTrack(direction: 1 | -1) {
@@ -199,33 +200,104 @@ function Studio() {
 
   if (!project) {
     return (
-      <>
+      <div className="app-shell">
         <SchemaBanner />
-        <header className="picker-topbar">
-          <UserMenu />
-        </header>
-        <ProjectPicker onSelect={handleSelectProject} />
-      </>
+        <AppHeader />
+        <div className="app-shell__body app-shell__body--picker">
+          <ProjectPicker onSelect={handleSelectProject} />
+        </div>
+      </div>
     );
   }
 
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId) ?? null;
+  const moduleInfo = TABS.find((t) => t.id === tab)!;
 
-  let main: JSX.Element;
-  if (mainView === "player" && playerSource) {
-    main = (
-      <VideoPlayer
-        key={playerSource.id}
-        project={project}
-        source={playerSource}
-        tracks={tracks}
-        onSelectTrack={selectTrack}
-        onClose={() => setMainView("review")}
-      />
+  /** A step into one item of a module, with the way back out. */
+  function crumb(label: string, onBack: () => void) {
+    return (
+      <div className="module-crumb">
+        <button className="back-link" onClick={onBack}>
+          <IconArrowLeft /> {moduleInfo.label}
+        </button>
+        <span className="module-crumb__sep">/</span>
+        <span className="module-crumb__here">{label}</span>
+      </div>
     );
-  } else if (mainView === "label" && labelFrame) {
-    main = (
+  }
+
+  let page: JSX.Element;
+  if (tab === "workflow" && mainView === "player" && playerSource) {
+    page = (
       <>
+        {crumb(sourceLabel(playerSource), () => setMainView("home"))}
+        <VideoPlayer
+          key={playerSource.id}
+          project={project}
+          source={playerSource}
+          tracks={tracks}
+          onSelectTrack={selectTrack}
+          onClose={() => setMainView("home")}
+        />
+      </>
+    );
+  } else if (tab === "workflow" && mainView === "review" && selectedTrack) {
+    page = (
+      <>
+        {crumb(`Track ${selectedTrack.tracker_track_id}`, () => setMainView("home"))}
+        <TrackReview
+          key={selectedTrack.id}
+          project={project}
+          track={selectedTrack}
+          onReviewed={handleReviewed}
+          onNavigateTrack={handleNavigateTrack}
+          classesVersion={classesVersion}
+        />
+      </>
+    );
+  } else if (tab === "workflow") {
+    page = (
+      <ModulePage title="Sources" subtitle="Bring in footage, run detection and review what it found.">
+        <div className="module-grid module-grid--sources">
+          <section className="card module-card">
+            <SourcePanel
+              project={project}
+              onProcessed={refreshJobs}
+              onWatch={watchSource}
+              onLabel={labelSource}
+              onRemoved={handleSourceRemoved}
+            />
+          </section>
+          <div className="module-stack">
+            <section className="card module-card">
+              <JobsPanel
+                jobs={jobs}
+                error={jobsError}
+                onCancel={cancelJob}
+                onDismiss={dismissJob}
+                onClearFinished={clearFinishedJobs}
+              />
+            </section>
+            <section className="card module-card">
+              <TrackBrowser
+                tracks={tracks}
+                selectedTrackId={selectedTrackId}
+                onSelect={selectTrack}
+                project={project}
+                onSwept={() => {
+                  refreshTracks();
+                  setQueueVersion((v) => v + 1);
+                }}
+              />
+            </section>
+          </div>
+        </div>
+      </ModulePage>
+    );
+  } else if (tab === "label" && mainView === "label" && labelFrame) {
+    page = (
+      <>
+        {crumb(`Frame ${labelFrame.frame_index}`, () => setMainView("home"))}
         <LabelCanvas
           key={labelFrame.id}
           project={project}
@@ -248,138 +320,156 @@ function Studio() {
             setQueueVersion((v) => v + 1);
           }}
         />
-        {/* Under the image, where the work is - not only in the
-            sidebar the user has to look away to reach. */}
-        <FrameNav queue={frameQueue} onShowGrid={() => setMainView("grid")} />
+        {/* Under the image, where the work is. */}
+        <FrameNav queue={frameQueue} onShowGrid={() => setMainView("home")} />
       </>
     );
-  } else if (mainView === "grid") {
-    main = (
-      <FrameGrid
-        frames={frameQueue.frames}
-        selectedFrameId={labelFrame?.id ?? null}
-        onOpen={(frame) => {
-          setTab("label");
-          labelFrameNow(frame);
-        }}
-        onClose={() => setMainView(labelFrame ? "label" : "review")}
-      />
+  } else if (tab === "label") {
+    page = (
+      <ModulePage title="Label" subtitle="Pick a frame and draw the boxes. Your place is remembered.">
+        <div className="module-grid module-grid--label">
+          <section className="card module-card">
+            <LabelQueue queue={frameQueue} selectedFrameId={labelFrame?.id ?? null} project={project} />
+          </section>
+          <section className="card module-card">
+            <FrameGrid
+              frames={frameQueue.frames}
+              selectedFrameId={labelFrame?.id ?? null}
+              onOpen={(frame) => frameQueue.open(frame)}
+            />
+          </section>
+        </div>
+      </ModulePage>
     );
-  } else if (mainView === "live" && liveRunId) {
-    main = <LivePreview key={liveRunId} runId={liveRunId} onClose={() => setMainView("review")} />;
-  } else if (selectedTrack) {
-    main = (
-      <TrackReview
-        key={selectedTrack.id}
-        project={project}
-        track={selectedTrack}
-        onReviewed={handleReviewed}
-        onNavigateTrack={handleNavigateTrack}
-        classesVersion={classesVersion}
-      />
+  } else if (tab === "live") {
+    page = (
+      <ModulePage title="Live" subtitle="Watch an RTSP camera with detection, and keep what it sees.">
+        <div className="module-grid module-grid--live">
+          <section className="card module-card">
+            <RtspPanel project={project} onSessionEnded={refreshTracks} onShowPreview={showLivePreview} />
+          </section>
+          <section className="card module-card">
+            {liveRunId ? (
+              <LivePreview key={liveRunId} runId={liveRunId} onClose={() => setLiveRunId(null)} />
+            ) : (
+              <p className="module-empty">
+                <IconBroadcast /> The live preview appears here once a capture starts.
+              </p>
+            )}
+          </section>
+        </div>
+      </ModulePage>
+    );
+  } else if (tab === "dataset") {
+    page = (
+      <ModulePage title="Dataset" subtitle="Export versions, train models, and manage classes and disk.">
+        <div className="module-grid module-grid--cards">
+          <section className="card module-card">
+            <DatasetPanel project={project} />
+          </section>
+          <section className="card module-card">
+            <TrainingPanel project={project} jobs={jobs} refreshKey={queueVersion} />
+          </section>
+          <section className="card module-card">
+            <ClassSchemaEditor project={project} onClassesChanged={() => setClassesVersion((v) => v + 1)} />
+          </section>
+          <section className="card module-card">
+            <StoragePanel project={project} refreshKey={queueVersion} />
+          </section>
+        </div>
+      </ModulePage>
     );
   } else {
-    main = (
-      <div className="placeholder">
-        <IconInbox />
-        <p>Select a track to review it, or press Watch on a source to play it with detection boxes.</p>
-      </div>
+    page = (
+      <ModulePage title="Insights" subtitle="How the labels balance, how the model did, and what to look at next.">
+        <div className="module-grid module-grid--cards">
+          <section className="card module-card">
+            <LabelBalancePanel project={project} refreshKey={queueVersion} />
+          </section>
+          <section className="card module-card">
+            <EvaluationPanel tracks={tracks} />
+          </section>
+          <section className="card module-card">
+            <ActiveLearningPanel
+              project={project}
+              tracks={tracks}
+              onSelectTrack={selectTrack}
+              onSelectFrame={selectFrameById}
+            />
+          </section>
+        </div>
+      </ModulePage>
     );
   }
 
   return (
-    <div className="app-layout">
+    <div className="app-shell">
       {/* Above everything: a database behind the code breaks
           whichever panel happens to use the newest table, and the
           message there cannot explain why. */}
       <SchemaBanner onUpgraded={() => setQueueVersion((v) => v + 1)} />
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <div className="sidebar-header__row">
-            <button className="back-link" onClick={() => handleSelectProject(null)}>
-              <IconArrowLeft /> Projects
-            </button>
-            <UserMenu align="left" />
-          </div>
-          <h2>{project.name}</h2>
-        </div>
-
-        <nav className="tab-bar">
-          {TABS.map((t) => (
-            <button key={t.id} className={tab === t.id ? "selected" : ""} onClick={() => setTab(t.id)}>
-              {t.icon}
-              {t.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-content">
-          {tab === "workflow" && (
-            <>
-              <SourcePanel
-                project={project}
-                onProcessed={refreshJobs}
-                onWatch={watchSource}
-                onLabel={labelSource}
-                onRemoved={handleSourceRemoved}
-              />
-              <JobsPanel
-                jobs={jobs}
-                error={jobsError}
-                onCancel={cancelJob}
-                onDismiss={dismissJob}
-                onClearFinished={clearFinishedJobs}
-              />
-              <TrackBrowser
-                tracks={tracks}
-                selectedTrackId={selectedTrackId}
-                onSelect={selectTrack}
-                project={project}
-                onSwept={() => {
-                  refreshTracks();
-                  setQueueVersion((v) => v + 1);
-                }}
-              />
-            </>
-          )}
-          {tab === "label" && (
-            <LabelQueue
-              queue={frameQueue}
-              selectedFrameId={labelFrame?.id ?? null}
-              project={project}
-              onBrowseAll={() => setMainView("grid")}
-            />
-          )}
-          {tab === "live" && (
-            <RtspPanel project={project} onSessionEnded={refreshTracks} onShowPreview={showLivePreview} />
-          )}
-          {tab === "dataset" && (
-            <>
-              <DatasetPanel project={project} />
-              <TrainingPanel project={project} jobs={jobs} refreshKey={queueVersion} />
-              <StoragePanel project={project} refreshKey={queueVersion} />
-              <ClassSchemaEditor project={project} onClassesChanged={() => setClassesVersion((v) => v + 1)} />
-            </>
-          )}
-          {tab === "insights" && (
-            <>
-              <LabelBalancePanel project={project} refreshKey={queueVersion} />
-              <EvaluationPanel tracks={tracks} />
-              <ActiveLearningPanel
-                project={project}
-                tracks={tracks}
-                onSelectTrack={selectTrack}
-                onSelectFrame={selectFrameById}
-              />
-            </>
-          )}
-        </div>
-      </aside>
-      <main className="main-panel">
-        <JobIndicator activeJobs={activeJobs} />
-        {main}
-      </main>
+      <AppHeader project={project} onProjects={() => handleSelectProject(null)} />
+      <div className="app-shell__body">
+        <aside className="sidebar">
+          <nav className="module-nav" aria-label="Modules">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                className={tab === t.id ? "selected" : ""}
+                aria-current={tab === t.id ? "page" : undefined}
+                onClick={() => setTab(t.id)}
+              >
+                {t.icon}
+                <span>{t.label}</span>
+              </button>
+            ))}
+          </nav>
+        </aside>
+        <main className="main-panel">
+          <JobIndicator activeJobs={activeJobs} />
+          <div className="main-panel__page">{page}</div>
+        </main>
+      </div>
     </div>
+  );
+}
+
+function ModulePage({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <div className="module-page">
+      <div className="module-page__head">
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** The bar across the top: where you are, and who you are. */
+function AppHeader({ project, onProjects }: { project?: Project; onProjects?: () => void }) {
+  return (
+    <header className="app-header">
+      <div className="app-header__left">
+        <span className="brand-icon brand-icon--sm" aria-hidden="true">
+          <IconFolder />
+        </span>
+        <span className="app-header__brand">ANPR + ATCC Dataset Studio</span>
+        {project && onProjects && (
+          <span className="app-header__trail">
+            <span className="app-header__sep">/</span>
+            <button className="app-header__link" onClick={onProjects} title="Back to all projects">
+              Projects
+            </button>
+            <span className="app-header__sep">/</span>
+            <span className="app-header__project" title={project.name}>
+              {project.name}
+            </span>
+          </span>
+        )}
+      </div>
+      <UserMenu />
+    </header>
   );
 }
 

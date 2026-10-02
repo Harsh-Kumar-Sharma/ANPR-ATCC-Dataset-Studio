@@ -44,7 +44,15 @@ function UserMenu({ align = "right" }: Props) {
         <span className="avatar" aria-hidden="true">
           {initials(user)}
         </span>
-        <span className="user-menu__name">{user.display_name}</span>
+        <span className="user-menu__label">
+          <span className="user-menu__name">{user.display_name}</span>
+          <span className={`user-menu__role user-menu__role--${user.role}`}>
+            {user.role === "admin" ? "Admin" : "User"}
+          </span>
+        </span>
+        <span className="user-menu__caret" aria-hidden="true">
+          ▾
+        </span>
       </button>
 
       {open && (
