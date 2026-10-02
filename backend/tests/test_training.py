@@ -612,3 +612,65 @@ def test_clearing_leaves_a_run_that_is_still_going(tmp_path, models_dir, fake_tr
 
     remaining = [r["id"] for r in client.get(f"/projects/{project['id']}/training-runs").json()]
     assert remaining == [live["run"]["id"]]
+
+
+# --- memory -------------------------------------------------------------------
+
+
+class _RecordingYolo:
+    """Stands in for ultralytics.YOLO and remembers what train() was given."""
+
+    trained_with: dict = {}
+
+    def __init__(self, weights):
+        pass
+
+    def add_callback(self, event, callback):
+        pass
+
+    def train(self, **kwargs):
+        type(self).trained_with = kwargs
+        best = Path(kwargs["project"]) / kwargs["name"] / "weights" / "best.pt"
+        best.parent.mkdir(parents=True, exist_ok=True)
+        best.write_bytes(b"trained weights")
+        return None
+
+
+def _train_recording(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "ultralytics", types.SimpleNamespace(YOLO=_RecordingYolo))
+    training.train_with_ultralytics(
+        weights=tmp_path / "base.pt",
+        data_yaml=tmp_path / "data.yaml",
+        output_dir=tmp_path / "out",
+        epochs=1,
+        image_size=640,
+        device="cpu",
+        on_epoch=lambda progress: None,
+    )
+    return _RecordingYolo.trained_with
+
+
+def test_training_stays_within_the_memory_the_machine_has(monkeypatch, tmp_path):
+    """Left to its defaults ultralytics starts eight dataloader workers,
+    each holding about half a gigabyte, and the kernel killed a medium
+    run at epoch 13 on a 15 GB server it shares with another system.
+    Workers and batch are set, never left to ultralytics."""
+    trained_with = _train_recording(monkeypatch, tmp_path)
+
+    assert trained_with["workers"] == 2
+    assert trained_with["batch"] == 8
+
+
+def test_workers_and_batch_can_be_tuned_per_machine(monkeypatch, tmp_path):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "train_workers", 0, raising=False)
+    monkeypatch.setattr(get_settings(), "train_batch", 4, raising=False)
+
+    trained_with = _train_recording(monkeypatch, tmp_path)
+
+    assert trained_with["workers"] == 0
+    assert trained_with["batch"] == 4

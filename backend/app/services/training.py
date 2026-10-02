@@ -20,6 +20,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, NotFoundError
 from app.db.models.dataset_version import DatasetVersion
 from app.db.models.project import Project
@@ -269,11 +270,16 @@ def train_with_ultralytics(
         )
 
     model.add_callback("on_fit_epoch_end", report)
+    settings = get_settings()
     results = model.train(
         data=str(data_yaml.resolve()),
         epochs=epochs,
         imgsz=image_size,
         device=device,
+        # Host memory, not GPU memory, is what runs out first: each
+        # dataloader worker is a process of its own. See Settings.
+        workers=settings.train_workers,
+        batch=settings.train_batch,
         # Absolute, always. A relative project path is resolved by
         # ultralytics against its own runs directory, not against the
         # working directory - so the checkpoints landed under

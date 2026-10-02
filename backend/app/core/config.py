@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     #: specific GPU. See ``app.ml.device.resolve_device``.
     device: str = "auto"
 
+    #: Dataloader processes and images per batch for training. Set,
+    #: never left to ultralytics: its default of eight workers holds
+    #: about half a gigabyte each, and on a 15 GB server shared with
+    #: another system the kernel killed a medium run at epoch 13.
+    train_workers: int = 2
+    train_batch: int = 8
+
     #: Progress files and worker logs for background jobs. Lives on
     #: disk rather than in the DB so a worker can report progress
     #: without contending with the app for the SQLite write lock.
