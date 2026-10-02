@@ -23,3 +23,31 @@ def _create_tables():
 
     Base.metadata.create_all(bind=engine)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _signed_in_as_admin():
+    """Every test predating sign-in calls the API as if signed in.
+
+    Sign-in is its own concern, tested in test_auth.py, which asks for
+    ``real_auth`` to put the real check back.
+    """
+    from app.api.auth import require_user
+    from app.db.models.user import ROLE_ADMIN, User
+    from app.main import app
+
+    app.dependency_overrides[require_user] = lambda: User(
+        id="test-admin", username="test-admin", display_name="Test", role=ROLE_ADMIN, is_active=True
+    )
+    yield
+    app.dependency_overrides.pop(require_user, None)
+
+
+@pytest.fixture
+def real_auth(_signed_in_as_admin):
+    """The real sign-in check, for tests about sign-in itself."""
+    from app.api.auth import require_user
+    from app.main import app
+
+    app.dependency_overrides.pop(require_user, None)
+    yield

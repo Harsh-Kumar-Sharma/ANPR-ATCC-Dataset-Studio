@@ -1,10 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.active_learning import router as active_learning_router
+from app.api.auth import require_user, router as auth_router, users_router
 from app.api.annotation_attributes import attributes_router
 from app.api.classes import router as classes_router
 from app.api.datasets import datasets_router, project_datasets_router
@@ -134,28 +135,36 @@ app.add_middleware(
 register_exception_handlers(app)
 
 
+# Open: the health check, the database-is-behind banner (it has to
+# work before anyone can sign in, since the users table arrives with a
+# migration), and the way in itself.
 app.include_router(health_router)
-app.include_router(projects_router)
-app.include_router(jobs_router)
-app.include_router(models_router)
 app.include_router(schema_router)
-app.include_router(training_router)
-app.include_router(training_runs_router)
-app.include_router(classes_router)
-app.include_router(attributes_router)
-app.include_router(labels_router)
-app.include_router(storage_router)
-app.include_router(project_frames_router)
-app.include_router(frames_router)
-app.include_router(sources_router)
-app.include_router(processing_runs_router)
-app.include_router(playback_router)
-app.include_router(processing_profiles_router)
-app.include_router(project_tracks_router)
-app.include_router(tracks_router)
-app.include_router(project_datasets_router)
-app.include_router(datasets_router)
-app.include_router(evaluation_router)
-app.include_router(active_learning_router)
-app.include_router(rtsp_router)
-app.include_router(rtsp_run_router)
+app.include_router(auth_router)
+
+# Everything else needs someone signed in.
+_signed_in = [Depends(require_user)]
+app.include_router(users_router)
+app.include_router(projects_router, dependencies=_signed_in)
+app.include_router(jobs_router, dependencies=_signed_in)
+app.include_router(models_router, dependencies=_signed_in)
+app.include_router(training_router, dependencies=_signed_in)
+app.include_router(training_runs_router, dependencies=_signed_in)
+app.include_router(classes_router, dependencies=_signed_in)
+app.include_router(attributes_router, dependencies=_signed_in)
+app.include_router(labels_router, dependencies=_signed_in)
+app.include_router(storage_router, dependencies=_signed_in)
+app.include_router(project_frames_router, dependencies=_signed_in)
+app.include_router(frames_router, dependencies=_signed_in)
+app.include_router(sources_router, dependencies=_signed_in)
+app.include_router(processing_runs_router, dependencies=_signed_in)
+app.include_router(playback_router, dependencies=_signed_in)
+app.include_router(processing_profiles_router, dependencies=_signed_in)
+app.include_router(project_tracks_router, dependencies=_signed_in)
+app.include_router(tracks_router, dependencies=_signed_in)
+app.include_router(project_datasets_router, dependencies=_signed_in)
+app.include_router(datasets_router, dependencies=_signed_in)
+app.include_router(evaluation_router, dependencies=_signed_in)
+app.include_router(active_learning_router, dependencies=_signed_in)
+app.include_router(rtsp_router, dependencies=_signed_in)
+app.include_router(rtsp_run_router, dependencies=_signed_in)

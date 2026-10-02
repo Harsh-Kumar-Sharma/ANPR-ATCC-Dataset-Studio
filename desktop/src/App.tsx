@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { AuthProvider, useAuthSession } from "./auth";
 import ActiveLearningPanel from "./components/ActiveLearningPanel";
 import DatasetPanel from "./components/DatasetPanel";
 import ClassSchemaEditor from "./components/ClassSchemaEditor";
@@ -14,6 +15,8 @@ import LabelQueue from "./components/LabelQueue";
 import StoragePanel from "./components/StoragePanel";
 import TrainingPanel from "./components/TrainingPanel";
 import LivePreview from "./components/LivePreview";
+import LoginScreen from "./components/LoginScreen";
+import UserMenu from "./components/UserMenu";
 import ProjectPicker from "./components/ProjectPicker";
 import RtspPanel from "./components/RtspPanel";
 import SchemaBanner from "./components/SchemaBanner";
@@ -37,7 +40,7 @@ const TABS: { id: Tab; label: string; icon: JSX.Element }[] = [
   { id: "insights", label: "Insights", icon: <IconChart /> },
 ];
 
-function App() {
+function Studio() {
   const [project, setProject] = useState<Project | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -198,6 +201,9 @@ function App() {
     return (
       <>
         <SchemaBanner />
+        <header className="picker-topbar">
+          <UserMenu />
+        </header>
         <ProjectPicker onSelect={handleSelectProject} />
       </>
     );
@@ -289,9 +295,12 @@ function App() {
       <SchemaBanner onUpgraded={() => setQueueVersion((v) => v + 1)} />
       <aside className="sidebar">
         <div className="sidebar-header">
-          <button className="back-link" onClick={() => handleSelectProject(null)}>
-            <IconArrowLeft /> Projects
-          </button>
+          <div className="sidebar-header__row">
+            <button className="back-link" onClick={() => handleSelectProject(null)}>
+              <IconArrowLeft /> Projects
+            </button>
+            <UserMenu align="left" />
+          </div>
           <h2>{project.name}</h2>
         </div>
 
@@ -372,6 +381,34 @@ function App() {
       </main>
     </div>
   );
+}
+
+/**
+ * Sign in first; then the studio, starting from choosing a project.
+ *
+ * The studio is keyed by who is signed in, so signing out and in as
+ * someone else starts them from the project list rather than inside
+ * whatever the last person had open.
+ */
+function App() {
+  const auth = useAuthSession();
+  const [schemaVersion, setSchemaVersion] = useState(0);
+
+  let screen: JSX.Element;
+  if (auth.checking) {
+    screen = <div className="auth-screen" aria-busy="true" />;
+  } else if (!auth.user) {
+    screen = (
+      <>
+        <SchemaBanner onUpgraded={() => setSchemaVersion((v) => v + 1)} />
+        <LoginScreen schemaVersion={schemaVersion} />
+      </>
+    );
+  } else {
+    screen = <Studio key={auth.user.id} />;
+  }
+
+  return <AuthProvider value={auth}>{screen}</AuthProvider>;
 }
 
 export default App;

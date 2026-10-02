@@ -12,6 +12,7 @@ from app.db.models.project import Project
 from app.db.models.source import Source
 from app.db.models.track import Track
 from app.db.models.training_run import TrainingRun
+from app.db.models.user import AuthSession, User
 
 __all__ = [
     "Project",
@@ -28,4 +29,6 @@ __all__ = [
     "DatasetItem",
     "Job",
     "ClassDefinition",
+    "User",
+    "AuthSession",
 ]

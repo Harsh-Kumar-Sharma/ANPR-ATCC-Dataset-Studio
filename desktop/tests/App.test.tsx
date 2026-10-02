@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../src/api";
+import { api, setAuthToken } from "../src/api";
 import App from "../src/App";
 
 describe("App", () => {
   it("renders the studio title", () => {
+    setAuthToken(null);
     render(<App />);
     expect(screen.getByRole("heading", { name: /ANPR \+ ATCC Dataset Studio/i })).toBeInTheDocument();
   });
@@ -48,11 +49,23 @@ describe("App: a source that has gone", () => {
     reviewed_bbox_json: null,
   };
 
+  const signedInUser = {
+    id: "u-1",
+    username: "harsh",
+    display_name: "Harsh",
+    role: "admin",
+    is_active: true,
+    created_at: "2026-10-03T00:00:00",
+    last_login_at: null,
+  };
+
   const contents = { frames: 12, tracks: 1, labels: 3, bytes: 1024, running_jobs: 0, files_removed: false };
 
   beforeEach(() => {
     vi.restoreAllMocks();
     window.localStorage.clear();
+    setAuthToken("token");
+    vi.spyOn(api, "getMe").mockResolvedValue(signedInUser as never);
     vi.spyOn(api, "listProjects").mockResolvedValue([project as never]);
     vi.spyOn(api, "listSources").mockResolvedValue([source as never]);
     vi.spyOn(api, "listModels").mockResolvedValue([]);

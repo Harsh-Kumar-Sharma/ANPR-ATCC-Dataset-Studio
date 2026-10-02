@@ -1,6 +1,10 @@
 import type {
   Annotation,
   AttributeDefinition,
+  AuthStatus,
+  SignedIn,
+  User,
+  UserRole,
   ClassDefinition,
   ClassDeleteOutcome,
   ClassUsage,
@@ -70,13 +74,66 @@ function query(params: Record<string, string | number | boolean | null | undefin
   return suffix ? `?${suffix}` : "";
 }
 
+/** Where the sign-in token is kept between launches. Browser storage:
+ *  it is this machine's sign-in, not the project's. */
+const TOKEN_KEY = "anpr:auth-token";
+
+let authToken: string | null = readToken();
+
+function readToken(): string | null {
+  try {
+    return window.localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+  try {
+    if (token === null) window.localStorage.removeItem(TOKEN_KEY);
+    else window.localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // Private mode: signed in for this window only.
+  }
+}
+
+/** Told when the server says the sign-in is no longer good - expired,
+ *  signed out elsewhere, or the account switched off - so the app can
+ *  go back to the sign-in screen instead of failing panel by panel. */
+let unauthorizedHandler: (() => void) | null = null;
+
+export function onUnauthorized(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+/** A URL the browser fetches by itself - an <img>, a <video>, a
+ *  download - cannot carry a header, so the token rides in the query. */
+function withToken(url: string): string {
+  if (!authToken) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(authToken)}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...init?.headers,
+    },
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
+    // Not for the sign-in calls themselves: a wrong password is an
+    // answer for the form, not a reason to reset the app.
+    if (response.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/auth/setup")) {
+      unauthorizedHandler?.();
+    }
     throw new ApiError(response.status, body.code ?? "unknown_error", body.message ?? response.statusText);
   }
   if (response.status === 204) return undefined as T;
@@ -84,6 +141,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // --- signing in -----------------------------------------------------------
+  getAuthStatus: () => request<AuthStatus>("/auth/status"),
+  /** Create the first admin. Only works while nobody exists. */
+  setupAdmin: (username: string, password: string, displayName: string) =>
+    request<SignedIn>("/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({ username, password, display_name: displayName }),
+    }),
+  login: (username: string, password: string) =>
+    request<SignedIn>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  getMe: () => request<User>("/auth/me"),
+  changeMyPassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/auth/me/password", {
+      method: "PUT",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+
+  // --- managing users (admin) -------------------------------------------------
+  listUsers: () => request<User[]>("/users"),
+  createUser: (payload: { username: string; password: string; display_name: string; role: UserRole }) =>
+    request<User>("/users", { method: "POST", body: JSON.stringify(payload) }),
+  updateUser: (userId: string, changes: { display_name?: string; role?: UserRole; is_active?: boolean }) =>
+    request<User>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(changes) }),
+  resetUserPassword: (userId: string, newPassword: string) =>
+    request<void>(`/users/${userId}/password`, { method: "PUT", body: JSON.stringify({ new_password: newPassword }) }),
+  deleteUser: (userId: string) => request<void>(`/users/${userId}`, { method: "DELETE" }),
+
   /** What deleting a project would destroy. Its own call because a
    *  confirmation that cannot say what is about to go is not one. */
   getProjectContents: (projectId: string) => request<ProjectContents>(`/projects/${projectId}/contents`),
@@ -197,7 +282,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ project_id: projectId }),
     }),
-  sourceVideoUrl: (projectId: string, sourceId: string) => `${API_BASE}/projects/${projectId}/sources/${sourceId}/video`,
+  sourceVideoUrl: (projectId: string, sourceId: string) =>
+    withToken(`${API_BASE}/projects/${projectId}/sources/${sourceId}/video`),
   getSourceDetections: (projectId: string, sourceId: string, runId?: string) =>
     request<SourceDetections>(
       `/projects/${projectId}/sources/${sourceId}/detections${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`,
@@ -226,7 +312,7 @@ export const api = {
     payload: { frame_candidate_id: string; decision: string; class_id?: number | null; bbox_json?: number[] },
   ) => request<TrackReviewResult>(`/tracks/${trackId}/review`, { method: "PUT", body: JSON.stringify(payload) }),
 
-  frameImageUrl: (frameCandidateId: string) => `${API_BASE}/tracks/frames/${frameCandidateId}/image`,
+  frameImageUrl: (frameCandidateId: string) => withToken(`${API_BASE}/tracks/frames/${frameCandidateId}/image`),
 
   /** The labelling queue, narrowed to one source when given one -
    *  which is the only way it stays usable past the first clip. */
@@ -256,14 +342,14 @@ export const api = {
    *  fetch: a 13 MB body held in memory to re-serve it is pointless
    *  when the browser can save it straight to disk. */
   datasetArchiveUrl: (datasetVersionId: string) =>
-    `${API_BASE}/dataset-versions/${datasetVersionId}/archive`,
+    withToken(`${API_BASE}/dataset-versions/${datasetVersionId}/archive`),
 
   /** The full frame, decoded on demand. The canvas's <img> src. */
-  fullFrameImageUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/image`,
+  fullFrameImageUrl: (frameId: string) => withToken(`${API_BASE}/frames/${frameId}/image`),
 
   /** A small picture of a frame, for showing many at once. Its own
    *  endpoint because it never decodes a full-size image to disk. */
-  frameThumbnailUrl: (frameId: string) => `${API_BASE}/frames/${frameId}/thumbnail`,
+  frameThumbnailUrl: (frameId: string) => withToken(`${API_BASE}/frames/${frameId}/thumbnail`),
 
   /** What the model found on a frame, for the canvas to open with. */
   getFrameSuggestions: (frameId: string) =>
@@ -406,5 +492,5 @@ export const api = {
   getRtspStatus: (runId: string) => request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/status`),
   stopRtspSession: (runId: string) =>
     request<RtspSessionStatus>(`/processing-runs/${runId}/rtsp/stop`, { method: "POST" }),
-  rtspPreviewUrl: (runId: string) => `${API_BASE}/processing-runs/${runId}/rtsp/preview.jpg`,
+  rtspPreviewUrl: (runId: string) => withToken(`${API_BASE}/processing-runs/${runId}/rtsp/preview.jpg`),
 };

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     #: without contending with the app for the SQLite write lock.
     jobs_dir: Path = Path("data") / "jobs"
 
+    #: How long a sign-in lasts before the user is asked again.
+    session_ttl_hours: int = 24 * 7
+
     def resolved_model_weights_dir(self) -> Path:
         self.model_weights_dir.mkdir(parents=True, exist_ok=True)
         return self.model_weights_dir

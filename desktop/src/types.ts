@@ -624,3 +624,30 @@ export interface TrackSweep {
   held: number;
   bytes_freed: number;
 }
+
+export type UserRole = "admin" | "user";
+
+/** Someone who can sign in. An admin also manages the others. */
+export interface User {
+  id: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+/** What the sign-in screen needs to know before anyone has signed in. */
+export interface AuthStatus {
+  /** Nobody exists yet: the first person creates the admin. */
+  needs_setup: boolean;
+  /** False while the database is behind and has no users table. */
+  database_ready: boolean;
+}
+
+export interface SignedIn {
+  token: string;
+  expires_at: string;
+  user: User;
+}
