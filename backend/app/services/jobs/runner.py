@@ -18,8 +18,10 @@ been going for two hours.
 
 import logging
 import os
+import signal
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,7 +89,73 @@ def launch_worker_process(job_id: str) -> int:
             start_new_session=start_new_session,
             close_fds=True,
         )
+    watch_worker(worker, lambda returncode: _settle_abandoned_in_own_session(job_id, returncode))
     return worker.pid
+
+
+def watch_worker(worker: subprocess.Popen, on_exit: Callable[[int], None]) -> threading.Thread:
+    """Wait for a worker in the background and report how it exited.
+
+    Waiting is what reaps it. Nothing used to, so a worker that died
+    while the app ran stayed behind as a zombie that still answered to
+    its pid - and its job said "running" until the app was restarted.
+    A worker that outlives the app is unaffected: the thread dies with
+    the app, and reconcile_jobs takes over on the next start.
+    """
+
+    def wait() -> None:
+        returncode = worker.wait()
+        try:
+            on_exit(returncode)
+        except Exception:
+            logger.exception("Could not settle after worker %s exited with %s", worker.pid, returncode)
+
+    watcher = threading.Thread(target=wait, name=f"job-worker-{worker.pid}", daemon=True)
+    watcher.start()
+    return watcher
+
+
+def _settle_abandoned_in_own_session(job_id: str, returncode: int) -> None:
+    # Imported here: the worker process imports this module too, and has
+    # no use for a session factory at import time.
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        settle_abandoned(db, job_id, returncode)
+
+
+def settle_abandoned(db: Session, job_id: str, returncode: int) -> None:
+    """Fail a job whose worker exited without recording an outcome.
+
+    The normal end is the worker settling its own job and then exiting,
+    and that is left alone. Anything else - killed, crashed before it
+    could write - would otherwise claim to be in progress forever.
+    """
+    job = db.get(Job, job_id)
+    if job is None or job.is_terminal:
+        return
+    logger.warning("Worker for job %s exited with %s without settling it", job_id, returncode)
+    job.status = "failed"
+    job.error_message = _truncate(_describe_exit(job_id, returncode))
+    job.completed_at = _utcnow()
+    db.commit()
+    db.refresh(job)
+    _abort_side_effects(db, job, "failed")
+
+
+def _describe_exit(job_id: str, returncode: int) -> str:
+    # Negative return codes are POSIX signals; Windows has no SIGKILL.
+    if returncode == -getattr(signal, "SIGKILL", 9):
+        return (
+            "The process running this job was killed by the operating system. On a server that almost "
+            "always means it ran out of memory - try again with less running alongside it, or a smaller "
+            f"model. Its log: {log_path(job_id)}"
+        )
+    if returncode < 0:
+        return f"The process running this job was stopped by signal {-returncode}. Its log: {log_path(job_id)}"
+    if returncode == 0:
+        return f"The process running this job exited without recording a result. Its log: {log_path(job_id)}"
+    return f"The process running this job exited with code {returncode} before finishing. Its log: {log_path(job_id)}"
 
 
 def get_launcher() -> Launcher:

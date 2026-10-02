@@ -134,3 +134,21 @@ def test_creation_time_is_precise_enough_to_order_against_a_job():
     assert created is not None
     assert created.microsecond or True  # a real timestamp, not a truncated one
     assert created <= datetime.now(timezone.utc)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
+def test_a_dead_but_unreaped_process_does_not_read_as_running():
+    """A zombie still answers to its pid. It is not running anything."""
+    child = _spawn_sleeper()
+    try:
+        os.kill(child.pid, 9)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            with open(f"/proc/{child.pid}/stat") as stat:
+                if stat.read().rsplit(")", 1)[1].split()[0] == "Z":
+                    break
+            time.sleep(0.05)
+
+        assert process.is_running(child.pid) is False
+    finally:
+        child.wait(timeout=10)

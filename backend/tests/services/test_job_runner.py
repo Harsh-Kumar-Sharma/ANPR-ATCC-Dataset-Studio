@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+
 import pytest
 
 from app.core.errors import NotFoundError
@@ -328,3 +332,71 @@ def test_a_reconciled_job_and_its_run_tell_the_same_story(project):
     with SessionLocal() as db:
         assert db.get(Job, job.id).status == "failed"
         assert db.get(ProcessingRun, run_id).status == "failed", "the run must not claim it was cancelled"
+
+
+# --- a worker that dies while the app is running ------------------------------
+
+
+def test_a_worker_killed_while_the_app_runs_fails_its_job_at_once(project):
+    """The kernel's out-of-memory killer took a training run at epoch 13
+    and the job said "running, 23%" for seven hours. Reconcile only runs
+    when the app starts; a worker that dies under a running app has to
+    be noticed when it dies."""
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+
+    with SessionLocal() as db:
+        runner.settle_abandoned(db, job.id, returncode=-9)
+
+    with SessionLocal() as db:
+        dead = db.get(Job, job.id)
+        assert dead.status == "failed"
+        assert dead.completed_at is not None
+        assert "memory" in dead.error_message, "SIGKILL from the kernel almost always means out of memory - say so"
+
+
+def test_a_worker_that_crashes_says_how_it_exited(project):
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+        runner.settle_abandoned(db, job.id, returncode=3)
+
+    with SessionLocal() as db:
+        dead = db.get(Job, job.id)
+        assert dead.status == "failed"
+        assert "code 3" in dead.error_message
+        assert str(runner.log_path(job.id)) in dead.error_message
+
+
+def test_a_worker_that_settled_its_own_job_is_left_alone(project):
+    """The normal end: the worker records the outcome, then exits."""
+    with SessionLocal() as db:
+        job = runner.submit_job(db, type="detect", project_id=project.id, params={}, launcher=RecordingLauncher())
+        runner.mark_running(db, job.id)
+        runner.mark_succeeded(db, job.id, {"ok": True})
+        runner.settle_abandoned(db, job.id, returncode=0)
+
+    with SessionLocal() as db:
+        assert db.get(Job, job.id).status == "succeeded"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="zombies are a POSIX thing")
+def test_a_dead_worker_is_reaped_and_reported():
+    """Nothing in the app ever waited on its workers, so a dead one
+    stayed behind as a zombie - and a zombie still answers to its pid,
+    which is exactly what made the job look alive."""
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    exited: list[int] = []
+
+    watcher = runner.watch_worker(child, exited.append)
+    watcher.join(timeout=10)
+
+    assert exited == [-9]
+    with pytest.raises(ChildProcessError):
+        os.waitpid(child.pid, os.WNOHANG)  # already reaped: nothing left to wait for

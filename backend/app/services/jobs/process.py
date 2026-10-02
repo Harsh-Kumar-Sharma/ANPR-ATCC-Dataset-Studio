@@ -126,7 +126,19 @@ else:
             # Exists, but belongs to someone else - same reasoning as the
             # access-denied case on Windows.
             return True
-        return True
+        # A zombie has exited but not been waited for, and still answers
+        # to its pid. It is running nothing.
+        return not _is_zombie(pid)
+
+    def _is_zombie(pid: int) -> bool:
+        """Linux only, via /proc; elsewhere a zombie reads as alive."""
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as stat:
+                # "pid (comm) state ..." - comm may itself hold spaces or
+                # parentheses, so split after the last one.
+                return stat.read().rsplit(")", 1)[1].split()[0] == "Z"
+        except (OSError, IndexError):
+            return False
 
     def creation_time(pid: int) -> datetime | None:
         """When this process started, or None where the platform cannot say.
