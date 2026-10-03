@@ -209,3 +209,19 @@ def test_an_admin_deletes_a_user():
     assert client.delete(f"/users/{user['id']}", headers=_bearer(admin)).status_code == 204
     assert _login("labeller").status_code == 401
     assert [u["username"] for u in client.get("/users", headers=_bearer(admin)).json()] == ["admin"]
+
+
+# --- the database update, once people exist -----------------------------------
+
+
+def test_once_someone_exists_only_an_admin_may_update_the_database():
+    admin = _setup_admin()
+    _add_user(admin, "labeller")
+    labeller = _login("labeller").json()["token"]
+
+    anonymous = client.post("/schema/upgrade")
+    assert anonymous.status_code == 401
+    assert client.post("/schema/upgrade", headers=_bearer(labeller)).status_code == 403
+    # Reading where the database stands stays open: the banner needs it
+    # before anyone has signed in.
+    assert client.get("/schema").status_code == 200

@@ -8,7 +8,7 @@ it is packaged and reached is new.
 
 ```
 http://studio.highwaynetra.in ──► MLFF's nginx :80 ─────┐   (Host header match only)
-http://160.187.179.196:8090/  ──────────────────────────┼──► studio-web :8090  ── BASIC AUTH, all paths
+http://160.187.179.196:8090/  ──────────────────────────┼──► studio-web :8090  ── the app's own sign-in
 http://127.0.0.1:8090/        ──────────────────────────┘      ├─ /        built UI
                                                                └─ /api/*   studio-backend (GPU), prefix stripped
 ```
@@ -17,8 +17,9 @@ http://127.0.0.1:8090/        ────────────────�
   workers it spawns (detection, training, frame selection), all in one
   container on the GPU. No host port.
 - **studio-web**: nginx, the built UI (`VITE_API_BASE=/api`) and the
-  `/api` proxy. Published on host port **8090**. **Basic auth lives here**,
-  so it covers every way in.
+  `/api` proxy. Published on host port **8090**. No basic auth: people
+  sign in to the app itself, and the backend refuses the API without a
+  session.
 - **MLFF** (`/app/mlff-node`) is a separate live system that owns :80
   and :443. Its nginx proxies the one hostname `studio.highwaynetra.in` to
   port 8090. Every other request (the server's IP, LAN LiDAR devices,
@@ -33,9 +34,8 @@ http://127.0.0.1:8090/        ────────────────�
 | `http://127.0.0.1:8090/` | on the server only |
 | `https://studio.highwaynetra.in/` | **port 443 opened at the firewall**, then "Turning HTTPS on" |
 
-**Until HTTPS is on, the basic-auth password crosses the network in the
-clear on every request.** Treat it as temporary and change it once HTTPS
-is up.
+**Until HTTPS is on, passwords and sign-in tokens cross the network in
+the clear.** Turn HTTPS on, then have everyone change their password.
 
 ## Files
 
@@ -47,8 +47,7 @@ is up.
 | `deploy/Dockerfile.web` | Node build of `desktop/` → nginx |
 | `deploy/nginx.conf` | Studio's nginx: auth, static files, `/api` proxy, streaming rules |
 | `deploy/mlff/` | the server block installed into MLFF's nginx (copy of record) |
-| `deploy/.htpasswd` | **real** basic-auth users. On the server only, gitignored |
-| `deploy/.env.example`, `deploy/.htpasswd.example` | templates |
+| `deploy/.env.example` | template |
 
 ## Data
 
@@ -136,19 +135,33 @@ To restore: `docker compose stop`, then replace
 `/app/studio/data/app.db` with the backup and delete any `app.db-wal`
 and `app.db-shm` beside it. Then `docker compose up -d`.
 
-## Basic auth
+## Signing in
 
-Users live in `deploy/.htpasswd` (bcrypt, gitignored, mounted read-only
-into studio-web). To add a user or change a password:
+People sign in to the app; there is no basic auth in front of it any
+more. An **admin** manages users (account menu, top right → Manage
+users) and hands out labelling **tasks**; a **user** sees only the
+projects and sources given to them.
+
+**First deploy with sign-in** (or any deploy onto a database with no
+users): the database is behind, and nobody exists yet.
+
+1. Open the site. The sign-in screen says the database needs updating;
+   press **Update the database** in the banner. It backs up first, into
+   `/app/studio/data/backups/`.
+2. Reload. With nobody in the database, the screen offers **Create
+   admin**. Do this straight away: until an admin exists, the first
+   person to reach the site gets to be it.
+3. Add everyone else from Manage users.
+
+After that, updating the database (the banner, on later deploys) needs
+an admin to be signed in.
+
+Forgotten admin password, with no other admin to reset it: create a
+new admin from the server.
 
 ```bash
-docker run --rm httpd:2.4-alpine htpasswd -nbB <user> '<new-password>'   # prints user:hash
-# put that line in deploy/.htpasswd (replace the user's old line), then:
-docker compose exec web nginx -s reload
+docker compose exec backend python -c "from app.db.session import SessionLocal; from app.services.auth import create_user; db=SessionLocal(); print(create_user(db, 'rescue', 'change-me-now', 'Rescue', 'admin').username)"
 ```
-
-The initial user's credentials were written to `~/studio-basic-auth.txt`
-(mode 600) on the server.
 
 ## Turning HTTPS on (once 443 is open)
 
@@ -159,7 +172,7 @@ MLFF's nginx re-reads it every six hours.
 1. **Confirm 443 is really open from outside**, not just listening:
    `ss -lnt 'sport = :443'` on the server, then from **another machine**:
    `curl -skI https://studio.highwaynetra.in/` must get an HTTP response
-   (a 401 from Studio after step 2, or MLFF's 404/200 before it), not a
+   (a 200 from Studio after step 2, or MLFF's 404/200 before it), not a
    timeout. If it times out, stop here: a redirect to a closed port takes
    Studio off the air by every route.
 2. Enable the 443 block, and test it **before** redirecting:
@@ -167,13 +180,14 @@ MLFF's nginx re-reads it every six hours.
    cd /app/mlff-node/nginx/sites
    mv studio-https.conf.disabled studio-https.conf
    docker exec mlff-node-nginx sh /etc/nginx/mlff/start.sh reload   # runs nginx -t first
-   curl -sI https://studio.highwaynetra.in/                         # expect 401 (from another machine)
+   curl -sI https://studio.highwaynetra.in/                         # expect 200 (from another machine)
    ```
 3. Only then redirect :80 to :443. In `studio.conf` uncomment the line
    `# return 301 https://$host$request_uri;` and reload again with the
    same command. `curl -sI http://studio.highwaynetra.in/` should now
    be a 301 to https.
-4. Change the basic-auth password (it has been travelling in the clear).
+4. Have everyone change their password (they have been travelling in
+   the clear).
 5. Mirror the change in `deploy/mlff/` in this repo and commit it in
    both repos.
 
@@ -214,8 +228,8 @@ and update `studio-proxy.inc`.
 
 - **SQLite is a single writer.** Two or three people labelling at once is
   fine. Around ten would start hitting lock waits.
-- **No accounts inside the app.** Basic auth is a gate, not users or
-  roles. Anyone with the password can delete projects.
+- **Two roles only.** An admin can do everything, including deleting
+  projects; a user labels the tasks given to them.
 - **CORS is `*`** in `backend/app/main.py` (left over from the desktop
   design). The UI and API now share an origin, so it does not matter for
   normal use, but it has not been tightened.

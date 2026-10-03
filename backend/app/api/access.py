@@ -9,15 +9,17 @@ dependencies, so the existing handlers stay as they were.
 import re
 
 from fastapi import Depends, Request
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.api.auth import require_user
+from app.api.auth import _token_from, require_user
 from app.core.errors import NotFoundError
 from app.db.models.frame import Frame
 from app.db.models.user import User
 from app.db.session import get_db
 from app.services import labeling_tasks
-from app.services.auth import ForbiddenError
+from app.services import auth as auth_service
+from app.services.auth import AuthError, ForbiddenError
 
 _PROJECT_READS = re.compile(r"^/projects/(?P<project_id>[^/]+)(/class-schema)?/?$")
 
@@ -26,6 +28,30 @@ def require_admin(user: User = Depends(require_user)) -> User:
     if not labeling_tasks.is_admin(user):
         raise ForbiddenError("Only an admin can do this.")
     return user
+
+
+def schema_upgrade_access(request: Request, db: Session = Depends(get_db)) -> None:
+    """Updating the database: open only while nobody can sign in yet.
+
+    The banner has to work before the users table exists - it is what
+    creates it - so it cannot always ask for a sign-in. Once anyone
+    exists, only an admin may run it: on a server reachable from the
+    internet it is otherwise a button any stranger can press.
+    """
+    if request.method != "POST":
+        return
+    try:
+        if auth_service.user_count(db) == 0:
+            return
+    except OperationalError:
+        db.rollback()
+        return  # No users table yet.
+    token = _token_from(request)
+    if token is None:
+        raise AuthError("Sign in as an admin to update the database.", code="not_signed_in")
+    user, _ = auth_service.resolve_token(db, token)
+    if not labeling_tasks.is_admin(user):
+        raise ForbiddenError("Only an admin can update the database.")
 
 
 def project_access(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)) -> None:

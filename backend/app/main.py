@@ -5,7 +5,13 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.active_learning import router as active_learning_router
-from app.api.access import frame_access, project_access, project_frames_access, require_admin
+from app.api.access import (
+    frame_access,
+    project_access,
+    project_frames_access,
+    require_admin,
+    schema_upgrade_access,
+)
 from app.api.auth import require_user, router as auth_router, users_router
 from app.api.tasks import project_tasks_router, tasks_router
 from app.api.annotation_attributes import attributes_router
@@ -141,7 +147,7 @@ register_exception_handlers(app)
 # work before anyone can sign in, since the users table arrives with a
 # migration), and the way in itself.
 app.include_router(health_router)
-app.include_router(schema_router)
+app.include_router(schema_router, dependencies=[Depends(schema_upgrade_access)])
 app.include_router(auth_router)
 
 # Everything else needs someone signed in. What a plain user may reach

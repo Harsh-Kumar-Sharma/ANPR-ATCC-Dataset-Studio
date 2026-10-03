@@ -65,11 +65,9 @@ services:
     restart: unless-stopped
     ports:
       # http://<server-ip>:8090/ and http://127.0.0.1:8090/ - and the port
-      # MLFF's nginx proxies the domain to. Basic auth covers all three.
+      # MLFF's nginx proxies the domain to. The app's own sign-in
+      # covers all three.
       - "${STUDIO_HTTP_PORT:-8090}:80"
-    volumes:
-      # Generated on the server, never committed. See deploy/README.md.
-      - ./deploy/.htpasswd:/etc/nginx/htpasswd/.htpasswd:ro
     depends_on:
       - backend
     logging: *logging
