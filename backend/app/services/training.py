@@ -357,6 +357,111 @@ def train_with_ultralytics(
     return best
 
 
+# --- testing what was trained ---------------------------------------------
+
+#: Evaluates a checkpoint on one image list. Injected so tests never load torch.
+Evaluator = Callable[..., dict]
+
+
+def test_subsets(export_dir: Path) -> dict[str, list[Path]]:
+    """The test images, all together and - when the export marks any of
+    them as night shots - split into day and night.
+
+    A model's overall score hides its worst condition: a night recall of
+    0.80 disappears inside an average over mostly daytime frames. Night
+    is read off the boxes' "Night shot" attribute; a background image
+    (no boxes) counts only towards the whole.
+    """
+    import json
+
+    manifest_path = export_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return {}
+    items = [
+        item
+        for item in json.loads(manifest_path.read_text(encoding="utf-8")).get("items", [])
+        if item.get("split") == "test"
+    ]
+    if not items:
+        return {}
+    subsets: dict[str, list[Path]] = {"all": [export_dir / item["image_path"] for item in items]}
+    night = [
+        export_dir / item["image_path"]
+        for item in items
+        if any((obj.get("attributes") or {}).get("night") is True for obj in item.get("objects", []))
+    ]
+    if night:
+        night_set = set(night)
+        subsets["night"] = night
+        subsets["day"] = [
+            export_dir / item["image_path"]
+            for item in items
+            if item.get("objects") and export_dir / item["image_path"] not in night_set
+        ]
+    return {name: paths for name, paths in subsets.items() if paths}
+
+
+def evaluate_on_test(
+    evaluate: "Evaluator",
+    weights: Path,
+    export_dir: Path,
+    data_yaml: Path,
+    image_size: int,
+    device: str | None,
+) -> dict:
+    """Precision, recall, mAP50 and mAP50-95 of a trained model on the
+    export's test images, overall and by condition.
+
+    Validation during training picks the best epoch, so its score is the
+    best of many tries on those images. The test split was never looked
+    at, which makes it the honest number. Each subset is written as an
+    image list beside the export and handed to Ultralytics as its own
+    split; labels are found from the image paths as usual.
+    """
+    import yaml
+
+    subsets = test_subsets(export_dir)
+    if not subsets:
+        return {"note": "The export has no test images, so the model was not tested. Label more frames."}
+    base = yaml.safe_load(data_yaml.read_text(encoding="utf-8"))
+    results: dict = {}
+    for name, images in subsets.items():
+        listing = export_dir / f"test_{name}.txt"
+        listing.write_text("\n".join(str(p.resolve()) for p in images) + "\n", encoding="utf-8")
+        subset_yaml = export_dir / f"data_test_{name}.yaml"
+        subset_yaml.write_text(
+            yaml.safe_dump({**base, "path": str(export_dir.resolve()), "test": str(listing.resolve())}),
+            encoding="utf-8",
+        )
+        metrics = evaluate(weights=weights, data_yaml=subset_yaml, image_size=image_size, device=device)
+        results[name] = {**metrics, "images": len(images)}
+    return results
+
+
+def evaluate_with_ultralytics(weights: Path, data_yaml: Path, image_size: int, device: str | None) -> dict:
+    """Run Ultralytics validation on a data.yaml's test split."""
+    from ultralytics import YOLO
+
+    settings = get_settings()
+    metrics = YOLO(str(weights)).val(
+        data=str(data_yaml.resolve()),
+        split="test",
+        imgsz=image_size,
+        device=device,
+        batch=settings.train_batch,
+        workers=settings.train_workers,
+        plots=False,
+        verbose=False,
+    )
+    box = metrics.box
+    return {
+        "precision": round(float(box.mp), 4),
+        "recall": round(float(box.mr), 4),
+        "map50": round(float(box.map50), 4),
+        "map50_95": round(float(box.map), 4),
+    }
+
+
 def _written_checkpoint(model, results, output_dir: Path) -> Path | None:
     """Where the weights actually went.
 

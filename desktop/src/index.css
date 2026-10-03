@@ -4199,3 +4199,17 @@ label.toggle {
   color: var(--warning);
   font-weight: 600;
 }
+
+.training-scores {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.training-scores__low {
+  color: var(--danger);
+  font-weight: 700;
+}

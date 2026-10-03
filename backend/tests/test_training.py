@@ -122,6 +122,12 @@ def fake_training(monkeypatch):
         return best
 
     monkeypatch.setattr(handlers, "train", train)
+    # Testing the trained model, without loading one.
+    monkeypatch.setattr(
+        handlers,
+        "evaluate",
+        lambda weights, data_yaml, image_size, device: {"precision": 0.9, "recall": 0.95, "map50": 0.93, "map50_95": 0.6},
+    )
     # Nothing goes near the network for a base model's weights either.
     monkeypatch.setattr(training, "ensure_weights", lambda model_id, directory: directory / f"{model_id}.pt")
     return calls
@@ -738,3 +744,93 @@ def test_the_classes_are_read_from_what_was_exported(tmp_path):
         names = training._exported_class_names(db, None, tmp_path)  # type: ignore[arg-type]
     assert names == ["vehicle_plate"]
     assert training.augmentation_for(names)["fliplr"] == 0.0
+
+
+
+# --- testing what was trained -------------------------------------------------
+
+
+def _manifest_with(tmp_path, items):
+    import json
+
+    (tmp_path / "manifest.json").write_text(json.dumps({"items": items}), encoding="utf-8")
+    return tmp_path
+
+
+def _item(name, split="test", night=None, boxes=1):
+    attributes = {} if night is None else {"night": night}
+    return {
+        "image_path": f"images/{split}/{name}.jpg",
+        "split": split,
+        "objects": [{"class_name": "plate", "attributes": attributes} for _ in range(boxes)],
+    }
+
+
+def test_the_test_images_are_split_by_night_when_any_are_marked():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        export = _manifest_with(
+            Path(tmp),
+            [_item("a"), _item("b", night=True), _item("c", night=False), _item("bg", boxes=0), _item("t", split="train")],
+        )
+        subsets = training.test_subsets(export)
+
+    assert {name: len(paths) for name, paths in subsets.items()} == {"all": 4, "night": 1, "day": 2}
+
+
+def test_without_night_marks_there_is_only_the_whole():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        subsets = training.test_subsets(_manifest_with(Path(tmp), [_item("a"), _item("b")]))
+    assert list(subsets) == ["all"]
+
+
+def test_a_finished_run_carries_its_test_scores(tmp_path, models_dir, fake_training):
+    project, version = _exported_version(tmp_path, "Test Scores")
+
+    with run_jobs_inline():
+        status, body = _start(project, version)
+
+    run = client.get(f"/training-runs/{body['run']['id']}").json()
+    assert run["status"] == "completed"
+    metrics = run["settings_json"]["test_metrics"]
+    # The tiny export may or may not have test images; either is said.
+    assert ("all" in metrics and metrics["all"]["recall"] == 0.95) or "note" in metrics
+
+
+def test_a_test_that_fails_does_not_cost_the_trained_model(tmp_path, models_dir, fake_training, monkeypatch):
+    def broken(**kwargs):
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(training, "test_subsets", lambda export_dir: {"all": [Path("x.jpg")]})
+    monkeypatch.setattr(handlers, "evaluate", broken)
+    project, version = _exported_version(tmp_path, "Test Fails")
+
+    with run_jobs_inline():
+        status, body = _start(project, version)
+
+    run = client.get(f"/training-runs/{body['run']['id']}").json()
+    assert run["status"] == "completed"
+    assert run["output_model_id"]
+    assert "Testing failed" in run["settings_json"]["test_metrics"]["error"]
+
+
+def test_each_subset_is_tested_on_its_own_images(tmp_path):
+    import yaml
+
+    export = _manifest_with(tmp_path, [_item("a", night=False), _item("b", night=True), _item("c", night=True)])
+    (tmp_path / "data.yaml").write_text(yaml.safe_dump({"path": ".", "train": "images/train", "names": {0: "plate"}}))
+    seen: dict[str, list[str]] = {}
+
+    def evaluate(weights, data_yaml, image_size, device):
+        config = yaml.safe_load(Path(data_yaml).read_text())
+        seen[Path(data_yaml).name] = Path(config["test"]).read_text().split()
+        return {"precision": 1.0, "recall": 1.0, "map50": 1.0, "map50_95": 1.0}
+
+    results = training.evaluate_on_test(evaluate, Path("best.pt"), export, tmp_path / "data.yaml", 960, "cpu")
+
+    assert {name: r["images"] for name, r in results.items()} == {"all": 3, "night": 2, "day": 1}
+    assert len(seen["data_test_night.yaml"]) == 2
+    assert seen["data_test_day.yaml"][0].endswith("a.jpg")

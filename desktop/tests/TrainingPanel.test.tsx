@@ -332,3 +332,49 @@ describe("TrainingPanel: clearing old runs off the list", () => {
     expect(await screen.findByText(/cancel it first/i)).toBeInTheDocument();
   });
 });
+
+describe("TrainingPanel: what a run scored on the test split", () => {
+  it("shows the scores, day and night apart, and marks a low recall", async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listModels").mockResolvedValue([]);
+    vi.spyOn(api, "getClassSchema").mockResolvedValue([{ id: 1, name: "vehicle_plate" }]);
+    vi.spyOn(api, "listDatasetVersions").mockResolvedValue([
+      { id: "dv-1", project_id: "p-1", version: 5, created_at: "", split_seed: 1, config_snapshot_json: {}, bytes_on_disk: 0 },
+    ]);
+    vi.spyOn(api, "listTrainingRuns").mockResolvedValue([
+      {
+        id: "tr-1",
+        project_id: "p-1",
+        dataset_version_id: "dv-1",
+        base_model_id: "yolo26m",
+        job_id: null,
+        epochs: 100,
+        image_size: 960,
+        settings_json: {
+          test_metrics: {
+            all: { precision: 0.95, recall: 0.96, map50: 0.95, map50_95: 0.7, images: 40 },
+            day: { precision: 0.97, recall: 0.99, map50: 0.98, map50_95: 0.74, images: 25 },
+            night: { precision: 0.9, recall: 0.91, map50: 0.9, map50_95: 0.62, images: 15 },
+          },
+        },
+        status: "completed",
+        output_model_id: "yolo26m-v5",
+        best_map50: 0.96,
+        last_epoch: 100,
+        error_message: null,
+        started_at: "",
+        completed_at: "",
+      },
+    ]);
+
+    render(<TrainingPanel project={{ id: "p-1", name: "ANPR", created_at: "", class_schema_version: "blank", workspace_path: "" }} jobs={[]} />);
+
+    const scores = await screen.findByTestId("test-scores");
+    expect(scores).toHaveTextContent(/Test \(40 img\)/);
+    expect(scores).toHaveTextContent(/Night \(15 img\).*R 0\.91/);
+    expect(screen.getByText("R 0.91")).toHaveClass("training-scores__low");
+    expect(screen.getByText("R 0.99")).not.toHaveClass("training-scores__low");
+    // A plate project starts at 960.
+    await waitFor(() => expect(screen.getByRole("spinbutton", { name: /image size/i })).toHaveValue(960));
+  });
+});

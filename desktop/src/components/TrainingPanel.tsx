@@ -11,6 +11,47 @@ interface Props {
   refreshKey?: number;
 }
 
+interface Scores {
+  precision: number;
+  recall: number;
+  map50: number;
+  map50_95: number;
+  images: number;
+}
+
+/** Recall below this misses plates a toll cannot afford to miss. */
+const RECALL_TARGET = 0.97;
+
+const SUBSET_LABEL: Record<string, string> = { all: "Test", day: "Day", night: "Night" };
+
+/** The trained model's scores on test images it never saw - overall,
+ *  then by day and night when the export marks night shots. */
+function TestScores({ metrics }: { metrics: unknown }) {
+  if (!metrics || typeof metrics !== "object") return null;
+  const m = metrics as Record<string, unknown>;
+  if (typeof m.error === "string") return <span className="training-runs__caveat">{m.error}</span>;
+  if (typeof m.note === "string") return <span className="training-runs__caveat">{m.note}</span>;
+  const rows = ["all", "day", "night"].filter((k) => m[k] && typeof m[k] === "object");
+  if (rows.length === 0) return null;
+  return (
+    <span className="training-scores" data-testid="test-scores">
+      {rows.map((key) => {
+        const s = m[key] as Scores;
+        const low = s.recall < RECALL_TARGET;
+        return (
+          <span key={key} className="training-scores__row">
+            <strong>{SUBSET_LABEL[key] ?? key}</strong> ({s.images} img) · P {s.precision.toFixed(2)} ·{" "}
+            <span className={low ? "training-scores__low" : ""} title={`Target ${RECALL_TARGET} or above`}>
+              R {s.recall.toFixed(2)}
+            </span>{" "}
+            · mAP50 {s.map50.toFixed(2)} · mAP50-95 {s.map50_95.toFixed(2)}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 /** How a finished run reads at a glance. */
 function describe(run: TrainingRun): string {
   if (run.status === "completed") {
@@ -251,6 +292,7 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
               {/* Said next to the score, not buried: an mAP measured
                   on the training images is not a measure of anything,
                   and looks identical to one that is. */}
+              <TestScores metrics={run.settings_json?.test_metrics} />
               {typeof run.settings_json?.note === "string" && (
                 <span className="training-runs__caveat">{run.settings_json.note}</span>
               )}

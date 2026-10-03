@@ -29,6 +29,7 @@ from app.ml.models import DEFAULT_MODEL_ID
 from app.ml.device import resolve_device
 from app.ml.weights import ensure_weights
 from app.services import training
+from app.services.training import evaluate_with_ultralytics as evaluate
 from app.services.training import train_with_ultralytics as train
 from app.services.frame_sampler import SampledFrame, decode_sampled_frames
 from app.services.frame_selection import FrameSignals, brightness_of, frame_quality, perceptual_hash, select_frames
@@ -216,6 +217,25 @@ def run_train_job(db: Session, params: dict, report: ProgressReporter) -> dict:
         run.completed_at = _utcnow()
         db.commit()
         raise
+
+    # Tested before it is added, and never at the cost of adding it:
+    # the weights are trained and paid for either way.
+    report(0.96, "Testing the model on the test split")
+    try:
+        test_metrics = training.evaluate_on_test(
+            evaluate,
+            weights=best,
+            export_dir=training.dataset_yaml(workspace, version).parent,
+            data_yaml=training.dataset_yaml(workspace, version),
+            image_size=run.image_size,
+            device=resolve_device(get_settings().device),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Testing training run %s failed", run.id, exc_info=True)
+        test_metrics = {"error": f"Testing failed: {exc}"[:500]}
+    # A new dict, so the JSON column is seen to have changed.
+    run.settings_json = {**(run.settings_json or {}), "test_metrics": test_metrics}
+    db.commit()
 
     report(0.97, "Adding the trained model")
     model_id = training.adopt_weights(best, weights_dir, run, version.version)
