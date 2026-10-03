@@ -19,11 +19,21 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _has_sources() -> bool:
+    # Every real database has the table; a bare one built only to test
+    # the upgrade path does not, and adding a column to nothing fails.
+    return "sources" in sa.inspect(op.get_bind()).get_table_names()
+
+
 def upgrade() -> None:
+    if not _has_sources():
+        return
     with op.batch_alter_table("sources") as batch:
         batch.add_column(sa.Column("name", sa.String(length=128), nullable=True))
 
 
 def downgrade() -> None:
+    if not _has_sources():
+        return
     with op.batch_alter_table("sources") as batch:
         batch.drop_column("name")
