@@ -29,6 +29,8 @@ interface Props {
    *  onRejected because the frame no longer exists - there is nothing
    *  left to put back. */
   onDeleted?: (frameId: string) => void;
+  /** Moving between frames, shown in the toolbar with the other actions. */
+  nav?: React.ReactNode;
 }
 
 type Box = FrameAnnotationWrite;
@@ -149,6 +151,7 @@ function LabelCanvas({
   onDirtyChange,
   onRejected,
   onDeleted,
+  nav,
 }: Props) {
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [classes, setClasses] = useState<ProjectClass[]>([]);
@@ -179,6 +182,26 @@ function LabelCanvas({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  // The frame's on-screen size: as large as fits the space left, at the
+  // frame's own proportions. Null where nothing can be measured (a test
+  // without layout), and the image then keeps its natural size.
+  const [fitted, setFitted] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return;
+    const fit = () => {
+      const { clientWidth, clientHeight } = viewport;
+      if (clientWidth <= 0 || clientHeight <= 0 || frame.width <= 0 || frame.height <= 0) return;
+      const scale = Math.min(clientWidth / frame.width, clientHeight / frame.height);
+      setFitted({ width: Math.floor(frame.width * scale), height: Math.floor(frame.height * scale) });
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [frame.width, frame.height]);
   const dragRef = useRef<Drag | null>(null);
   // Mirrors `boxes` so a mouseup can append and select in one step.
   const boxesRef = useRef<Box[]>([]);
@@ -646,85 +669,10 @@ function LabelCanvas({
 
   return (
     <div className="label-canvas">
-      <div className="label-canvas__stage" data-testid="label-stage" onMouseDown={startDraw}>
-        <img ref={imgRef} src={api.fullFrameImageUrl(frame.id)} alt={`Frame ${frame.frame_index}`} draggable={false} />
-        <svg
-          className="label-canvas__overlay"
-          viewBox={`0 0 ${frame.width} ${frame.height}`}
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          {boxes.map((box, index) => (
-            <g key={box.id ?? `new-${index}`}>
-              <rect
-                className="label-canvas__box"
-                data-testid="label-box"
-                data-selected={index === selected}
-                x={box.bbox_json[0]}
-                y={box.bbox_json[1]}
-                width={box.bbox_json[2] - box.bbox_json[0]}
-                height={box.bbox_json[3] - box.bbox_json[1]}
-                onMouseDown={(e) => startMove(e, index)}
-              />
-              {Object.keys(box.attributes ?? {}).length > 0 && (
-                // Otherwise the only way to find out which of four
-                // vehicles already has a plate on it is to click all
-                // four.
-                <circle
-                  className="label-canvas__has-attributes"
-                  data-testid="label-has-attributes"
-                  cx={box.bbox_json[2] - labelSize * 0.4}
-                  cy={box.bbox_json[1] + labelSize * 0.4}
-                  r={labelSize * 0.22}
-                />
-              )}
-              <text
-                className="label-canvas__class"
-                data-testid="label-class"
-                x={box.bbox_json[0] + labelSize * 0.3}
-                y={box.bbox_json[1] + labelSize * 1.1}
-                style={{ fontSize: labelSize, strokeWidth: labelSize * 0.25 }}
-              >
-                {classNameOf(box.class_id)}
-              </text>
-            </g>
-          ))}
-          {selectedBox &&
-            selected !== null &&
-            (() => {
-              const points = handlePoints(selectedBox.bbox_json);
-              return HANDLES.map((handle) => {
-                const [hx, hy] = points[handle];
-                return (
-                  <rect
-                    key={handle}
-                    className="label-canvas__handle"
-                    data-testid="label-handle"
-                    data-handle={handle}
-                    x={hx - handleSize / 2}
-                    y={hy - handleSize / 2}
-                    width={handleSize}
-                    height={handleSize}
-                    onMouseDown={(e) => startResize(e, selected, handle)}
-                  />
-                );
-              });
-            })()}
-          {draftBox && (
-            <rect
-              className="label-canvas__draft"
-              data-testid="label-draft"
-              x={draftBox[0]}
-              y={draftBox[1]}
-              width={draftBox[2] - draftBox[0]}
-              height={draftBox[3] - draftBox[1]}
-            />
-          )}
-        </svg>
-      </div>
-
+      {/* Every action on one line above the frame, so none of them is
+          below the fold of a tall image. */}
       <div className="label-canvas__bar">
-        <span>
+        <span className="label-canvas__info">
           frame {frame.frame_index} &middot; {boxes.length} box{boxes.length === 1 ? "" : "es"}
           {/* Said plainly: these are the model's, nothing is saved,
               and the class is still yours to pick. */}
@@ -734,158 +682,38 @@ function LabelCanvas({
             </span>
           )}
           {dirty && " (unsaved)"}
+          {unclassified > 0 && <span className="label-canvas__hint"> &middot; {unclassified} without a class yet</span>}
         </span>
-        {unclassified > 0 && <span className="label-canvas__hint">{unclassified} without a class yet</span>}
-        <button
-          onClick={reject}
-          disabled={saving || skipping || deleting}
-          title="Not worth labelling - set it aside. This can be undone."
-        >
-          {confirmingSkip ? "Skip and lose boxes" : "Skip"}
-        </button>
-        <button
-          className="label-canvas__delete"
-          onClick={deleteForGood}
-          disabled={saving || skipping || deleting}
-          title="Remove this frame and its image from disk. This cannot be undone."
-        >
-          {confirmingDelete ? "Delete for good" : "Delete"}
-        </button>
-        {confirmingDelete && (
-          <button onClick={() => setConfirmingDelete(false)} title="Keep this frame">
-            Cancel
+        {nav && <div className="label-canvas__nav">{nav}</div>}
+        <span className="label-canvas__actions">
+          <button
+            onClick={reject}
+            disabled={saving || skipping || deleting}
+            title="Not worth labelling - set it aside. This can be undone."
+          >
+            {confirmingSkip ? "Skip and lose boxes" : "Skip"}
           </button>
-        )}
-        {confirmingSkip && (
-          <button onClick={() => setConfirmingSkip(false)} title="Keep working on this frame">
-            Cancel
-          </button>
-        )}
-        <button className="btn-primary" onClick={save} disabled={saving || !dirty}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </div>
-
-      {selectedBox && selected !== null && (
-        <div className="label-canvas__selected">
-          <span>
-            Box {selected + 1} of {boxes.length}
-          </span>
-          <label>
-            Class{" "}
-            <select
-              aria-label="Class of selected box"
-              value={selectedBox.class_id === null ? "" : String(selectedBox.class_id)}
-              onChange={(e) => assignClass(e.target.value === "" ? null : Number(e.target.value))}
-            >
-              <option value="">(none)</option>
-              {classes.map((c) => (
-                <option key={c.id} value={String(c.id)}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button aria-label="Delete selected box" onClick={deleteSelected}>
-            Delete
-          </button>
-
-          {attributeDefs.length > 0 && (
-            <div className="label-canvas__attributes" data-testid="label-attributes">
-              {attributeDefs.map((definition) => {
-                const value = (selectedBox.attributes ?? {})[definition.key];
-                if (definition.type === "boolean") {
-                  return (
-                    <label key={definition.key} className="label-canvas__attribute">
-                      <input
-                        type="checkbox"
-                        aria-label={definition.label}
-                        checked={value === true}
-                        onChange={(e) => setAttribute(definition.key, e.target.checked || undefined)}
-                      />
-                      {definition.label}
-                    </label>
-                  );
-                }
-                if (definition.type === "choice") {
-                  return (
-                    <label key={definition.key} className="label-canvas__attribute">
-                      {definition.label}{" "}
-                      <select
-                        aria-label={definition.label}
-                        value={typeof value === "string" ? value : ""}
-                        onChange={(e) => setAttribute(definition.key, e.target.value || undefined)}
-                      >
-                        <option value="">(none)</option>
-                        {(definition.options ?? []).map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  );
-                }
-                return (
-                  <label key={definition.key} className="label-canvas__attribute">
-                    {definition.label}{" "}
-                    <input
-                      type="text"
-                      aria-label={definition.label}
-                      value={typeof value === "string" ? value : ""}
-                      maxLength={definition.max_length ?? undefined}
-                      placeholder={definition.placeholder ?? undefined}
-                      onChange={(e) => setAttribute(definition.key, e.target.value)}
-                    />
-                  </label>
-                );
-              })}
-            </div>
+          {confirmingSkip && (
+            <button onClick={() => setConfirmingSkip(false)} title="Keep working on this frame">
+              Cancel
+            </button>
           )}
-
-          {plateReadings.length > 0 && attributeDefs.some((d) => d.key === "plate_text") && (
-            // Every reading on the frame, not only the ones overlapping
-            // this box: matching them would mean a second copy of the
-            // association threshold active-learning owns, and three
-            // lines is a list a person can simply read.
-            <div className="label-canvas__plate-readings" data-testid="plate-readings">
-              <span>Model read:</span>
-              {plateReadings.map((reading) => (
-                <button
-                  key={reading.normalized_text}
-                  onClick={() => setAttribute("plate_text", reading.normalized_text)}
-                  title={`${(reading.confidence * 100).toFixed(0)}% confident`}
-                >
-                  {reading.normalized_text || "(no text)"}
-                </button>
-              ))}
-            </div>
+          <button
+            className="label-canvas__delete"
+            onClick={deleteForGood}
+            disabled={saving || skipping || deleting}
+            title="Remove this frame and its image from disk. This cannot be undone."
+          >
+            {confirmingDelete ? "Delete for good" : "Delete"}
+          </button>
+          {confirmingDelete && (
+            <button onClick={() => setConfirmingDelete(false)} title="Keep this frame">
+              Cancel
+            </button>
           )}
-        </div>
-      )}
-
-      <div className="label-canvas__shortcuts" data-testid="label-shortcuts">
-        <span>drag to draw</span>
-        <span>
-          <span className="kbd">[</span>/<span className="kbd">]</span> box
-        </span>
-        <span>
-          <span className="kbd">1</span>–<span className="kbd">9</span> class
-        </span>
-        <span>
-          <span className="kbd">0</span> none
-        </span>
-        <span>
-          <span className="kbd">Del</span> delete
-        </span>
-        <span>
-          <span className="kbd">&larr;&uarr;&rarr;&darr;</span> nudge (<span className="kbd">Shift</span> &times;10)
-        </span>
-        <span>
-          <span className="kbd">S</span> save
-        </span>
-        <span>
-          <span className="kbd">Esc</span> deselect
+          <button className="btn-primary" onClick={save} disabled={saving || !dirty}>
+            {saving ? "Saving…" : "Save"}
+          </button>
         </span>
       </div>
 
@@ -894,6 +722,236 @@ function LabelCanvas({
           <IconAlert /> {error}
         </p>
       )}
+
+      <div className="label-canvas__body">
+        {/* The frame is fitted into whatever space is left, so the page
+            never scrolls and the next frame lands in the same place. */}
+        <div className="label-canvas__viewport" ref={viewportRef}>
+          <div
+            className="label-canvas__stage"
+            data-testid="label-stage"
+            onMouseDown={startDraw}
+            style={fitted ? { width: fitted.width, height: fitted.height } : undefined}
+          >
+            <img ref={imgRef} src={api.fullFrameImageUrl(frame.id)} alt={`Frame ${frame.frame_index}`} draggable={false} />
+            <svg
+              className="label-canvas__overlay"
+              viewBox={`0 0 ${frame.width} ${frame.height}`}
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              {boxes.map((box, index) => (
+                <g key={box.id ?? `new-${index}`}>
+                  <rect
+                    className="label-canvas__box"
+                    data-testid="label-box"
+                    data-selected={index === selected}
+                    x={box.bbox_json[0]}
+                    y={box.bbox_json[1]}
+                    width={box.bbox_json[2] - box.bbox_json[0]}
+                    height={box.bbox_json[3] - box.bbox_json[1]}
+                    onMouseDown={(e) => startMove(e, index)}
+                  />
+                  {Object.keys(box.attributes ?? {}).length > 0 && (
+                    // Otherwise the only way to find out which of four
+                    // vehicles already has a plate on it is to click all
+                    // four.
+                    <circle
+                      className="label-canvas__has-attributes"
+                      data-testid="label-has-attributes"
+                      cx={box.bbox_json[2] - labelSize * 0.4}
+                      cy={box.bbox_json[1] + labelSize * 0.4}
+                      r={labelSize * 0.22}
+                    />
+                  )}
+                  <text
+                    className="label-canvas__class"
+                    data-testid="label-class"
+                    x={box.bbox_json[0] + labelSize * 0.3}
+                    y={box.bbox_json[1] + labelSize * 1.1}
+                    style={{ fontSize: labelSize, strokeWidth: labelSize * 0.25 }}
+                  >
+                    {classNameOf(box.class_id)}
+                  </text>
+                </g>
+              ))}
+              {selectedBox &&
+                selected !== null &&
+                (() => {
+                  const points = handlePoints(selectedBox.bbox_json);
+                  return HANDLES.map((handle) => {
+                    const [hx, hy] = points[handle];
+                    return (
+                      <rect
+                        key={handle}
+                        className="label-canvas__handle"
+                        data-testid="label-handle"
+                        data-handle={handle}
+                        x={hx - handleSize / 2}
+                        y={hy - handleSize / 2}
+                        width={handleSize}
+                        height={handleSize}
+                        onMouseDown={(e) => startResize(e, selected, handle)}
+                      />
+                    );
+                  });
+                })()}
+              {draftBox && (
+                <rect
+                  className="label-canvas__draft"
+                  data-testid="label-draft"
+                  x={draftBox[0]}
+                  y={draftBox[1]}
+                  width={draftBox[2] - draftBox[0]}
+                  height={draftBox[3] - draftBox[1]}
+                />
+              )}
+            </svg>
+          </div>
+        </div>
+
+        {/* Beside the frame rather than under it: choosing a box must
+            not push the image around. */}
+        <aside className="label-canvas__side">
+          <div className="label-canvas__side-title">Selected box</div>
+          {selectedBox && selected !== null ? (
+            <div className="label-canvas__selected">
+              <div className="label-canvas__selected-head">
+                <span>
+                  Box {selected + 1} of {boxes.length}
+                </span>
+                <button aria-label="Delete selected box" onClick={deleteSelected}>
+                  Delete
+                </button>
+              </div>
+              <label className="label-canvas__field">
+                Class
+                <select
+                  aria-label="Class of selected box"
+                  value={selectedBox.class_id === null ? "" : String(selectedBox.class_id)}
+                  onChange={(e) => assignClass(e.target.value === "" ? null : Number(e.target.value))}
+                >
+                  <option value="">(none)</option>
+                  {classes.map((c, i) => (
+                    <option key={c.id} value={String(c.id)}>
+                      {i < 9 ? `${i + 1} · ` : ""}
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {attributeDefs.length > 0 && (
+                <div className="label-canvas__attributes" data-testid="label-attributes">
+                  {attributeDefs.map((definition) => {
+                    const value = (selectedBox.attributes ?? {})[definition.key];
+                    if (definition.type === "boolean") {
+                      return (
+                        <label key={definition.key} className="label-canvas__attribute label-canvas__attribute--check">
+                          <input
+                            type="checkbox"
+                            aria-label={definition.label}
+                            checked={value === true}
+                            onChange={(e) => setAttribute(definition.key, e.target.checked || undefined)}
+                          />
+                          {definition.label}
+                        </label>
+                      );
+                    }
+                    if (definition.type === "choice") {
+                      return (
+                        <label key={definition.key} className="label-canvas__attribute">
+                          {definition.label}{" "}
+                          <select
+                            aria-label={definition.label}
+                            value={typeof value === "string" ? value : ""}
+                            onChange={(e) => setAttribute(definition.key, e.target.value || undefined)}
+                          >
+                            <option value="">(none)</option>
+                            {(definition.options ?? []).map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      );
+                    }
+                    return (
+                      <label key={definition.key} className="label-canvas__attribute">
+                        {definition.label}{" "}
+                        <input
+                          type="text"
+                          aria-label={definition.label}
+                          value={typeof value === "string" ? value : ""}
+                          maxLength={definition.max_length ?? undefined}
+                          placeholder={definition.placeholder ?? undefined}
+                          onChange={(e) => setAttribute(definition.key, e.target.value)}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {plateReadings.length > 0 && attributeDefs.some((d) => d.key === "plate_text") && (
+                // Every reading on the frame, not only the ones overlapping
+                // this box: matching them would mean a second copy of the
+                // association threshold active-learning owns, and three
+                // lines is a list a person can simply read.
+                <div className="label-canvas__plate-readings" data-testid="plate-readings">
+                  <span>Model read:</span>
+                  {plateReadings.map((reading) => (
+                    <button
+                      key={reading.normalized_text}
+                      onClick={() => setAttribute("plate_text", reading.normalized_text)}
+                      title={`${(reading.confidence * 100).toFixed(0)}% confident`}
+                    >
+                      {reading.normalized_text || "(no text)"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="label-canvas__side-empty">
+              {boxes.length === 0 ? "Drag on the frame to draw a box." : "Click a box, or press ] to pick one."}
+            </p>
+          )}
+
+          <div className="label-canvas__side-title">Shortcuts</div>
+          <div className="label-canvas__shortcuts" data-testid="label-shortcuts">
+            <span>drag to draw</span>
+            <span>
+              <span className="kbd">[</span>/<span className="kbd">]</span> box
+            </span>
+            <span>
+              <span className="kbd">1</span>–<span className="kbd">9</span> class
+            </span>
+            <span>
+              <span className="kbd">0</span> none
+            </span>
+            <span>
+              <span className="kbd">Del</span> delete
+            </span>
+            <span>
+              <span className="kbd">&larr;&uarr;&rarr;&darr;</span> nudge (<span className="kbd">Shift</span> &times;10)
+            </span>
+            <span>
+              <span className="kbd">S</span> save
+            </span>
+            <span>
+              <span className="kbd">Esc</span> deselect
+            </span>
+            {nav && (
+              <span>
+                <span className="kbd">Ctrl</span>
+                <span className="kbd">&larr;</span>/<span className="kbd">&rarr;</span> frame
+              </span>
+            )}
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

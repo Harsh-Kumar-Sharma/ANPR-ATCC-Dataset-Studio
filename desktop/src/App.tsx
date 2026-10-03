@@ -201,6 +201,18 @@ function Studio() {
     labelFrameNow(frame);
   }
 
+  /** A frame was skipped or deleted: carry on with the next one, in
+   *  the same place, rather than dropping back to the contact sheet. */
+  function moveOnFromFrame() {
+    const list = frameQueue.frames;
+    const at = list.findIndex((f) => f.id === labelFrame?.id);
+    const next = at === -1 ? undefined : (list[at + 1] ?? list[at - 1]);
+    setLabelDirty(false);
+    if (next) labelFrameNow(next);
+    else setLabelFrame(null);
+    setQueueVersion((v) => v + 1);
+  }
+
   /** Open a task's frames: the label workspace, narrowed to its source. */
   function openTask(task: LabelingTask) {
     setActiveTask(task);
@@ -302,7 +314,7 @@ function Studio() {
 
     if (mainView === "label" && labelFrame) {
       return (
-        <>
+        <div className="label-screen">
           {trail}
           {taskBar}
           <LabelCanvas
@@ -312,24 +324,11 @@ function Studio() {
             classesVersion={classesVersion}
             onSaved={() => setQueueVersion((v) => v + 1)}
             onDirtyChange={setLabelDirty}
-            onRejected={() => {
-              // The frame leaves the queue, but the user is still labelling -
-              // the queue picks the next one rather than dropping them out.
-              setLabelDirty(false);
-              setLabelFrame(null);
-              setQueueVersion((v) => v + 1);
-            }}
-            onDeleted={() => {
-              // Same move as a skip. The difference is behind it: there is
-              // no frame left to put back.
-              setLabelDirty(false);
-              setLabelFrame(null);
-              setQueueVersion((v) => v + 1);
-            }}
+            onRejected={moveOnFromFrame}
+            onDeleted={moveOnFromFrame}
+            nav={<FrameNav queue={frameQueue} onShowGrid={() => setMainView("home")} compact />}
           />
-          {/* Under the image, where the work is. */}
-          <FrameNav queue={frameQueue} onShowGrid={() => setMainView("home")} />
-        </>
+        </div>
       );
     }
 
@@ -368,6 +367,9 @@ function Studio() {
       </ModulePage>
     );
   }
+
+  // The canvas is open: the screen holds still and the frame fits it.
+  const labelling = (tab === "label" || (tab === "tasks" && activeTask !== null)) && mainView === "label" && labelFrame !== null;
 
   let page: JSX.Element;
   if (tab === "workflow" && mainView === "player" && playerSource) {
@@ -548,9 +550,9 @@ function Studio() {
             ))}
           </nav>
         </aside>
-        <main className="main-panel">
+        <main className={`main-panel${labelling ? " main-panel--fixed" : ""}`}>
           <JobIndicator activeJobs={activeJobs} />
-          <div className="main-panel__page">{page}</div>
+          <div className={`main-panel__page${labelling ? " main-panel__page--fill" : ""}`}>{page}</div>
         </main>
       </div>
     </div>

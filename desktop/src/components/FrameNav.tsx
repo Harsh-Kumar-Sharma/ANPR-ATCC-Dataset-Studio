@@ -7,6 +7,9 @@ interface Props {
   queue: FrameQueue;
   /** Back to the contact sheet, where this frame was picked from. */
   onShowGrid?: () => void;
+  /** One tight row for the canvas toolbar; the shortcut is listed
+   *  with the canvas's own. */
+  compact?: boolean;
 }
 
 /**
@@ -20,7 +23,7 @@ interface Props {
  * Ctrl/Cmd with the arrow keys does the same thing. Bare arrows are
  * taken: they nudge the selected box by a pixel.
  */
-function FrameNav({ queue, onShowGrid }: Props) {
+function FrameNav({ queue, onShowGrid, compact = false }: Props) {
   const { index, frames, pending } = queue;
 
   useEffect(() => {
@@ -38,13 +41,13 @@ function FrameNav({ queue, onShowGrid }: Props) {
   });
 
   return (
-    <div className="frame-nav">
+    <div className={`frame-nav${compact ? " frame-nav--compact" : ""}`}>
       <div className="frame-nav__row">
         {/* The way back. Picking the hundredth picture, labelling it
             and then having no route to the sheet is a dead end. */}
         {onShowGrid && (
           <button className="frame-nav__grid" onClick={onShowGrid}>
-            &#9638; All frames
+            &#9638; {compact ? "All" : "All frames"}
           </button>
         )}
         <button
@@ -52,7 +55,7 @@ function FrameNav({ queue, onShowGrid }: Props) {
           disabled={!queue.canStep(-1)}
           onClick={() => queue.step(-1, "canvas")}
         >
-          &larr; Previous
+          &larr; {compact ? "Prev" : "Previous"}
         </button>
         <span className="frame-nav__position" data-testid="frame-position">
           {index === -1 ? `${frames.length} frames` : `${index + 1} of ${frames.length}`}
@@ -66,10 +69,12 @@ function FrameNav({ queue, onShowGrid }: Props) {
         </button>
       </div>
 
-      <p className="frame-nav__hint">
-        <span className="kbd">Ctrl</span>
-        <span className="kbd">&larr;</span>/<span className="kbd">&rarr;</span> move between frames
-      </p>
+      {!compact && (
+        <p className="frame-nav__hint">
+          <span className="kbd">Ctrl</span>
+          <span className="kbd">&larr;</span>/<span className="kbd">&rarr;</span> move between frames
+        </p>
+      )}
 
       {/* Only when this is what raised the question. */}
       {pending?.from === "canvas" && (

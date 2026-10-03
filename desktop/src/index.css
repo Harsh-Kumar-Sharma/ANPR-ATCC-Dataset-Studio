@@ -3892,3 +3892,256 @@ label.toggle {
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* ======================================================================
+   The labelling screen holds still: actions in one toolbar on top, the
+   frame fitted into the space left, box details beside it. Nothing
+   scrolls, so the next frame lands exactly where the last one was.
+   ====================================================================== */
+
+.main-panel--fixed {
+  overflow: hidden;
+}
+
+.main-panel__page--fill {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.7rem 1rem 0.8rem;
+}
+
+.label-screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.label-screen .module-crumb {
+  max-width: none;
+  margin: 0 0 0.45rem;
+}
+
+.label-screen .task-bar {
+  max-width: none;
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.label-screen .label-canvas {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  gap: 0.5rem;
+}
+
+.label-canvas__bar {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.label-canvas__bar .btn-primary {
+  margin-left: 0;
+}
+
+.label-canvas__info {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.label-canvas__unsaved {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.label-canvas__nav {
+  position: relative;
+  display: flex;
+}
+
+.label-canvas__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.label-canvas__actions .btn-primary {
+  padding: 4px 16px;
+  font-size: 13px;
+}
+
+/* Prev / position / Next as one tight group in the toolbar. */
+.frame-nav--compact {
+  margin: 0;
+}
+
+.frame-nav--compact .frame-nav__row {
+  gap: 0.35rem;
+}
+
+.frame-nav--compact .frame-nav__row button {
+  min-width: 0;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.frame-nav--compact .frame-nav__position {
+  min-width: 64px;
+}
+
+/* The unsaved-boxes question drops down from the toolbar instead of
+   pushing the frame down. */
+.frame-nav--compact .frame-nav__prompt {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: 320px;
+  margin: 0;
+  box-shadow: var(--shadow-md);
+}
+
+.label-canvas__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.label-canvas__viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #0d0f13;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.label-canvas__viewport .label-canvas__stage {
+  flex: none;
+  display: block;
+}
+
+.label-canvas__viewport .label-canvas__stage[style] img {
+  width: 100%;
+  height: 100%;
+}
+
+.label-canvas__side {
+  width: 280px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 1100px) {
+  .label-canvas__side {
+    width: 230px;
+  }
+}
+
+.label-canvas__side-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.label-canvas__side-title:not(:first-child) {
+  margin-top: 0.4rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.label-canvas__side-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.label-canvas__side .label-canvas__selected {
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 0.6rem;
+}
+
+.label-canvas__selected-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.label-canvas__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.label-canvas__side select,
+.label-canvas__side .label-canvas__attribute input[type="text"] {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.label-canvas__side .label-canvas__attributes {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.label-canvas__side .label-canvas__attribute {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+  white-space: normal;
+}
+
+.label-canvas__side .label-canvas__attribute--check {
+  flex-direction: row;
+  align-items: center;
+}
+
+.label-canvas__side .label-canvas__shortcuts {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+/* The dot on a box that carries attributes. The old selector named a
+   rect, and the dot is a circle, so it was never styled. */
+.label-canvas__overlay circle.label-canvas__has-attributes {
+  fill: var(--accent);
+  stroke: #000;
+  stroke-width: 0.5;
+  opacity: 0.9;
+  pointer-events: none;
+}
