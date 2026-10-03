@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { AuthProvider, useAuth, useAuthSession } from "./auth";
 import ActiveLearningPanel from "./components/ActiveLearningPanel";
@@ -29,6 +29,7 @@ import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
 import VideoPlayer from "./components/VideoPlayer";
 import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconCheck, IconFilm, IconFolder, IconInbox } from "./Icons";
+import { readPlace, writePlace } from "./location";
 import { sourceLabel } from "./sourceLabel";
 import { useFrameQueue } from "./useFrameQueue";
 import { useJobs } from "./useJobs";
@@ -99,6 +100,15 @@ function Studio() {
   // leave the main pane on a track that answers 404. Safe on first
   // load: nothing is selected until a list has been shown.
   useEffect(() => {
+    if (restoreTrack.current) {
+      const id = restoreTrack.current;
+      if (tracks.some((t) => t.id === id)) {
+        restoreTrack.current = null;
+        setSelectedTrackId(id);
+        setMainView("review");
+      }
+      return;
+    }
     if (selectedTrackId && !tracks.some((t) => t.id === selectedTrackId)) setSelectedTrackId(null);
   }, [tracks, selectedTrackId]);
 
@@ -107,6 +117,75 @@ function Studio() {
   // the request returning.
   const finishedDetectCount = jobs.filter((j) => j.type === "detect" && j.status === "succeeded").length;
   useEffect(refreshTracks, [finishedDetectCount, refreshTracks]);
+
+  // --- staying where you were across a reload ---------------------------
+
+  // True until the place in the URL has been put back, so the project
+  // list does not flash up first.
+  const [restoring, setRestoring] = useState(() => readPlace() !== null);
+  const restoreTrack = useRef<string | null>(null);
+  const arrivedWithPlace = useRef(readPlace() !== null);
+
+  useEffect(() => {
+    const place = readPlace();
+    if (!place) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const found = await api.getProject(place.projectId);
+        if (cancelled) return;
+        handleSelectProject(found);
+        const known = tabs.find((t) => t.id === place.tab);
+        if (known) setTab(known.id);
+        if (place.taskId) {
+          const task = await api.getTask(place.taskId);
+          if (cancelled) return;
+          setActiveTask(task);
+          setLabelSourceId(task.source_id);
+          setTab("tasks");
+        }
+        if (place.frameId) {
+          const frame = await api.getFrame(place.frameId);
+          if (cancelled) return;
+          labelFrameNow(frame);
+        }
+        if (place.trackId) restoreTrack.current = place.trackId;
+        if (place.watchSourceId) {
+          const sources = await api.listSources(found.id);
+          const source = sources.find((x) => x.id === place.watchSourceId);
+          if (!cancelled && source) watchSource(source);
+        }
+      } catch {
+        // Gone, or not yours any more: start from what is still there.
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // And keep the URL describing where the user is now.
+  useEffect(() => {
+    if (restoring) return;
+    if (!project) {
+      writePlace(null);
+      return;
+    }
+    const workflow = tab === "workflow";
+    const labelTab = tab === "label" || (tab === "tasks" && activeTask !== null);
+    writePlace({
+      projectId: project.id,
+      tab,
+      taskId: tab === "tasks" ? activeTask?.id : undefined,
+      frameId: labelTab && mainView === "label" ? labelFrame?.id : undefined,
+      trackId: workflow && mainView === "review" ? (selectedTrackId ?? undefined) : undefined,
+      watchSourceId: workflow && mainView === "player" ? playerSource?.id : undefined,
+    });
+  }, [restoring, project, tab, activeTask, mainView, labelFrame, selectedTrackId, playerSource]);
 
   function handleSelectProject(p: Project | null) {
     setProject(p);
@@ -179,6 +258,7 @@ function Studio() {
     sourceId: labelSourceId,
     onSelect: (frame) => labelFrameNow(frame),
     onSourceChange: setLabelSourceId,
+    resume: !arrivedWithPlace.current,
   });
 
   function labelFrameNow(frame: Frame) {
@@ -244,6 +324,15 @@ function Studio() {
     if (nextIndex >= 0 && nextIndex < tracks.length) {
       setSelectedTrackId(tracks[nextIndex].id);
     }
+  }
+
+  if (restoring) {
+    return (
+      <div className="app-shell">
+        <AppHeader />
+        <div className="app-shell__body app-shell__body--picker" aria-busy="true" />
+      </div>
+    );
   }
 
   if (!project) {

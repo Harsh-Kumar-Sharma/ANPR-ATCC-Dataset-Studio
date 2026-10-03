@@ -206,6 +206,7 @@ export const api = {
   upgradeSchema: () => request<SchemaUpgradeResult>("/schema/upgrade", { method: "POST" }),
 
   listProjects: () => request<Project[]>("/projects"),
+  getProject: (projectId: string) => request<Project>(`/projects/${projectId}`),
   createProject: (name: string, classPreset?: string) =>
     request<Project>("/projects", {
       method: "POST",

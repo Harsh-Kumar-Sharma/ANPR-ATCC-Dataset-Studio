@@ -87,6 +87,9 @@ interface Options {
   sourceId?: string | null;
   onSelect: (frame: Frame) => void;
   onSourceChange?: (sourceId: string | null) => void;
+  /** Reopen the frame last worked on when the queue first loads. Off
+   *  when the app already knows where the user is - the URL said. */
+  resume?: boolean;
 }
 
 /**
@@ -109,6 +112,7 @@ export function useFrameQueue({
   sourceId: sourceIdProp,
   onSelect,
   onSourceChange,
+  resume = true,
 }: Options): FrameQueue {
   const [frames, setFrames] = useState<Frame[]>([]);
   const [progress, setProgress] = useState<QueueProgress | null>(null);
@@ -180,7 +184,7 @@ export function useFrameQueue({
       if (cancelled || !list || projectId === null) return;
       // Put the user back where they were, once, and only if they are
       // not already looking at something.
-      if (resumed || selectedFrameId !== null) return;
+      if (!resume || resumed || selectedFrameId !== null) return;
       setResumed(true);
       const last = readLastFrame(projectId);
       const frame = list.find((f) => f.id === last);
