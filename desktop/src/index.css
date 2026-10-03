@@ -4213,3 +4213,8 @@ label.toggle {
   color: var(--danger);
   font-weight: 700;
 }
+
+/* The remove question, inside the source it is about. */
+.source-list li .source-remove-confirm {
+  margin: 0.4rem 0 0;
+}

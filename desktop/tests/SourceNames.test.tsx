@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api";
 import SourcePanel from "../src/components/SourcePanel";
@@ -74,5 +74,25 @@ describe("naming a source", () => {
 
     expect(screen.getByRole("button", { name: "160.187.179.196 · ch 1" })).toBeInTheDocument();
     expect(rename).not.toHaveBeenCalled();
+  });
+});
+
+describe("removing a source from a long list", () => {
+  it("asks right under the source, not after the whole list", async () => {
+    vi.restoreAllMocks();
+    const second = { ...live, id: "s-2", name: "Lane 2" };
+    vi.spyOn(api, "listSources").mockResolvedValue([live as never, second as never]);
+    vi.spyOn(api, "listModels").mockResolvedValue([]);
+    vi.spyOn(api, "getSourceContents").mockResolvedValue({
+      frames: 0, tracks: 0, labels: 0, bytes: 0, running_jobs: 0, files_removed: false,
+    });
+    render(<SourcePanel project={project} onProcessed={() => {}} onWatch={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /remove 160\.187/i }));
+
+    const item = screen.getByRole("button", { name: "160.187.179.196 · ch 1" }).closest("li") as HTMLElement;
+    expect(await within(item).findByRole("button", { name: /remove this source/i })).toBeInTheDocument();
+    const other = screen.getByRole("button", { name: "Lane 2" }).closest("li") as HTMLElement;
+    expect(within(other).queryByRole("button", { name: /remove this source/i })).not.toBeInTheDocument();
   });
 });

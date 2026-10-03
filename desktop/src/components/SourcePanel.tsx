@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { IconAlert, IconCheck, IconFilm, IconPencil, IconPlay, IconX } from "../Icons";
 import ModelPicker, { useModelChoice } from "./ModelPicker";
@@ -55,6 +55,12 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
   const [doomed, setDoomed] = useState<Source | null>(null);
   const [contents, setContents] = useState<SourceContents | null>(null);
   const [removing, setRemoving] = useState(false);
+  const confirmRef = useRef<HTMLDivElement>(null);
+
+  // Brought into view when it opens, wherever the list was scrolled.
+  useEffect(() => {
+    if (doomed) confirmRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [doomed]);
   /** The source being renamed, and the name typed so far. */
   const [naming, setNaming] = useState<{ id: string; draft: string } | null>(null);
   const [savingName, setSavingName] = useState(false);
@@ -237,7 +243,8 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
         </button>
       </form>
 
-      {error && (
+      {/* While a removal is being asked about, its own box says it. */}
+      {error && !doomed && (
         <p className="error" style={{ marginBottom: "0.6rem" }}>
           <IconAlert /> {error}
         </p>
@@ -360,45 +367,52 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
                 <button onClick={() => handleFreeze(s)}>Freeze as validation clip</button>
               </span>
             )}
+            {/* Under the source it is about, not after the whole list:
+                with a dozen sources it was opening off-screen, and the
+                cross looked as if it did nothing. */}
+            {doomed?.id === s.id && (
+      <div className="delete-confirm source-remove-confirm" ref={confirmRef}>
+                <p className="delete-confirm-title">
+                  Remove <strong>{sourceLabel(doomed)}</strong>?
+                </p>
+                {error && (
+                  <p className="error">
+                    <IconAlert /> {error}
+                  </p>
+                )}
+                {contents === null ? (
+                  <p className="empty">{error ? "Could not read what is in this source." : "Working out what is in it…"}</p>
+                ) : (
+                  <>
+                    <p className="delete-summary" data-testid="remove-source-summary">
+                      This destroys {contents.labels} label(s), {contents.tracks} track(s), {contents.frames} frame(s) and{" "}
+                      {readableSize(contents.bytes)} of files. Datasets you have already exported are not touched. It cannot
+                      be undone.
+                    </p>
+                    {removeBusy && (
+                      <p className="error">
+                        <IconAlert /> {contents.running_jobs} unfinished job(s) or live capture(s) against this source. Wait
+                        for them to finish, cancel them, or stop the capture first.
+                      </p>
+                    )}
+                  </>
+                )}
+                <div className="delete-confirm-actions">
+                  <button onClick={() => { setDoomed(null); setContents(null); }}>Cancel</button>
+                  <button
+                    className="btn-danger"
+                    disabled={contents === null || removeBusy || removing}
+                    onClick={confirmRemove}
+                  >
+                    {removing ? "Removing…" : "Remove this source"}
+                  </button>
+                </div>
+              </div>
+            )}
           </li>
         ))}
         {sources.length === 0 && <li className="empty">No sources imported yet.</li>}
       </ul>
-
-      {doomed && (
-        <div className="delete-confirm">
-          <p className="delete-confirm-title">
-            Remove <strong>{sourceLabel(doomed)}</strong>?
-          </p>
-          {contents === null ? (
-            <p className="empty">{error ? "Could not read what is in this source." : "Working out what is in it…"}</p>
-          ) : (
-            <>
-              <p className="delete-summary" data-testid="remove-source-summary">
-                This destroys {contents.labels} label(s), {contents.tracks} track(s), {contents.frames} frame(s) and{" "}
-                {readableSize(contents.bytes)} of files. Datasets you have already exported are not touched. It cannot
-                be undone.
-              </p>
-              {removeBusy && (
-                <p className="error">
-                  <IconAlert /> {contents.running_jobs} unfinished job(s) or live capture(s) against this source. Wait
-                  for them to finish, cancel them, or stop the capture first.
-                </p>
-              )}
-            </>
-          )}
-          <div className="delete-confirm-actions">
-            <button onClick={() => { setDoomed(null); setContents(null); }}>Cancel</button>
-            <button
-              className="btn-danger"
-              disabled={contents === null || removeBusy || removing}
-              onClick={confirmRemove}
-            >
-              {removing ? "Removing…" : "Remove this source"}
-            </button>
-          </div>
-        </div>
-      )}
 
       <ModelPicker choice={modelChoice} id="detect-model" />
 
