@@ -104,13 +104,14 @@ def fake_training(monkeypatch):
     """Training that writes a checkpoint and reports two epochs."""
     calls: list[dict] = []
 
-    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch):
+    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch, augmentation=None):
         calls.append(
             {
                 "weights": Path(weights),
                 "data_yaml": Path(data_yaml),
                 "epochs": epochs,
                 "image_size": image_size,
+                "augmentation": augmentation,
             }
         )
         on_epoch(TrainingProgress(epoch=1, epochs=epochs, loss=1.5, map50=0.20))
@@ -418,7 +419,7 @@ def test_training_is_given_a_device_ultralytics_understands(tmp_path, models_dir
 
     seen: dict = {}
 
-    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch):
+    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch, augmentation=None):
         seen["device"] = device
         best = Path(output_dir) / "run" / "weights" / "best.pt"
         best.parent.mkdir(parents=True, exist_ok=True)
@@ -444,7 +445,7 @@ def test_an_explicit_cpu_setting_is_honoured(tmp_path, models_dir, monkeypatch):
 
     seen: dict = {}
 
-    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch):
+    def train(weights, data_yaml, output_dir, epochs, image_size, device, on_epoch, augmentation=None):
         seen["device"] = device
         best = Path(output_dir) / "run" / "weights" / "best.pt"
         best.parent.mkdir(parents=True, exist_ok=True)
@@ -674,3 +675,66 @@ def test_workers_and_batch_can_be_tuned_per_machine(monkeypatch, tmp_path):
 
     assert trained_with["workers"] == 0
     assert trained_with["batch"] == 4
+
+
+# --- training a plate detector ----------------------------------------------
+
+
+def test_a_plate_detector_is_never_shown_mirrored_plates():
+    plate = training.augmentation_for(["vehicle_plate"])
+    assert plate["fliplr"] == 0.0
+    assert plate["degrees"] <= 5
+    assert plate["patience"] > 0
+
+
+def test_anything_else_keeps_the_ultralytics_defaults():
+    """A mirrored car is still a car."""
+    assert training.augmentation_for(["car", "bus", "truck"]) == {}
+
+
+def test_the_augmentation_reaches_ultralytics(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "ultralytics", types.SimpleNamespace(YOLO=_RecordingYolo))
+    training.train_with_ultralytics(
+        weights=tmp_path / "base.pt",
+        data_yaml=tmp_path / "data.yaml",
+        output_dir=tmp_path / "out",
+        epochs=1,
+        image_size=960,
+        device="cpu",
+        on_epoch=lambda progress: None,
+        augmentation={"fliplr": 0.0, "patience": 30},
+    )
+    assert _RecordingYolo.trained_with["fliplr"] == 0.0
+    assert _RecordingYolo.trained_with["patience"] == 30
+    assert _RecordingYolo.trained_with["imgsz"] == 960
+
+
+def test_a_run_records_and_uses_what_it_was_trained_with(tmp_path, models_dir, fake_training):
+    """This project's classes are vehicles, so it keeps the defaults - and
+    says so on the run, where it can be read back later."""
+    project, version = _exported_version(tmp_path, "Records Augmentation")
+
+    with run_jobs_inline():
+        status, body = _start(project, version)
+
+    assert status == 202, body
+    run = client.get(f"/training-runs/{body['run']['id']}").json()
+    assert run["settings_json"]["augmentation"] == {}
+    assert fake_training[-1]["augmentation"] is None
+
+
+def test_the_classes_are_read_from_what_was_exported(tmp_path):
+    """The export's own snapshot, not today's class list: a class
+    renamed since must not change how that version is trained."""
+    import json
+
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"config": {"classes": [{"id": 1, "name": "vehicle_plate"}]}}), encoding="utf-8"
+    )
+    with SessionLocal() as db:
+        names = training._exported_class_names(db, None, tmp_path)  # type: ignore[arg-type]
+    assert names == ["vehicle_plate"]
+    assert training.augmentation_for(names)["fliplr"] == 0.0

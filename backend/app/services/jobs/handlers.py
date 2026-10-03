@@ -206,6 +206,7 @@ def run_train_job(db: Session, params: dict, report: ProgressReporter) -> dict:
             # never heard of it and refuses the run outright.
             device=resolve_device(get_settings().device),
             on_epoch=on_epoch,
+            augmentation=(run.settings_json or {}).get("augmentation") or None,
         )
     except BaseException as exc:
         # The row has to reflect it, or the GPU stays held against

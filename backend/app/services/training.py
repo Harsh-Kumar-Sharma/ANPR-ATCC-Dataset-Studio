@@ -32,6 +32,38 @@ from app.services.run_estimate import free_bytes_for
 
 logger = logging.getLogger(__name__)
 
+#: Augmentation for a number-plate detector, passed to Ultralytics.
+#:
+#: Its defaults are for general objects and mirror half the training
+#: images left-right. A mirrored plate does not exist on a real road -
+#: the model is taught characters backwards - so plates turn that off,
+#: and keep rotation and shear small: a gantry camera sees plates
+#: nearly level. Mosaic stays on but is closed for the last epochs so
+#: training ends on whole, natural frames; patience stops a run that
+#: has stopped improving instead of spending the rest of its epochs.
+PLATE_AUGMENTATION: dict[str, float | int] = {
+    "fliplr": 0.0,
+    "flipud": 0.0,
+    "degrees": 5.0,
+    "shear": 2.0,
+    "perspective": 0.0005,
+    "translate": 0.1,
+    "scale": 0.5,
+    "mosaic": 1.0,
+    "close_mosaic": 10,
+    "mixup": 0.0,
+    "patience": 30,
+}
+
+
+def augmentation_for(class_names: list[str]) -> dict[str, float | int]:
+    """The plate settings when any class is a plate; Ultralytics' own
+    defaults otherwise - a mirrored car is still a car."""
+    if any("plate" in name.lower() for name in class_names):
+        return dict(PLATE_AUGMENTATION)
+    return {}
+
+
 #: Statuses that mean the run is still going, and so still hold the GPU.
 UNFINISHED = ("pending", "running")
 
@@ -162,6 +194,23 @@ def write_data_yaml(
     return Path(paths["data_yaml_path"])
 
 
+def _exported_class_names(db: Session, project: Project, export_dir: Path) -> list[str]:
+    """The classes the export was made with, falling back to the project's."""
+    import json
+
+    from app.services.class_definitions import class_names_for
+
+    manifest_path = export_dir / "manifest.json"
+    if manifest_path.is_file():
+        snapshot = json.loads(manifest_path.read_text(encoding="utf-8")).get("class_schema") or []
+        if snapshot:
+            return [c["name"] for c in snapshot]
+        classes = json.loads(manifest_path.read_text(encoding="utf-8")).get("config", {}).get("classes") or []
+        if classes:
+            return [c["name"] for c in classes]
+    return list(class_names_for(db, project.id))
+
+
 def prepare(
     db: Session,
     project: Project,
@@ -200,6 +249,7 @@ def prepare(
     # which one that is depends on what was exported.
     val_split, note = choose_validation_split(export_dir)
     write_data_yaml(db, project, dataset_version, export_dir, val_split=val_split)
+    augmentation = augmentation_for(_exported_class_names(db, project, export_dir))
 
     # An unknown base model is a 404 from here, the same as everywhere
     # else a model id is accepted.
@@ -219,7 +269,14 @@ def prepare(
         base_model_id=base_model_id,
         epochs=epochs,
         image_size=image_size,
-        settings_json={**(settings or {}), "validated_on": val_split, **({"note": note} if note else {})},
+        settings_json={
+            **(settings or {}),
+            "validated_on": val_split,
+            # Recorded on the run, so what it was trained with can be
+            # read back later, and passed to the trainer from here.
+            "augmentation": augmentation,
+            **({"note": note} if note else {}),
+        },
         status="pending",
     )
     db.add(run)
@@ -239,6 +296,7 @@ def train_with_ultralytics(
     image_size: int,
     device: str | None,
     on_epoch: Callable[[TrainingProgress], None],
+    augmentation: dict | None = None,
 ) -> Path:
     """Run Ultralytics training and return the best checkpoint.
 
@@ -288,6 +346,7 @@ def train_with_ultralytics(
         project=str(output_dir.resolve()),
         name="run",
         exist_ok=True,
+        **(augmentation or {}),
     )
 
     best = _written_checkpoint(model, results, output_dir)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import ModelPicker, { useModelChoice } from "./ModelPicker";
 import type { DatasetVersion, Job, Project, TrainingRun } from "../types";
@@ -34,6 +34,26 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
   const [versionId, setVersionId] = useState<string>("");
   const [epochs, setEpochs] = useState(100);
   const [imageSize, setImageSize] = useState(640);
+  // A plate is a few dozen pixels of a 1920-wide frame; at 640 the far
+  // ones are a handful. Plate projects start at 960 instead.
+  const [platesProject, setPlatesProject] = useState(false);
+  const sizeTouched = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getClassSchema(project.id)
+      .then((classes) => {
+        if (cancelled) return;
+        const plates = classes.some((c) => c.name.toLowerCase().includes("plate"));
+        setPlatesProject(plates);
+        if (plates && !sizeTouched.current) setImageSize(960);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id]);
   const [runs, setRuns] = useState<TrainingRun[]>([]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -166,9 +186,19 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
               min={32}
               step={32}
               value={imageSize}
-              onChange={(e) => setImageSize(Math.max(32, Number(e.target.value)))}
+              onChange={(e) => {
+                sizeTouched.current = true;
+                setImageSize(Math.max(32, Number(e.target.value)));
+              }}
             />
           </label>
+          {platesProject && (
+            <p className="training-note">
+              Number plates: trained at {imageSize} without mirrored images (a flipped plate does not exist), little
+              rotation, and stopping early once it stops improving. Detection uses the size the model was trained at.
+              If the GPU runs out of memory at 960, lower the batch on the server (ANPR_TRAIN_BATCH).
+            </p>
+          )}
 
           <button
             className="btn-primary btn-block"
