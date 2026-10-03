@@ -68,7 +68,10 @@ def _session(project: dict, source_id: str, run_id: str, detector, keep: KeepFra
     return RtspCaptureSession(
         run_id=run_id,
         source_id=source_id,
-        keep_frames=keep or KeepFrames(),
+        # Every detected frame, unless a test says otherwise: these
+        # tests are about writing the frame at all. How many of one
+        # vehicle are kept is tested in test_live_frames_per_vehicle.py.
+        keep_frames=keep or KeepFrames(per_vehicle=0),
         adapter=None,  # nothing is started; frames are fed in by hand
         detector=detector,
         tracker=ByteTrackTracker(frame_rate=10.0),

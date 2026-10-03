@@ -99,6 +99,7 @@ def start_rtsp_session(
             enabled=payload.keep_frames,
             every=payload.keep_every,
             max_frames=payload.keep_max_frames,
+            per_vehicle=payload.frames_per_vehicle,
         ),
         adapter=adapter,
         detector=detector,

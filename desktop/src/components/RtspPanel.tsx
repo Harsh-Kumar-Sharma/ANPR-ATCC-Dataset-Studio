@@ -22,6 +22,8 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
   // which is exactly what happened: 2,453 frames, no tracks.
   const [keepFrames, setKeepFrames] = useState(false);
   const [keepEvery, setKeepEvery] = useState(10);
+  // Frames kept of any one vehicle the model tracks: far, middle, near.
+  const [perVehicle, setPerVehicle] = useState(3);
   const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<RtspSessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +94,7 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
       const result = await api.startRtspSession(project.id, url.trim(), expectedFps, modelChoice.modelId, {
         keepFrames,
         every: keepEvery,
+        perVehicle,
       });
       // The backend remembers what was just started; re-read it so
       // the picker has the camera without waiting for a remount.
@@ -203,6 +206,23 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
               and both pickers are in the same sidebar. */}
           <ModelPicker choice={modelChoice} id="live-model" disabled={starting} manage={false} />
 
+          <label className="fps-control">
+            Frames per vehicle
+            <input
+              type="number"
+              min={0}
+              max={50}
+              aria-label="Frames per vehicle"
+              value={perVehicle}
+              onChange={(e) => setPerVehicle(Math.max(0, Math.min(50, Number(e.target.value))))}
+            />
+          </label>
+          <p className="rtsp-hint">
+            {perVehicle === 0
+              ? "Every frame the model finds a plate in is kept - one vehicle can come back dozens of times."
+              : `Each vehicle the model tracks is kept at most ${perVehicle} time(s): when it appears, then only as it comes closer or moves away. Saves labelling the same car over and over.`}
+          </p>
+
           <label className="keep-frames">
             <input
               type="checkbox"
@@ -271,6 +291,12 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
           </div>
           {/* Only when it is being done, so the row does not read as
               "zero frames saved" to someone who did not ask for any. */}
+          {(status.frames_skipped_repeat ?? 0) > 0 && (
+            <div className="stat-row">
+              <span>Repeats of the same vehicle skipped</span>
+              <strong>{status.frames_skipped_repeat}</strong>
+            </div>
+          )}
           {status.frames_saved > 0 && (
             <div className="stat-row">
               <span>Frames saved to label</span>

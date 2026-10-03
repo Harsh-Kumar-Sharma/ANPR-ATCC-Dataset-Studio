@@ -300,6 +300,8 @@ export interface RtspSessionStatus {
   tracks_persisted: number;
   /** How many captured frames were kept for labelling. */
   frames_saved: number;
+  /** Frames with a detection not kept: that vehicle had enough already. */
+  frames_skipped_repeat?: number;
   stopped: boolean;
   error: string | null;
 }

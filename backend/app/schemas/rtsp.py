@@ -25,6 +25,9 @@ class RtspStartRequest(BaseModel):
     keep_every: int = Field(default=10, ge=1)
     #: A ceiling the session cannot pass, however long it runs.
     keep_max_frames: int = Field(default=2000, ge=1)
+    #: Frames kept of any one tracked vehicle - far, middle, near. 0
+    #: keeps every frame a detection lands on.
+    frames_per_vehicle: int = Field(default=3, ge=0, le=50)
 
 
 class RtspStartResult(BaseModel):
@@ -41,6 +44,7 @@ class RtspSessionStatusRead(BaseModel):
     tracks_persisted: int
     #: How many captured frames were kept for labelling.
     frames_saved: int = 0
+    frames_skipped_repeat: int = 0
     stopped: bool
     error: str | None
 

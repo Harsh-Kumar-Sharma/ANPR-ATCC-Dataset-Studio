@@ -53,6 +53,17 @@ class KeepFrames:
     #: A ceiling the session cannot talk its way past, however long
     #: it runs.
     max_frames: int = 2000
+    #: How many frames to keep of any one vehicle the model tracks. 0
+    #: keeps every frame a detection lands on, which is what it did
+    #: before: a vehicle in view for two seconds came back as forty
+    #: near-identical frames to label.
+    per_vehicle: int = 3
+    #: Frames of one vehicle closer together than this are the same
+    #: picture twice.
+    per_vehicle_gap_ms: int = 500
+    #: How much a vehicle's box must have grown or shrunk since its last
+    #: kept frame before another is worth keeping - far, middle, near.
+    per_vehicle_scale_step: float = 1.5
 
 
 @dataclass
@@ -76,6 +87,9 @@ class RtspSessionStatus:
     tracks_persisted: int = 0
     #: How many captured frames were kept for labelling.
     frames_saved: int = 0
+    #: Frames with a detection that were not kept, because that vehicle
+    #: already had enough frames.
+    frames_skipped_repeat: int = 0
     stopped: bool = False
     error: str | None = None
 
@@ -132,6 +146,9 @@ class RtspCaptureSession:
         #: budget, or the other way round.
         self._sampled_saved = 0
         self._detected_saved = 0
+        #: Per tracked vehicle: how many of its frames were kept, when
+        #: the last one was, and how big its box was then.
+        self._kept_by_track: dict[int, tuple[int, int, float]] = {}
 
         self._observations_by_track: ObservationsByTrack = {}
         self._preview = LivePreview()
@@ -253,7 +270,11 @@ class RtspCaptureSession:
         )
         self._maybe_keep_frame(item)
         if tracked:
-            self._keep_detected_frame(item)
+            if self._worth_keeping(tracked, item.timestamp_ms):
+                self._keep_detected_frame(item)
+            else:
+                with self._lock:
+                    self._status.frames_skipped_repeat += 1
         # Published per processed frame, not once per drained batch.
         # When detection is slower than capture the buffer backs up and
         # a single batch can span hundreds of frames, so a batch-level
@@ -262,6 +283,47 @@ class RtspCaptureSession:
         # frames arrived). LivePreview throttles, so this does not
         # JPEG-encode every frame.
         self._publish_preview(item.payload, tracked)
+
+    def _worth_keeping(self, tracked: list[tuple[int, _Observation]], timestamp_ms: int) -> bool:
+        """Whether this frame shows a vehicle not already kept enough.
+
+        A vehicle is kept when it first appears, then again only once
+        its box has grown or shrunk by ``per_vehicle_scale_step`` - it
+        has come noticeably closer, or gone further away - and at least
+        ``per_vehicle_gap_ms`` later, up to ``per_vehicle`` frames. That
+        gives far, middle and near for an approaching vehicle and the
+        same, reversed, for one driving away, instead of every frame
+        it was in view.
+
+        One frame can serve several vehicles; it is kept if any of them
+        wants it, and counts for each of those.
+        """
+        keep = self._keep_frames
+        if keep.per_vehicle <= 0:
+            return True
+        wanted: list[tuple[int, float]] = []
+        for track_id, observation in tracked:
+            # A track's first frame carries a provisional id that is
+            # replaced once it is confirmed; counting it would keep the
+            # same vehicle twice, under two names.
+            if not observation.confirmed:
+                continue
+            x1, y1, x2, y2 = observation.bbox
+            area = max(1.0, (x2 - x1) * (y2 - y1))
+            seen = self._kept_by_track.get(track_id)
+            if seen is None:
+                wanted.append((track_id, area))
+                continue
+            count, last_ms, last_area = seen
+            if count >= keep.per_vehicle or timestamp_ms - last_ms < keep.per_vehicle_gap_ms:
+                continue
+            change = max(area, last_area) / min(area, last_area)
+            if change >= keep.per_vehicle_scale_step:
+                wanted.append((track_id, area))
+        for track_id, area in wanted:
+            count = self._kept_by_track.get(track_id, (0, 0, 0.0))[0]
+            self._kept_by_track[track_id] = (count + 1, timestamp_ms, area)
+        return bool(wanted)
 
     def _keep_detected_frame(self, item) -> None:
         """Write the full frame a detection landed on, asked for or not.

@@ -98,7 +98,7 @@ describe("Keeping the frames a live session captures", () => {
         "rtsp://camera/ch1",
         expect.any(Number),
         null,
-        { keepFrames: false, every: 10 },
+        { keepFrames: false, every: 10, perVehicle: 3 },
       ),
     );
   });
@@ -114,7 +114,7 @@ describe("Keeping the frames a live session captures", () => {
         "rtsp://camera/ch1",
         expect.any(Number),
         null,
-        { keepFrames: true, every: 10 },
+        { keepFrames: true, every: 10, perVehicle: 3 },
       ),
     );
   });
@@ -131,7 +131,7 @@ describe("Keeping the frames a live session captures", () => {
         "rtsp://camera/ch1",
         expect.any(Number),
         null,
-        { keepFrames: true, every: 25 },
+        { keepFrames: true, every: 25, perVehicle: 3 },
       ),
     );
   });
@@ -321,6 +321,7 @@ describe("Starting a camera you have started before", () => {
       expect(api.startRtspSession).toHaveBeenCalledWith(project.id, camera().rtsp_url, 25, null, {
         keepFrames: true,
         every: 15,
+        perVehicle: 3,
       }),
     );
   });
@@ -401,5 +402,35 @@ describe("Starting a camera you have started before", () => {
     await screen.findByPlaceholderText(/rtsp:\/\//i);
 
     expect(screen.queryByRole("button", { name: /forget this camera/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("frames per vehicle", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listModels").mockResolvedValue([]);
+    vi.spyOn(api, "listLiveCameras").mockResolvedValue([]);
+  });
+
+  it("sends how many frames of one vehicle to keep", async () => {
+    const start = vi.spyOn(api, "startRtspSession").mockResolvedValue({
+      source: {} as never,
+      run: { id: "run-1" } as never,
+    });
+    render(<RtspPanel project={project} onSessionEnded={() => {}} onShowPreview={() => {}} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/rtsp:\/\//i), { target: { value: "rtsp://camera/ch1" } });
+    fireEvent.change(screen.getByLabelText(/frames per vehicle/i), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: /start live capture/i }));
+
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        project.id,
+        "rtsp://camera/ch1",
+        expect.any(Number),
+        null,
+        expect.objectContaining({ perVehicle: 2 }),
+      ),
+    );
   });
 });

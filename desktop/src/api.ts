@@ -485,7 +485,7 @@ export const api = {
     rtspUrl: string,
     expectedFps: number,
     modelId?: string | null,
-    keep?: { keepFrames: boolean; every: number },
+    keep?: { keepFrames: boolean; every: number; perVehicle?: number },
   ) =>
     request<RtspStartResult>(`/projects/${projectId}/sources/rtsp/start`, {
       method: "POST",
@@ -495,6 +495,7 @@ export const api = {
         model_id: modelId ?? null,
         keep_frames: keep?.keepFrames ?? false,
         keep_every: keep?.every ?? 10,
+        frames_per_vehicle: keep?.perVehicle ?? 3,
       }),
     }),
 
