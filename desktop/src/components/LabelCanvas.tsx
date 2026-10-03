@@ -187,6 +187,10 @@ function LabelCanvas({
   // frame's own proportions. Null where nothing can be measured (a test
   // without layout), and the image then keeps its natural size.
   const [fitted, setFitted] = useState<{ width: number; height: number } | null>(null);
+  // The full-size image is decoded and written on the server the first
+  // time it is asked for, so it can fail where the thumbnail did not -
+  // a full disk, most often. Without saying so the frame is just black.
+  const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -733,7 +737,14 @@ function LabelCanvas({
             onMouseDown={startDraw}
             style={fitted ? { width: fitted.width, height: fitted.height } : undefined}
           >
-            <img ref={imgRef} src={api.fullFrameImageUrl(frame.id)} alt={`Frame ${frame.frame_index}`} draggable={false} />
+            <img
+              ref={imgRef}
+              src={api.fullFrameImageUrl(frame.id)}
+              alt={`Frame ${frame.frame_index}`}
+              draggable={false}
+              onError={() => setImageFailed(true)}
+              onLoad={() => setImageFailed(false)}
+            />
             <svg
               className="label-canvas__overlay"
               viewBox={`0 0 ${frame.width} ${frame.height}`}
@@ -808,6 +819,16 @@ function LabelCanvas({
               )}
             </svg>
           </div>
+          {imageFailed && (
+            <div className="label-canvas__image-error" role="alert">
+              <IconAlert />
+              <p>
+                This frame's image could not be loaded. The server makes it from the video the first time it is opened,
+                so this usually means its disk is full or the source video is missing. Free some space (Dataset →
+                Storage), then open the frame again.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Beside the frame rather than under it: choosing a box must

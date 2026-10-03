@@ -4145,3 +4145,32 @@ label.toggle {
   opacity: 0.9;
   pointer-events: none;
 }
+
+.label-canvas__viewport {
+  position: relative;
+}
+
+.label-canvas__image-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  text-align: center;
+  color: #e5e7eb;
+  background: rgba(13, 15, 19, 0.85);
+  font-size: 0.9rem;
+}
+
+.label-canvas__image-error svg {
+  width: 28px;
+  height: 28px;
+  color: var(--warning);
+}
+
+.label-canvas__image-error p {
+  max-width: 460px;
+}

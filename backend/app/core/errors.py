@@ -2,6 +2,7 @@ import logging
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,26 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content={"code": exc.code, "message": exc.message},
+        )
+
+    @app.exception_handler(OperationalError)
+    async def handle_database_error(request: Request, exc: OperationalError) -> JSONResponse:
+        # A full disk is the one database failure a user can act on, and
+        # "An unexpected error occurred" hid it behind every panel at once.
+        if "disk is full" in str(exc.orig if exc.orig is not None else exc).lower():
+            logger.error("disk_full path=%s", request.url.path)
+            return JSONResponse(
+                status_code=507,
+                content={
+                    "code": "disk_full",
+                    "message": "The server's disk is full, so nothing can be saved. Free some space "
+                    "(Dataset > Storage, or old Docker images on the server), then try again.",
+                },
+            )
+        logger.exception("unhandled_error path=%s", request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"code": "internal_error", "message": "An unexpected error occurred."},
         )
 
     @app.exception_handler(Exception)

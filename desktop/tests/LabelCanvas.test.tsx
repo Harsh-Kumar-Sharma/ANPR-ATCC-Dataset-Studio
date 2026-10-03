@@ -772,3 +772,23 @@ describe("LabelCanvas: opening with what the model found", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+describe("LabelCanvas: an image that will not load", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "getFramePlateReadings").mockResolvedValue([]);
+    vi.spyOn(api, "listAttributeDefinitions").mockResolvedValue([]);
+    vi.spyOn(api, "getClassSchema").mockResolvedValue(classes);
+    vi.spyOn(api, "getFrameAnnotations").mockResolvedValue([]);
+    vi.spyOn(api, "getFrameSuggestions").mockResolvedValue([]);
+  });
+
+  it("says so instead of showing a black frame", async () => {
+    renderCanvas();
+    await screen.findByText(/0 boxes/);
+
+    fireEvent.error(screen.getByRole("img"));
+
+    expect(await screen.findByText(/could not be loaded/i)).toBeInTheDocument();
+  });
+});
