@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.projects import get_project_or_404
@@ -84,10 +84,18 @@ def list_sources(project_id: str, db: Session = Depends(get_db)) -> list[SourceR
     # One grouped count rather than one query per source: what the
     # list needs is "does this hold anything", and asking per row
     # turns a five-camera project into six round trips.
+    #
+    # Only frames that can be opened. A live detection records a frame
+    # row whether or not its image was written, and an image that was
+    # never written (a full disk, most often) can never be had again -
+    # so counting those said "117 frames saved" beside a Label queue
+    # with nothing in it. Same rule as the queue itself.
     held = dict(
         db.execute(
             select(Frame.source_id, func.count(Frame.id))
+            .join(Source, Frame.source_id == Source.id)
             .where(Frame.source_id.in_([s.id for s in sources]))
+            .where(or_(Source.type != "rtsp", Frame.image_path.is_not(None)))
             .group_by(Frame.source_id)
         ).all()
     )
