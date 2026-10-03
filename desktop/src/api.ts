@@ -289,6 +289,11 @@ export const api = {
       body: JSON.stringify({ path, name: name?.trim() || null, project_id: projectId ?? null }),
     }),
 
+  /** A model's .pt file, saved by the browser itself - to take to
+   *  production or another machine. A link rather than a fetch, like
+   *  the dataset zip: the browser writes it straight to disk. */
+  modelWeightsUrl: (modelId: string) => withToken(`${API_BASE}/models/${encodeURIComponent(modelId)}/weights`),
+
   /** Forget a model you imported. Built-ins are refused. */
   deleteModel: (modelId: string) =>
     request<void>(`/models/${encodeURIComponent(modelId)}`, { method: "DELETE" }),

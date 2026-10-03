@@ -374,6 +374,11 @@ describe("TrainingPanel: what a run scored on the test split", () => {
     expect(scores).toHaveTextContent(/Night \(15 img\).*R 0\.91/);
     expect(screen.getByText("R 0.91")).toHaveClass("training-scores__low");
     expect(screen.getByText("R 0.99")).not.toHaveClass("training-scores__low");
+    // The model it made can be taken to production from here.
+    expect(screen.getByRole("link", { name: /download \.pt/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/models/yolo26m-v5/weights"),
+    );
     // A plate project starts at 960.
     await waitFor(() => expect(screen.getByRole("spinbutton", { name: /image size/i })).toHaveValue(960));
   });

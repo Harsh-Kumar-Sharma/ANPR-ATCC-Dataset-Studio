@@ -66,10 +66,14 @@ async function waitForBackend(timeoutMs: number): Promise<boolean> {
  */
 function handleDownloads(window: BrowserWindow): void {
   window.webContents.session.on("will-download", (_event, item) => {
+    // A dataset zip or a model's weights - whichever was asked for.
+    const name = item.getFilename();
+    const extension = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+    const kinds: Record<string, string> = { zip: "Zip archive", pt: "PyTorch model" };
     const chosen = dialog.showSaveDialogSync(window, {
-      title: "Save dataset",
-      defaultPath: item.getFilename(),
-      filters: [{ name: "Zip archive", extensions: ["zip"] }],
+      title: extension === "pt" ? "Save model" : "Save dataset",
+      defaultPath: name,
+      filters: extension ? [{ name: kinds[extension] ?? extension.toUpperCase(), extensions: [extension] }] : [],
     });
 
     if (!chosen) {

@@ -333,3 +333,32 @@ describe("Models belong to a project", () => {
     await waitFor(() => expect(api.listModels).toHaveBeenCalledWith("p-2"));
   });
 });
+
+describe("downloading a model", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listSources").mockResolvedValue([]);
+  });
+
+  it("offers the chosen model's .pt file", async () => {
+    vi.spyOn(api, "listModels").mockResolvedValue([
+      model({ id: "yolo26m-v5", label: "yolo26m-v5", kind: "custom", weights_file: "yolo26m-v5.pt", present: true }),
+    ]);
+    render(<SourcePanel project={project} onProcessed={() => {}} onWatch={() => {}} />);
+
+    const link = await screen.findByRole("link", { name: /download yolo26m-v5/i });
+    expect(link).toHaveAttribute("href", expect.stringContaining("/models/yolo26m-v5/weights"));
+    expect(link).toHaveAttribute("download", "yolo26m-v5.pt");
+  });
+
+  it("does not offer a model that is not on the server yet", async () => {
+    vi.spyOn(api, "listModels").mockResolvedValue([
+      model({ id: "yolo26s", label: "YOLO26 small", weights_file: "yolo26s.pt", present: false, bytes: 0 }),
+    ]);
+    render(<SourcePanel project={project} onProcessed={() => {}} onWatch={() => {}} />);
+
+    await screen.findByRole("combobox", { name: /model/i });
+    expect(screen.queryByRole("link", { name: /download/i })).not.toBeInTheDocument();
+  });
+});

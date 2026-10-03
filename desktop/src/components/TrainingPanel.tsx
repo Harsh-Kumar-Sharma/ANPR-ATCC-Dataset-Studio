@@ -287,7 +287,17 @@ function TrainingPanel({ project, jobs, refreshKey = 0 }: Props) {
                 {describe(run)}
               </span>
               {run.output_model_id && (
-                <span className="training-runs__model">Added as {run.output_model_id}</span>
+                <span className="training-runs__model">
+                  Added as {run.output_model_id}{" "}
+                  <a
+                    className="training-runs__download"
+                    href={api.modelWeightsUrl(run.output_model_id)}
+                    download={`${run.output_model_id}.pt`}
+                    title="Save this model's .pt file"
+                  >
+                    Download .pt
+                  </a>
+                </span>
               )}
               {/* Said next to the score, not buried: an mAP measured
                   on the training images is not a measure of anything,

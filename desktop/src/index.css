@@ -4218,3 +4218,19 @@ label.toggle {
 .source-list li .source-remove-confirm {
   margin: 0.4rem 0 0;
 }
+
+.model-picker__download {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.training-runs__download {
+  margin-left: 4px;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.training-runs__download:hover {
+  text-decoration: underline;
+}

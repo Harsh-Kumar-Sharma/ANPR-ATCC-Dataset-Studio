@@ -173,6 +173,16 @@ function ModelPicker({ choice, label = "Model", disabled = false, id = "model", 
           {/* Removing is offered only for the selected model, and only
               when it is yours: a built-in's weights would come back on
               the next run anyway. */}
+          {selected?.present && (
+            <a
+              className="button model-picker__download"
+              href={api.modelWeightsUrl(selected.id)}
+              download={`${selected.id}.pt`}
+              title="Save this model's .pt file - to use it in production or on another machine"
+            >
+              Download {selected.label} (.pt)
+            </a>
+          )}
           {selected?.kind === "custom" && (
             <button
               type="button"

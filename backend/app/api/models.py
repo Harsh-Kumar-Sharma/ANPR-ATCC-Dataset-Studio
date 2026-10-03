@@ -10,8 +10,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter
+from fastapi.responses import FileResponse
 
 from app.core.config import get_settings
+from app.core.errors import NotFoundError
 from app.ml import models as model_registry
 from app.ml.factory import get_detector
 from app.schemas.model import ModelImportRequest, ModelRead
@@ -61,3 +63,22 @@ def remove_a_model(model_id: str) -> None:
     # Otherwise the deleted model stays loaded and keeps detecting
     # for the life of the process.
     get_detector.cache_clear()
+
+
+@router.get("/{model_id}/weights")
+def download_model_weights(model_id: str) -> FileResponse:
+    """The model's .pt file, to take somewhere else - production, most
+    likely. Streamed from disk; named after the model, so a download
+    of several does not leave a folder of best.pt files.
+
+    A built-in that has never been fetched has no file yet, and says so.
+    """
+    weights_dir = get_settings().resolved_model_weights_dir()
+    model = model_registry.get_model(model_id, weights_dir)
+    path = weights_dir / model.weights_file
+    if not path.is_file():
+        raise NotFoundError(
+            f"{model.label} has not been downloaded to this server yet. Use it for one run first, "
+            "which fetches it, or download it from Ultralytics directly."
+        )
+    return FileResponse(path, media_type="application/octet-stream", filename=f"{model.id}.pt")
