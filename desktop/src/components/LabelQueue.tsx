@@ -2,7 +2,7 @@ import { api } from "../api";
 import { sourceLabel } from "../sourceLabel";
 import SweepFrames from "./SweepFrames";
 import type { Project } from "../types";
-import type { FrameQueue } from "../useFrameQueue";
+import { POSSIBLE_MISS, type FrameQueue } from "../useFrameQueue";
 import UnsavedPrompt from "./UnsavedPrompt";
 
 interface Props {
@@ -23,6 +23,11 @@ interface Props {
  * The list itself lives in useFrameQueue, because the Previous/Next
  * under the canvas walks the same one. This panel shows it.
  */
+/** A frame's reason for being in the queue, as a person would say it. */
+function reasonLabel(reason: string): string {
+  return reason === POSSIBLE_MISS ? "possible miss - a vehicle with no plate found" : reason;
+}
+
 function LabelQueue({ queue, selectedFrameId, project, onBrowseAll, lockSource = false }: Props) {
   const { frames, progress, sources, sourceId, showSetAside, error, pending } = queue;
 
@@ -83,6 +88,19 @@ function LabelQueue({ queue, selectedFrameId, project, onBrowseAll, lockSource =
         </label>
       )}
 
+      {/* The frames the model got wrong are the ones worth labelling
+          first; one tick to see only them. */}
+      {(queue.missCount > 0 || queue.onlyMisses) && (
+        <label className="label-queue__toggle label-queue__toggle--miss">
+          <input
+            type="checkbox"
+            checked={queue.onlyMisses}
+            onChange={(e) => queue.setOnlyMisses(e.target.checked)}
+          />
+          Only possible misses ({queue.missCount})
+        </label>
+      )}
+
       {error && <p className="label-queue__error">{error}</p>}
 
       {/* Only when the move was asked for here. A question raised by
@@ -118,7 +136,7 @@ function LabelQueue({ queue, selectedFrameId, project, onBrowseAll, lockSource =
                 </button>
                 {frame.selection_reason && (
                   <p className="label-queue__reason" title={frame.selection_reason}>
-                    {frame.selection_reason}
+                    {reasonLabel(frame.selection_reason)}
                   </p>
                 )}
                 {(frame.status === "rejected" || frame.status === "skipped") && (

@@ -28,6 +28,9 @@ class RtspStartRequest(BaseModel):
     #: Frames kept of any one tracked vehicle - far, middle, near. 0
     #: keeps every frame a detection lands on.
     frames_per_vehicle: int = Field(default=3, ge=0, le=50)
+    #: Also run a small vehicle model, and keep frames where it sees a
+    #: vehicle the plate model found no plate on.
+    find_misses: bool = True
 
 
 class RtspStartResult(BaseModel):
@@ -45,6 +48,7 @@ class RtspSessionStatusRead(BaseModel):
     #: How many captured frames were kept for labelling.
     frames_saved: int = 0
     frames_skipped_repeat: int = 0
+    possible_misses_saved: int = 0
     stopped: bool
     error: str | None
 

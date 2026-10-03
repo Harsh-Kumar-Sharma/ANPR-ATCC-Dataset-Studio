@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import type { Frame } from "../types";
 import { IconX } from "../Icons";
+import { POSSIBLE_MISS } from "../useFrameQueue";
 
 interface Props {
   frames: Frame[];
@@ -88,6 +89,11 @@ function FrameGrid({ frames, selectedFrameId, onOpen, onClose }: Props) {
                 {/* Lazily, so opening the grid does not ask for two
                     hundred images the user may never scroll to. */}
                 <img src={api.frameThumbnailUrl(frame.id)} alt="" loading="lazy" decoding="async" />
+                {frame.selection_reason === POSSIBLE_MISS && (
+                  <span className="frame-grid__miss" title="A vehicle with no plate found by the model">
+                    possible miss
+                  </span>
+                )}
                 <span className="frame-grid__caption">
                   <span>frame {frame.frame_index}</span>
                   <span className={`label-queue__status label-queue__status--${frame.status}`}>

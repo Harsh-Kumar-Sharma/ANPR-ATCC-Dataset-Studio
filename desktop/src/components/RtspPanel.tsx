@@ -24,6 +24,9 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
   const [keepEvery, setKeepEvery] = useState(10);
   // Frames kept of any one vehicle the model tracks: far, middle, near.
   const [perVehicle, setPerVehicle] = useState(3);
+  // Run a small vehicle model too, and keep frames of vehicles the
+  // plate model found no plate on.
+  const [findMisses, setFindMisses] = useState(true);
   const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<RtspSessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +98,7 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
         keepFrames,
         every: keepEvery,
         perVehicle,
+        findMisses,
       });
       // The backend remembers what was just started; re-read it so
       // the picker has the camera without waiting for a remount.
@@ -226,6 +230,21 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
           <label className="keep-frames">
             <input
               type="checkbox"
+              aria-label="Find vehicles the model misses"
+              checked={findMisses}
+              onChange={(e) => setFindMisses(e.target.checked)}
+            />
+            Find vehicles the model misses
+          </label>
+          <p className="rtsp-hint">
+            {findMisses
+              ? "A small vehicle model also watches. A vehicle with no plate found on it is kept and marked \"possible miss\" in the Label tab - the frames most worth labelling. Only with a plate model."
+              : "Off: misses are not looked for."}
+          </p>
+
+          <label className="keep-frames">
+            <input
+              type="checkbox"
               checked={keepFrames}
               onChange={(e) => setKeepFrames(e.target.checked)}
             />
@@ -291,6 +310,12 @@ function RtspPanel({ project, onSessionEnded, onShowPreview }: Props) {
           </div>
           {/* Only when it is being done, so the row does not read as
               "zero frames saved" to someone who did not ask for any. */}
+          {(status.possible_misses_saved ?? 0) > 0 && (
+            <div className="stat-row">
+              <span>Possible misses kept</span>
+              <strong>{status.possible_misses_saved}</strong>
+            </div>
+          )}
           {(status.frames_skipped_repeat ?? 0) > 0 && (
             <div className="stat-row">
               <span>Repeats of the same vehicle skipped</span>

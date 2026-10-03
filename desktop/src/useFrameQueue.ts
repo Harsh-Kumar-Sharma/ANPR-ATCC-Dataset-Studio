@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
 import type { Frame, Project, QueueProgress, SourceQueue } from "./types";
 
+/** Why a live frame was kept when a vehicle had no plate found on it. */
+export const POSSIBLE_MISS = "possible_miss";
+
 /** Where the user last was, per project. Browser storage rather than the
  *  database: it is this machine's view of a shared project, and losing
  *  it costs a scroll, not work. */
@@ -55,6 +58,10 @@ export interface FrameQueue {
   sources: SourceQueue[];
   sourceId: string | null;
   showSetAside: boolean;
+  /** Only frames kept because the model missed a vehicle's plate. */
+  onlyMisses: boolean;
+  /** How many of the listed frames are possible misses. */
+  missCount: number;
   error: string | null;
   /** The open frame's place in the list, or -1 when none is open. */
   index: number;
@@ -62,6 +69,7 @@ export interface FrameQueue {
   pending: { frame: Frame; from: Asker } | null;
   chooseSource: (sourceId: string | null) => void;
   setShowSetAside: (show: boolean) => void;
+  setOnlyMisses: (only: boolean) => void;
   refresh: () => Promise<Frame[] | null>;
   /** Open a frame, asking first if the open one has unsaved boxes. */
   open: (frame: Frame, from?: Asker) => void;
@@ -123,6 +131,7 @@ export function useFrameQueue({
   // selection. Shown together because the question the user is asking
   // is the same one - what am I not being offered?
   const [showSetAside, setShowSetAside] = useState<boolean>(false);
+  const [onlyMisses, setOnlyMisses] = useState<boolean>(false);
   // Which source is being worked through; null is all of them. One
   // list across three videos is unreadable - you cannot tell whose
   // frames you are looking at, or finish one clip before the next.
@@ -217,7 +226,11 @@ export function useFrameQueue({
     onSourceChange?.(next);
   }
 
-  const index = frames.findIndex((f) => f.id === selectedFrameId);
+  // Narrowed here rather than on the server: the list is already
+  // loaded, and Previous/Next must walk exactly what is shown.
+  const missCount = frames.filter((f) => f.selection_reason === POSSIBLE_MISS).length;
+  const shown = onlyMisses ? frames.filter((f) => f.selection_reason === POSSIBLE_MISS) : frames;
+  const index = shown.findIndex((f) => f.id === selectedFrameId);
 
   function open(frame: Frame, from: Asker = "queue") {
     if (frame.id === selectedFrameId) return;
@@ -233,8 +246,8 @@ export function useFrameQueue({
    *  With nothing open, a step lands on the first or last frame rather
    *  than doing nothing: the user asked to move somewhere. */
   function neighbour(by: 1 | -1): Frame | undefined {
-    if (index === -1) return frames[by === 1 ? 0 : frames.length - 1];
-    return frames[index + by];
+    if (index === -1) return shown[by === 1 ? 0 : shown.length - 1];
+    return shown[index + by];
   }
 
   function step(by: 1 | -1, from: Asker = "queue") {
@@ -253,16 +266,19 @@ export function useFrameQueue({
   }
 
   return {
-    frames,
+    frames: shown,
     progress,
     sources,
     sourceId,
     showSetAside,
+    onlyMisses,
+    missCount,
     error,
     index,
     pending,
     chooseSource,
     setShowSetAside,
+    setOnlyMisses,
     refresh,
     open,
     step,

@@ -4174,3 +4174,28 @@ label.toggle {
 .label-canvas__image-error p {
   max-width: 460px;
 }
+
+/* --- frames the model missed -------------------------------------------- */
+
+.frame-grid__item {
+  position: relative;
+}
+
+.frame-grid__miss {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #fff;
+  background: var(--warning);
+}
+
+.label-queue__toggle--miss {
+  color: var(--warning);
+  font-weight: 600;
+}

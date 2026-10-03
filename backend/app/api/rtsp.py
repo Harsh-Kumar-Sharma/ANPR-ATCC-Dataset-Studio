@@ -32,6 +32,27 @@ def get_rtsp_connection_provider() -> ConnectionProvider:
     return default_connection_provider
 
 
+def _vehicle_detector_for(plate_detector, wanted: bool, detector_provider: DetectorProvider):
+    """The built-in vehicle model, to notice vehicles with no plate found.
+
+    Only alongside a plate model: if the session's own model is the
+    built-in vehicle detector, every detection is a vehicle and "a
+    vehicle with no plate" would be every vehicle. Never at the cost of
+    the capture - a vehicle model that will not load just means no
+    misses are looked for.
+    """
+    if not wanted:
+        return None
+    names = " ".join(str(n).lower() for n in getattr(plate_detector, "class_names", {}).values())
+    if "plate" not in names:
+        return None
+    try:
+        return detector_provider(DEFAULT_MODEL_ID)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not load the vehicle model; not looking for missed plates", exc_info=True)
+        return None
+
+
 @router.post("/rtsp/start", response_model=RtspStartResult, status_code=201)
 def start_rtsp_session(
     project_id: str,
@@ -100,7 +121,9 @@ def start_rtsp_session(
             every=payload.keep_every,
             max_frames=payload.keep_max_frames,
             per_vehicle=payload.frames_per_vehicle,
+            find_misses=payload.find_misses,
         ),
+        vehicle_detector=_vehicle_detector_for(detector, payload.find_misses, detector_provider),
         adapter=adapter,
         detector=detector,
         tracker=tracker,

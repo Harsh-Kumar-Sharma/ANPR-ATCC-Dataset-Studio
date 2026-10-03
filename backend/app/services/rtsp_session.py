@@ -30,6 +30,35 @@ logger = logging.getLogger(__name__)
 #: more labelling than a day's work.
 DETECTED_FRAME_LIMIT = 5000
 
+#: Why a frame kept for this reason is in the labelling queue.
+POSSIBLE_MISS = "possible_miss"
+
+
+def _unplated_vehicle(
+    vehicle: tuple[float, float, float, float],
+    plates: list[tuple[float, float, float, float]],
+    width: int,
+    height: int,
+    min_area_ratio: float,
+) -> bool:
+    """A vehicle near enough to label, fully in frame, with no plate on it.
+
+    A vehicle cut off by the frame edge is still coming in or already
+    leaving, and its plate may simply be out of the picture - counting
+    those would fill the queue with frames that are not misses at all.
+    """
+    x1, y1, x2, y2 = vehicle
+    if (x2 - x1) * (y2 - y1) < min_area_ratio * width * height:
+        return False
+    margin_x, margin_y = width * 0.01, height * 0.01
+    if x1 <= margin_x or y1 <= margin_y or x2 >= width - margin_x or y2 >= height - margin_y:
+        return False
+    for px1, py1, px2, py2 in plates:
+        cx, cy = (px1 + px2) / 2, (py1 + py2) / 2
+        if x1 <= cx <= x2 and y1 <= cy <= y2:
+            return False
+    return True
+
 
 @dataclass
 class KeepFrames:
@@ -64,6 +93,20 @@ class KeepFrames:
     #: How much a vehicle's box must have grown or shrunk since its last
     #: kept frame before another is worth keeping - far, middle, near.
     per_vehicle_scale_step: float = 1.5
+    #: Look for vehicles the plate model found no plate on, and keep
+    #: those frames - the ones worth labelling most. Needs a vehicle
+    #: detector handed to the session; without one this does nothing.
+    find_misses: bool = True
+    #: How often to run the vehicle detector. It is a second model on
+    #: the same GPU, so not on every frame.
+    miss_check_every_ms: int = 300
+    #: One possible-miss frame at most this often, so a vehicle the
+    #: model never sees is kept once or twice, not for every check.
+    miss_gap_ms: int = 1500
+    miss_max_frames: int = 1000
+    #: A vehicle smaller than this share of the frame is too far away
+    #: for its plate to be labellable, so it is not counted as missed.
+    miss_min_area_ratio: float = 0.01
 
 
 @dataclass
@@ -75,6 +118,8 @@ class _SavedFrame:
     width: int
     height: int
     path: Path
+    #: Why it was kept, for the labelling queue. None for the usual reasons.
+    reason: str | None = None
 
 
 @dataclass
@@ -90,6 +135,8 @@ class RtspSessionStatus:
     #: Frames with a detection that were not kept, because that vehicle
     #: already had enough frames.
     frames_skipped_repeat: int = 0
+    #: Frames kept because a vehicle was seen and no plate on it was.
+    possible_misses_saved: int = 0
     stopped: bool = False
     error: str | None = None
 
@@ -123,6 +170,7 @@ class RtspCaptureSession:
         poll_interval_seconds: float = 0.05,
         source_id: str | None = None,
         keep_frames: KeepFrames | None = None,
+        vehicle_detector: Detector | None = None,
     ) -> None:
         self._run_id = run_id
         self._adapter = adapter
@@ -149,6 +197,11 @@ class RtspCaptureSession:
         #: Per tracked vehicle: how many of its frames were kept, when
         #: the last one was, and how big its box was then.
         self._kept_by_track: dict[int, tuple[int, int, float]] = {}
+        #: Finds vehicles, to notice the ones the plate model did not.
+        self._vehicle_detector = vehicle_detector
+        self._last_miss_check_ms: int | None = None
+        self._last_miss_saved_ms: int | None = None
+        self._misses_saved = 0
 
         self._observations_by_track: ObservationsByTrack = {}
         self._preview = LivePreview()
@@ -269,6 +322,7 @@ class RtspCaptureSession:
             keep_crop=True,
         )
         self._maybe_keep_frame(item)
+        self._maybe_keep_miss(item, tracked)
         if tracked:
             if self._worth_keeping(tracked, item.timestamp_ms):
                 self._keep_detected_frame(item)
@@ -325,6 +379,45 @@ class RtspCaptureSession:
             self._kept_by_track[track_id] = (count + 1, timestamp_ms, area)
         return bool(wanted)
 
+    def _maybe_keep_miss(self, item, tracked: list[tuple[int, _Observation]]) -> None:
+        """Keep the frame if a vehicle is on it and the plate model
+        found no plate on that vehicle.
+
+        The plate model cannot say what it did not see. A vehicle
+        detector can: a car with no plate box anywhere on it is either
+        a plate the model missed, or one too dirty, dark or covered to
+        read - both exactly what the next round of labelling needs.
+        """
+        keep = self._keep_frames
+        if not keep.find_misses or self._vehicle_detector is None:
+            return
+        if self._misses_saved >= keep.miss_max_frames:
+            return
+        now = item.timestamp_ms
+        if self._last_miss_check_ms is not None and now - self._last_miss_check_ms < keep.miss_check_every_ms:
+            return
+        if self._last_miss_saved_ms is not None and now - self._last_miss_saved_ms < keep.miss_gap_ms:
+            return
+        self._last_miss_check_ms = now
+
+        try:
+            vehicles = self._vehicle_detector.detect(item.payload)
+        except Exception:  # noqa: BLE001 - finding misses must never stop a capture
+            logger.warning("Vehicle check failed on live frame %s", item.frame_index, exc_info=True)
+            return
+
+        height, width = item.payload.shape[:2]
+        plates = [observation.bbox for _, observation in tracked]
+        if not any(
+            _unplated_vehicle(vehicle.bbox_xyxy, plates, width, height, keep.miss_min_area_ratio) for vehicle in vehicles
+        ):
+            return
+        if self._write_frame(item, reason=POSSIBLE_MISS):
+            self._misses_saved += 1
+            self._last_miss_saved_ms = now
+            with self._lock:
+                self._status.possible_misses_saved = self._misses_saved
+
     def _keep_detected_frame(self, item) -> None:
         """Write the full frame a detection landed on, asked for or not.
 
@@ -360,7 +453,7 @@ class RtspCaptureSession:
         if self._write_frame(item):
             self._sampled_saved += 1
 
-    def _write_frame(self, item) -> bool:
+    def _write_frame(self, item, reason: str | None = None) -> bool:
         """Write one captured frame to disk and queue its database row.
 
         Written here in the processing thread rather than at capture:
@@ -395,6 +488,7 @@ class RtspCaptureSession:
                 width=width,
                 height=height,
                 path=path,
+                reason=reason,
             )
         )
         self._saved_indexes.add(item.frame_index)
@@ -424,6 +518,8 @@ class RtspCaptureSession:
                 height=saved.height,
             )
             frame.image_path = str(saved.path)
+            if saved.reason and not frame.selection_reason:
+                frame.selection_reason = saved.reason
 
     def _publish_preview(self, frame: np.ndarray, tracked: list[tuple[int, _Observation]]) -> None:
         class_names = self._detector.class_names

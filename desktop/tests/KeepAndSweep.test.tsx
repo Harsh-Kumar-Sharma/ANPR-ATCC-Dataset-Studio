@@ -98,7 +98,7 @@ describe("Keeping the frames a live session captures", () => {
         "rtsp://camera/ch1",
         expect.any(Number),
         null,
-        { keepFrames: false, every: 10, perVehicle: 3 },
+        { keepFrames: false, every: 10, perVehicle: 3, findMisses: true },
       ),
     );
   });
@@ -114,7 +114,7 @@ describe("Keeping the frames a live session captures", () => {
         "rtsp://camera/ch1",
         expect.any(Number),
         null,
-        { keepFrames: true, every: 10, perVehicle: 3 },
+        { keepFrames: true, every: 10, perVehicle: 3, findMisses: true },
       ),
     );
   });
@@ -131,7 +131,7 @@ describe("Keeping the frames a live session captures", () => {
         "rtsp://camera/ch1",
         expect.any(Number),
         null,
-        { keepFrames: true, every: 25, perVehicle: 3 },
+        { keepFrames: true, every: 25, perVehicle: 3, findMisses: true },
       ),
     );
   });
@@ -322,6 +322,7 @@ describe("Starting a camera you have started before", () => {
         keepFrames: true,
         every: 15,
         perVehicle: 3,
+        findMisses: true,
       }),
     );
   });
@@ -432,5 +433,42 @@ describe("frames per vehicle", () => {
         expect.objectContaining({ perVehicle: 2 }),
       ),
     );
+  });
+});
+
+describe("frames the model missed", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    vi.spyOn(api, "listFrames").mockResolvedValue([
+      frame(0),
+      { ...frame(1), selection_reason: "possible_miss" },
+      frame(2),
+      { ...frame(3), selection_reason: "possible_miss" },
+    ]);
+    vi.spyOn(api, "getQueueProgress").mockResolvedValue({
+      pending: 4,
+      labeled: 0,
+      rejected: 0,
+      skipped: 0,
+      total: 4,
+    } as QueueProgress);
+    vi.spyOn(api, "getQueueBySource").mockResolvedValue([]);
+  });
+
+  it("can be shown on their own", async () => {
+    render(<Queue />);
+    const toggle = await screen.findByLabelText(/only possible misses \(2\)/i);
+    expect(screen.getAllByRole("button", { name: /^frame \d+$/i })).toHaveLength(4);
+
+    fireEvent.click(toggle);
+
+    const shown = screen.getAllByRole("button", { name: /^frame \d+$/i }).map((b) => b.getAttribute("aria-label"));
+    expect(shown).toEqual(["Frame 1", "Frame 3"]);
+  });
+
+  it("says why such a frame is in the queue", async () => {
+    render(<Queue />);
+    expect(await screen.findAllByText(/possible miss - a vehicle with no plate found/i)).toHaveLength(2);
   });
 });

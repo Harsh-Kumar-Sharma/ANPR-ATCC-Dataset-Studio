@@ -302,6 +302,8 @@ export interface RtspSessionStatus {
   frames_saved: number;
   /** Frames with a detection not kept: that vehicle had enough already. */
   frames_skipped_repeat?: number;
+  /** Frames kept because a vehicle was seen with no plate found on it. */
+  possible_misses_saved?: number;
   stopped: boolean;
   error: string | null;
 }
