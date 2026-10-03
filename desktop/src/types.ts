@@ -651,3 +651,25 @@ export interface SignedIn {
   expires_at: string;
   user: User;
 }
+
+export type TaskStatus = "assigned" | "in_progress" | "in_review" | "done";
+
+/** One source's frames, given to one person to label. */
+export interface LabelingTask {
+  id: string;
+  project_id: string;
+  project_name: string;
+  source_id: string;
+  source_type: string;
+  source_path_or_uri: string;
+  /** Null once the person it was given to has been deleted. */
+  assignee: { id: string; username: string; display_name: string } | null;
+  status: TaskStatus;
+  /** Why an admin sent it back, until it is submitted again. */
+  review_note: string | null;
+  progress: QueueProgress;
+  created_at: string;
+  started_at: string | null;
+  submitted_at: string | null;
+  completed_at: string | null;
+}

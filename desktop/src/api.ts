@@ -17,6 +17,7 @@ import type {
   FrameAnnotationWrite,
   Job,
   JobSubmitted,
+  LabelingTask,
   LabelBalance,
   OcrCandidate,
   PlateReading,
@@ -168,6 +169,28 @@ export const api = {
   resetUserPassword: (userId: string, newPassword: string) =>
     request<void>(`/users/${userId}/password`, { method: "PUT", body: JSON.stringify({ new_password: newPassword }) }),
   deleteUser: (userId: string) => request<void>(`/users/${userId}`, { method: "DELETE" }),
+
+  // --- labelling tasks ----------------------------------------------------------
+  /** Every task in the project for an admin; only your own for a user. */
+  listTasks: (projectId: string) => request<LabelingTask[]>(`/projects/${projectId}/tasks`),
+  getTask: (taskId: string) => request<LabelingTask>(`/tasks/${taskId}`),
+  createTask: (projectId: string, sourceId: string, assigneeId: string) =>
+    request<LabelingTask>(`/projects/${projectId}/tasks`, {
+      method: "POST",
+      body: JSON.stringify({ source_id: sourceId, assignee_id: assigneeId }),
+    }),
+  reassignTask: (taskId: string, assigneeId: string) =>
+    request<LabelingTask>(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ assignee_id: assigneeId }) }),
+  /** The assignee has begun. Harmless to repeat, and a no-op for an admin looking in. */
+  startTask: (taskId: string) => request<LabelingTask>(`/tasks/${taskId}/start`, { method: "POST" }),
+  /** Refused while any frame is still pending. */
+  submitTask: (taskId: string) => request<LabelingTask>(`/tasks/${taskId}/submit`, { method: "POST" }),
+  acceptTask: (taskId: string) => request<LabelingTask>(`/tasks/${taskId}/accept`, { method: "POST" }),
+  rejectTask: (taskId: string, note: string) =>
+    request<LabelingTask>(`/tasks/${taskId}/reject`, { method: "POST", body: JSON.stringify({ note }) }),
+  reopenTask: (taskId: string) => request<LabelingTask>(`/tasks/${taskId}/reopen`, { method: "POST" }),
+  /** The task only - the frames and their labels stay. */
+  deleteTask: (taskId: string) => request<void>(`/tasks/${taskId}`, { method: "DELETE" }),
 
   /** What deleting a project would destroy. Its own call because a
    *  confirmation that cannot say what is about to go is not one. */

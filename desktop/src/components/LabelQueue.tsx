@@ -12,6 +12,8 @@ interface Props {
   project: Project;
   /** Show every frame at once, as pictures. */
   onBrowseAll?: () => void;
+  /** The queue is one task's source; there is no other to choose. */
+  lockSource?: boolean;
 }
 
 /**
@@ -21,7 +23,7 @@ interface Props {
  * The list itself lives in useFrameQueue, because the Previous/Next
  * under the canvas walks the same one. This panel shows it.
  */
-function LabelQueue({ queue, selectedFrameId, project, onBrowseAll }: Props) {
+function LabelQueue({ queue, selectedFrameId, project, onBrowseAll, lockSource = false }: Props) {
   const { frames, progress, sources, sourceId, showSetAside, error, pending } = queue;
 
   return (
@@ -29,7 +31,7 @@ function LabelQueue({ queue, selectedFrameId, project, onBrowseAll }: Props) {
       <h3>Frames</h3>
 
       {/* One source is not a choice, so it is not offered. */}
-      {sources.length > 1 && (
+      {sources.length > 1 && !lockSource && (
         <label className="queue-source">
           <span>Source</span>
           <select

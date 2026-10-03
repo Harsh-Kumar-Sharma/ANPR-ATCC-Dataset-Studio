@@ -6,6 +6,9 @@ import type { Project, ProjectContents } from "../types";
 
 interface Props {
   onSelect: (project: Project) => void;
+  /** Creating and deleting projects is an admin's; a user only opens
+   *  the projects they have work in. */
+  canManage?: boolean;
 }
 
 /** "3 labels", "1 source" - plural only when it needs to be. */
@@ -59,7 +62,7 @@ function readableSize(bytes: number): string {
   return `${shown.toFixed(shown < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
-function ProjectPicker({ onSelect }: Props) {
+function ProjectPicker({ onSelect, canManage = true }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [newName, setNewName] = useState("");
   const [loading, setLoading] = useState(true);
@@ -182,18 +185,24 @@ function ProjectPicker({ onSelect }: Props) {
                 {/* Its own button rather than anything inside the one
                     that opens the project: a click that reached both
                     would open the project it had just destroyed. */}
-                <button
-                  className="project-delete"
-                  data-testid="delete-project"
-                  aria-label={`Delete ${p.name}`}
-                  title="Delete this project and everything in it"
-                  onClick={() => askToDelete(p)}
-                >
-                  <IconX />
-                </button>
+                {canManage && (
+                  <button
+                    className="project-delete"
+                    data-testid="delete-project"
+                    aria-label={`Delete ${p.name}`}
+                    title="Delete this project and everything in it"
+                    onClick={() => askToDelete(p)}
+                  >
+                    <IconX />
+                  </button>
+                )}
               </li>
             ))}
-            {projects.length === 0 && <li className="empty">No projects yet - create one below.</li>}
+            {projects.length === 0 && (
+              <li className="empty">
+                {canManage ? "No projects yet - create one below." : "No work has been given to you yet. Ask an admin."}
+              </li>
+            )}
           </ul>
         )}
 
@@ -250,32 +259,34 @@ function ProjectPicker({ onSelect }: Props) {
           </div>
         )}
 
-        <form onSubmit={handleCreate} className="new-project-form">
-          <input
-            type="text"
-            placeholder="New project name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
-          <label className="sr-only" htmlFor="class-preset">
-            Classes
-          </label>
-          <select
-            id="class-preset"
-            value={preset}
-            onChange={(e) => setPreset(e.target.value)}
-            title="Which classes this project starts with. You can edit them later."
-          >
-            {CLASS_PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
-            Create
-          </button>
-        </form>
+        {canManage && (
+          <form onSubmit={handleCreate} className="new-project-form">
+            <input
+              type="text"
+              placeholder="New project name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+            />
+            <label className="sr-only" htmlFor="class-preset">
+              Classes
+            </label>
+            <select
+              id="class-preset"
+              value={preset}
+              onChange={(e) => setPreset(e.target.value)}
+              title="Which classes this project starts with. You can edit them later."
+            >
+              {CLASS_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
+              Create
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

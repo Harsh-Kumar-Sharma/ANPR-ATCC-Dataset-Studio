@@ -20,7 +20,7 @@ in the project.
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError
@@ -28,6 +28,7 @@ from app.db.models.annotation import Annotation
 from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
 from app.db.models.job import TERMINAL_JOB_STATUSES, Job
+from app.db.models.labeling_task import LabelingTask
 from app.db.models.ocr_candidate import OcrCandidate
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
@@ -134,6 +135,8 @@ def delete_source(db: Session, source: Source, workspace_path: Path) -> tuple[So
     delete_in(db, Track, Track.id, owned.track_ids)
     delete_in(db, Frame, Frame.id, owned.frame_ids)
     delete_in(db, ProcessingRun, ProcessingRun.id, owned.run_ids)
+    # Its labelling task goes with it: a task is that source's frames.
+    db.execute(delete(LabelingTask).where(LabelingTask.source_id == source.id))
     db.delete(source)
     db.flush()
 

@@ -33,6 +33,7 @@ from app.db.models.dataset_item import DatasetItem
 from app.db.models.dataset_version import DatasetVersion
 from app.db.models.frame import Frame
 from app.db.models.frame_candidate import FrameCandidate
+from app.db.models.labeling_task import LabelingTask
 from app.db.models.job import TERMINAL_JOB_STATUSES, Job
 from app.db.models.ocr_candidate import OcrCandidate
 from app.db.models.processing_run import ProcessingRun
@@ -170,6 +171,7 @@ def delete_project(db: Session, project: Project, workspace_root: Path, *, confi
     _delete_in(db, Track, Track.id, track_ids)
     _delete_in(db, Frame, Frame.id, frame_ids)
     _delete_in(db, ProcessingRun, ProcessingRun.id, run_ids)
+    db.execute(delete(LabelingTask).where(LabelingTask.project_id == project.id))
     _delete_in(db, Source, Source.id, source_ids)
     db.execute(delete(ClassDefinition).where(ClassDefinition.project_id == project.id))
     db.execute(delete(Job).where(Job.project_id == project.id))

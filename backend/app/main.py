@@ -5,7 +5,9 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.active_learning import router as active_learning_router
+from app.api.access import frame_access, project_access, project_frames_access, require_admin
 from app.api.auth import require_user, router as auth_router, users_router
+from app.api.tasks import project_tasks_router, tasks_router
 from app.api.annotation_attributes import attributes_router
 from app.api.classes import router as classes_router
 from app.api.datasets import datasets_router, project_datasets_router
@@ -142,29 +144,34 @@ app.include_router(health_router)
 app.include_router(schema_router)
 app.include_router(auth_router)
 
-# Everything else needs someone signed in.
+# Everything else needs someone signed in. What a plain user may reach
+# beyond that is narrow - their tasks, and the frames in them - and is
+# decided by app.api.access; everything else is for admins.
 _signed_in = [Depends(require_user)]
+_admin = [Depends(require_user), Depends(require_admin)]
 app.include_router(users_router)
-app.include_router(projects_router, dependencies=_signed_in)
-app.include_router(jobs_router, dependencies=_signed_in)
-app.include_router(models_router, dependencies=_signed_in)
-app.include_router(training_router, dependencies=_signed_in)
-app.include_router(training_runs_router, dependencies=_signed_in)
-app.include_router(classes_router, dependencies=_signed_in)
+app.include_router(tasks_router, dependencies=_signed_in)
+app.include_router(project_tasks_router, dependencies=_signed_in)
 app.include_router(attributes_router, dependencies=_signed_in)
-app.include_router(labels_router, dependencies=_signed_in)
-app.include_router(storage_router, dependencies=_signed_in)
-app.include_router(project_frames_router, dependencies=_signed_in)
-app.include_router(frames_router, dependencies=_signed_in)
-app.include_router(sources_router, dependencies=_signed_in)
-app.include_router(processing_runs_router, dependencies=_signed_in)
-app.include_router(playback_router, dependencies=_signed_in)
-app.include_router(processing_profiles_router, dependencies=_signed_in)
-app.include_router(project_tracks_router, dependencies=_signed_in)
-app.include_router(tracks_router, dependencies=_signed_in)
-app.include_router(project_datasets_router, dependencies=_signed_in)
-app.include_router(datasets_router, dependencies=_signed_in)
-app.include_router(evaluation_router, dependencies=_signed_in)
-app.include_router(active_learning_router, dependencies=_signed_in)
-app.include_router(rtsp_router, dependencies=_signed_in)
-app.include_router(rtsp_run_router, dependencies=_signed_in)
+app.include_router(projects_router, dependencies=[*_signed_in, Depends(project_access)])
+app.include_router(project_frames_router, dependencies=[*_signed_in, Depends(project_frames_access)])
+app.include_router(frames_router, dependencies=[*_signed_in, Depends(frame_access)])
+app.include_router(jobs_router, dependencies=_admin)
+app.include_router(models_router, dependencies=_admin)
+app.include_router(training_router, dependencies=_admin)
+app.include_router(training_runs_router, dependencies=_admin)
+app.include_router(classes_router, dependencies=_admin)
+app.include_router(labels_router, dependencies=_admin)
+app.include_router(storage_router, dependencies=_admin)
+app.include_router(sources_router, dependencies=_admin)
+app.include_router(processing_runs_router, dependencies=_admin)
+app.include_router(playback_router, dependencies=_admin)
+app.include_router(processing_profiles_router, dependencies=_admin)
+app.include_router(project_tracks_router, dependencies=_admin)
+app.include_router(tracks_router, dependencies=_admin)
+app.include_router(project_datasets_router, dependencies=_admin)
+app.include_router(datasets_router, dependencies=_admin)
+app.include_router(evaluation_router, dependencies=_admin)
+app.include_router(active_learning_router, dependencies=_admin)
+app.include_router(rtsp_router, dependencies=_admin)
+app.include_router(rtsp_run_router, dependencies=_admin)

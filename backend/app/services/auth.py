@@ -10,11 +10,12 @@ import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, NotFoundError
+from app.db.models.labeling_task import LabelingTask
 from app.db.models.user import ROLE_ADMIN, ROLES, AuthSession, User
 
 PBKDF2_ITERATIONS = 390_000
@@ -174,6 +175,8 @@ def delete_user(db: Session, acting: User, user: User) -> None:
     if user.role == ROLE_ADMIN and user.is_active and _active_admins(db) <= 1:
         raise ConflictError("This is the only active admin. Make someone else an admin first.")
     revoke_all_sessions(db, user.id, commit=False)
+    # Their tasks stay, unassigned, for an admin to hand to someone else.
+    db.execute(update(LabelingTask).where(LabelingTask.assignee_id == user.id).values(assignee_id=None))
     db.delete(user)
     db.commit()
 

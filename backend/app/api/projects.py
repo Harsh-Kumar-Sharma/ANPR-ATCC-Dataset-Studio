@@ -4,12 +4,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.auth import require_user
 from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.core.presets import DEFAULT_PRESET, get_preset
 from app.db.models.project import Project
+from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.project import ProjectContentsRead, ProjectCreate, ProjectDeleteRequest, ProjectRead
+from app.services import labeling_tasks
 from app.services.class_definitions import class_schema_for, seed_project_classes
 from app.services.project_deletion import delete_project, remove_workspace, summarize
 from app.services.workspace import create_project_workspace
@@ -51,8 +54,13 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
 
 
 @router.get("", response_model=list[ProjectRead])
-def list_projects(db: Session = Depends(get_db)) -> list[Project]:
-    return list(db.scalars(select(Project).order_by(Project.created_at.desc())))
+def list_projects(db: Session = Depends(get_db), user: User = Depends(require_user)) -> list[Project]:
+    projects = list(db.scalars(select(Project).order_by(Project.created_at.desc())))
+    if labeling_tasks.is_admin(user):
+        return projects
+    # A user sees the projects they have been given work in.
+    mine = labeling_tasks.project_ids_for(db, user)
+    return [p for p in projects if p.id in mine]
 
 
 @router.get("/{project_id}", response_model=ProjectRead)

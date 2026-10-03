@@ -12,11 +12,13 @@ from fastapi import APIRouter, Depends, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.api.auth import require_user
 from app.api.projects import get_project_or_404
 from app.core.errors import NotFoundError
 from app.db.models.annotation import Annotation
 from app.db.models.frame import Frame
 from app.db.models.source import Source
+from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.frame import (
     DeletedFrameRead,
@@ -30,7 +32,7 @@ from app.schemas.frame import (
 )
 from app.schemas.ocr import PlateReadingRead
 from app.schemas.review import AnnotationRead
-from app.services import frame_deletion, frame_sweep, frames, thumbnails
+from app.services import frame_deletion, frame_sweep, frames, labeling_tasks, thumbnails
 from app.services.plate_text import plate_readings_for_frame
 
 project_frames_router = APIRouter(prefix="/projects/{project_id}/frames", tags=["frames"])
@@ -90,14 +92,21 @@ def sweep_unlabelled(project_id: str, source_id: str | None = None, db: Session 
 
 
 @project_frames_router.get("/by-source", response_model=list[SourceQueueRead])
-def get_queue_by_source(project_id: str, db: Session = Depends(get_db)) -> list[SourceQueueRead]:
+def get_queue_by_source(
+    project_id: str, db: Session = Depends(get_db), user: User = Depends(require_user)
+) -> list[SourceQueueRead]:
     """Each source with its own progress, most work left first.
 
     One call rather than one per source, so the picker can say which
-    clip still needs doing without a request per row.
+    clip still needs doing without a request per row. A user sees only
+    the sources of their own tasks.
     """
     get_project_or_404(db, project_id)
-    return [SourceQueueRead(**asdict(queue)) for queue in frames.queue_by_source(db, project_id)]
+    queues = frames.queue_by_source(db, project_id)
+    if not labeling_tasks.is_admin(user):
+        mine = labeling_tasks.source_ids_for(db, user)
+        queues = [q for q in queues if q.source_id in mine]
+    return [SourceQueueRead(**asdict(queue)) for queue in queues]
 
 
 @project_frames_router.get("/progress", response_model=QueueProgress)

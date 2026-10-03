@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { AuthProvider, useAuthSession } from "./auth";
+import { AuthProvider, useAuth, useAuthSession } from "./auth";
 import ActiveLearningPanel from "./components/ActiveLearningPanel";
 import DatasetPanel from "./components/DatasetPanel";
 import ClassSchemaEditor from "./components/ClassSchemaEditor";
@@ -16,6 +16,10 @@ import StoragePanel from "./components/StoragePanel";
 import TrainingPanel from "./components/TrainingPanel";
 import LivePreview from "./components/LivePreview";
 import LoginScreen from "./components/LoginScreen";
+import MyTasks from "./components/MyTasks";
+import TaskBar from "./components/TaskBar";
+import TaskManager from "./components/TaskManager";
+import { taskSourceName } from "./components/taskBits";
 import UserMenu from "./components/UserMenu";
 import ProjectPicker from "./components/ProjectPicker";
 import RtspPanel from "./components/RtspPanel";
@@ -24,13 +28,13 @@ import SourcePanel from "./components/SourcePanel";
 import TrackBrowser from "./components/TrackBrowser";
 import TrackReview from "./components/TrackReview";
 import VideoPlayer from "./components/VideoPlayer";
-import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconCheck, IconFilm, IconFolder } from "./Icons";
+import { IconArrowLeft, IconBox, IconBroadcast, IconChart, IconCheck, IconFilm, IconFolder, IconInbox } from "./Icons";
 import { sourceLabel } from "./sourceLabel";
 import { useFrameQueue } from "./useFrameQueue";
 import { useJobs } from "./useJobs";
-import type { Frame, Project, Source, Track } from "./types";
+import type { Frame, LabelingTask, Project, Source, Track } from "./types";
 
-type Tab = "workflow" | "label" | "live" | "dataset" | "insights";
+type Tab = "workflow" | "label" | "live" | "dataset" | "insights" | "tasks";
 /** What the open module is showing: its own page, or one item in it. */
 type MainView = "home" | "review" | "player" | "label";
 
@@ -40,13 +44,23 @@ const TABS: { id: Tab; label: string; icon: JSX.Element }[] = [
   { id: "live", label: "Live", icon: <IconBroadcast /> },
   { id: "dataset", label: "Dataset", icon: <IconBox /> },
   { id: "insights", label: "Insights", icon: <IconChart /> },
+  { id: "tasks", label: "Tasks", icon: <IconInbox /> },
 ];
 
+/** A user labels what they are given, and that is all they see. */
+const USER_TABS: typeof TABS = [{ id: "tasks", label: "My tasks", icon: <IconInbox /> }];
+
 function Studio() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const tabs = isAdmin ? TABS : USER_TABS;
+  const homeTab: Tab = isAdmin ? "workflow" : "tasks";
   const [project, setProject] = useState<Project | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("workflow");
+  const [tab, setTab] = useState<Tab>(homeTab);
+  // The task being worked on in the Tasks module, if one is open.
+  const [activeTask, setActiveTask] = useState<LabelingTask | null>(null);
   const [mainView, setMainView] = useState<MainView>("home");
   const [playerSource, setPlayerSource] = useState<Source | null>(null);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
@@ -70,12 +84,13 @@ function Studio() {
     cancel: cancelJob,
     dismiss: dismissJob,
     clearFinished: clearFinishedJobs,
-  } = useJobs(project?.id ?? null);
+  } = useJobs(isAdmin ? (project?.id ?? null) : null);
 
   const refreshTracks = useCallback(() => {
-    if (!project) return;
+    // Tracks are an admin's concern; a user's labelling is frames.
+    if (!project || !isAdmin) return;
     api.listTracks(project.id).then(setTracks);
-  }, [project]);
+  }, [project, isAdmin]);
 
   useEffect(refreshTracks, [refreshTracks]);
 
@@ -97,8 +112,9 @@ function Studio() {
     setProject(p);
     setTracks([]);
     setSelectedTrackId(null);
-    setTab("workflow");
+    setTab(homeTab);
     setMainView("home");
+    setActiveTask(null);
     setPlayerSource(null);
     setLiveRunId(null);
     setLabelFrame(null);
@@ -156,7 +172,7 @@ function Studio() {
   // the canvas walks the same list, and two copies would be two lists
   // disagreeing about which frame comes next.
   const frameQueue = useFrameQueue({
-    project,
+    project: isAdmin || activeTask ? project : null,
     selectedFrameId: labelFrame?.id ?? null,
     dirty: labelDirty,
     refreshKey: queueVersion,
@@ -185,6 +201,26 @@ function Studio() {
     labelFrameNow(frame);
   }
 
+  /** Open a task's frames: the label workspace, narrowed to its source. */
+  function openTask(task: LabelingTask) {
+    setActiveTask(task);
+    setLabelSourceId(task.source_id);
+    setLabelFrame(null);
+    setLabelDirty(false);
+    setTab("tasks");
+    setMainView("home");
+    // Starting is also recorded when the first frame is opened; this
+    // makes "Start" itself count. A failure here is not worth a message.
+    api.startTask(task.id).then(setActiveTask).catch(() => undefined);
+  }
+
+  function closeTask() {
+    setActiveTask(null);
+    setLabelFrame(null);
+    setLabelDirty(false);
+    setMainView("home");
+  }
+
   function showLivePreview(runId: string) {
     setLiveRunId(runId);
   }
@@ -204,14 +240,14 @@ function Studio() {
         <SchemaBanner />
         <AppHeader />
         <div className="app-shell__body app-shell__body--picker">
-          <ProjectPicker onSelect={handleSelectProject} />
+          <ProjectPicker onSelect={handleSelectProject} canManage={isAdmin} />
         </div>
       </div>
     );
   }
 
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId) ?? null;
-  const moduleInfo = TABS.find((t) => t.id === tab)!;
+  const moduleInfo = tabs.find((t) => t.id === tab) ?? tabs[0];
 
   /** A step into one item of a module, with the way back out. */
   function crumb(label: string, onBack: () => void) {
@@ -223,6 +259,113 @@ function Studio() {
         <span className="module-crumb__sep">/</span>
         <span className="module-crumb__here">{label}</span>
       </div>
+    );
+  }
+
+  /**
+   * Labelling: the queue beside the contact sheet, or one frame on the
+   * canvas. The Label module shows it for the whole project; an open
+   * task shows the same thing narrowed to the task's source, with the
+   * task's progress and hand-in above it.
+   */
+  function labelWorkspace(task: LabelingTask | null): JSX.Element {
+    if (!project) return <></>;
+    const taskName = task ? taskSourceName(task) : null;
+    const trail = (
+      <div className="module-crumb">
+        <button className="back-link" onClick={task ? closeTask : () => setMainView("home")}>
+          <IconArrowLeft /> {moduleInfo.label}
+        </button>
+        {taskName && (
+          <>
+            <span className="module-crumb__sep">/</span>
+            {mainView === "label" && labelFrame ? (
+              <button className="back-link module-crumb__step" onClick={() => setMainView("home")}>
+                {taskName}
+              </button>
+            ) : (
+              <span className="module-crumb__here">{taskName}</span>
+            )}
+          </>
+        )}
+        {mainView === "label" && labelFrame && (
+          <>
+            <span className="module-crumb__sep">/</span>
+            <span className="module-crumb__here">Frame {labelFrame.frame_index}</span>
+          </>
+        )}
+      </div>
+    );
+    const taskBar = task && (
+      <TaskBar task={task} refreshKey={queueVersion} onChanged={setActiveTask} />
+    );
+
+    if (mainView === "label" && labelFrame) {
+      return (
+        <>
+          {trail}
+          {taskBar}
+          <LabelCanvas
+            key={labelFrame.id}
+            project={project}
+            frame={labelFrame}
+            classesVersion={classesVersion}
+            onSaved={() => setQueueVersion((v) => v + 1)}
+            onDirtyChange={setLabelDirty}
+            onRejected={() => {
+              // The frame leaves the queue, but the user is still labelling -
+              // the queue picks the next one rather than dropping them out.
+              setLabelDirty(false);
+              setLabelFrame(null);
+              setQueueVersion((v) => v + 1);
+            }}
+            onDeleted={() => {
+              // Same move as a skip. The difference is behind it: there is
+              // no frame left to put back.
+              setLabelDirty(false);
+              setLabelFrame(null);
+              setQueueVersion((v) => v + 1);
+            }}
+          />
+          {/* Under the image, where the work is. */}
+          <FrameNav queue={frameQueue} onShowGrid={() => setMainView("home")} />
+        </>
+      );
+    }
+
+    const body = (
+      <div className="module-grid module-grid--label">
+        <section className="card module-card">
+          <LabelQueue
+            queue={frameQueue}
+            selectedFrameId={labelFrame?.id ?? null}
+            project={project}
+            lockSource={task !== null}
+          />
+        </section>
+        <section className="card module-card">
+          <FrameGrid
+            frames={frameQueue.frames}
+            selectedFrameId={labelFrame?.id ?? null}
+            onOpen={(frame) => frameQueue.open(frame)}
+          />
+        </section>
+      </div>
+    );
+
+    if (task) {
+      return (
+        <>
+          {trail}
+          {taskBar}
+          {body}
+        </>
+      );
+    }
+    return (
+      <ModulePage title="Label" subtitle="Pick a frame and draw the boxes. Your place is remembered.">
+        {body}
+      </ModulePage>
     );
   }
 
@@ -294,53 +437,29 @@ function Studio() {
         </div>
       </ModulePage>
     );
-  } else if (tab === "label" && mainView === "label" && labelFrame) {
+  } else if (tab === "tasks" && activeTask) {
+    page = labelWorkspace(activeTask);
+  } else if (tab === "tasks") {
     page = (
-      <>
-        {crumb(`Frame ${labelFrame.frame_index}`, () => setMainView("home"))}
-        <LabelCanvas
-          key={labelFrame.id}
-          project={project}
-          frame={labelFrame}
-          classesVersion={classesVersion}
-          onSaved={() => setQueueVersion((v) => v + 1)}
-          onDirtyChange={setLabelDirty}
-          onRejected={() => {
-            // The frame leaves the queue, but the user is still labelling -
-            // the queue picks the next one rather than dropping them out.
-            setLabelDirty(false);
-            setLabelFrame(null);
-            setQueueVersion((v) => v + 1);
-          }}
-          onDeleted={() => {
-            // Same move as a skip. The difference is behind it: there is
-            // no frame left to put back.
-            setLabelDirty(false);
-            setLabelFrame(null);
-            setQueueVersion((v) => v + 1);
-          }}
-        />
-        {/* Under the image, where the work is. */}
-        <FrameNav queue={frameQueue} onShowGrid={() => setMainView("home")} />
-      </>
-    );
-  } else if (tab === "label") {
-    page = (
-      <ModulePage title="Label" subtitle="Pick a frame and draw the boxes. Your place is remembered.">
-        <div className="module-grid module-grid--label">
+      <ModulePage
+        title={isAdmin ? "Tasks" : "My tasks"}
+        subtitle={
+          isAdmin
+            ? "Give each source's frames to someone to label, and review what they hand in."
+            : "The labelling given to you. Open one to start; submit it when every frame is done."
+        }
+      >
+        {isAdmin ? (
           <section className="card module-card">
-            <LabelQueue queue={frameQueue} selectedFrameId={labelFrame?.id ?? null} project={project} />
+            <TaskManager project={project} onOpen={openTask} />
           </section>
-          <section className="card module-card">
-            <FrameGrid
-              frames={frameQueue.frames}
-              selectedFrameId={labelFrame?.id ?? null}
-              onOpen={(frame) => frameQueue.open(frame)}
-            />
-          </section>
-        </div>
+        ) : (
+          <MyTasks project={project} onOpen={openTask} />
+        )}
       </ModulePage>
     );
+  } else if (tab === "label") {
+    page = labelWorkspace(null);
   } else if (tab === "live") {
     page = (
       <ModulePage title="Live" subtitle="Watch an RTSP camera with detection, and keep what it sees.">
@@ -412,12 +531,16 @@ function Studio() {
       <div className="app-shell__body">
         <aside className="sidebar">
           <nav className="module-nav" aria-label="Modules">
-            {TABS.map((t) => (
+            {tabs.map((t) => (
               <button
                 key={t.id}
                 className={tab === t.id ? "selected" : ""}
                 aria-current={tab === t.id ? "page" : undefined}
-                onClick={() => setTab(t.id)}
+                onClick={() => {
+                  // Clicking the open module again goes back to its list.
+                  if (t.id === "tasks" && tab === "tasks") closeTask();
+                  setTab(t.id);
+                }}
               >
                 {t.icon}
                 <span>{t.label}</span>

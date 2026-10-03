@@ -3589,3 +3589,239 @@ label.toggle {
 .main-panel__page > .video-player {
   padding: 0.5rem 0 1rem;
 }
+
+/* --- labelling tasks ---------------------------------------------------- */
+
+.task-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.task-new {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 2fr) minmax(200px, 1.4fr) auto;
+  align-items: end;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.task-new__title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  align-self: center;
+  font-weight: 650;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .task-new {
+    grid-template-columns: 1fr;
+  }
+}
+
+.task-filters {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.task-filters button {
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.78rem;
+  background: var(--bg-surface);
+}
+
+.task-filters button.selected {
+  background: var(--accent-muted-bg);
+  border-color: var(--accent-muted-border);
+  color: var(--accent);
+}
+
+.task-filters__n {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.task-filters button.selected .task-filters__n {
+  color: var(--accent);
+}
+
+.task-table select {
+  max-width: 180px;
+}
+
+.task-table__open {
+  padding: 0;
+  border: none;
+  background: none;
+  font-weight: 650;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.task-table__open:hover:not(:disabled) {
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.task-table__note {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.task-table__progress {
+  min-width: 200px;
+}
+
+.task-table__none {
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.task-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.task-progress__bar {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.task-progress__fill {
+  height: 100%;
+  background: var(--success);
+  transition: width 240ms ease-out;
+}
+
+.task-progress__text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.task-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.task-card__icon {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--accent-muted-bg);
+  color: var(--accent);
+}
+
+.task-card__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.98rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-card__hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.task-card__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.task-bar {
+  max-width: 1400px;
+  margin: 0 auto 0.9rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.task-bar__row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.task-bar__row .task-progress {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+.task-bar__who {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.task-bar__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.task-bar__reject {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.task-bar__reject input {
+  flex: 1;
+}
+
+.module-crumb__step {
+  font-weight: 600;
+}
+
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.08);
+}
