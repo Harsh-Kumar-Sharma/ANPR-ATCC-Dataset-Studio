@@ -19,7 +19,14 @@ from app.db.models.project import Project
 from app.db.models.source import Source
 from app.services.annotations import chunked
 from app.services.dataset_query import ExportFrame, query_export_frames
-from app.services.dataset_split import SPLIT_TEST, SPLIT_TRAIN, SPLIT_VAL, compute_split
+from app.services.dataset_split import (
+    PASSAGE_GAP_MS,
+    SPLIT_TEST,
+    SPLIT_TRAIN,
+    SPLIT_VAL,
+    compute_passage_split,
+    compute_split,
+)
 from app.services.dataset_validator import ValidationResult, validate_export
 from app.services.frame_materializer import can_materialize, materialize_frames
 from app.services.yolo_export import format_yolo_label_line, normalize_yolo_bbox
@@ -38,8 +45,8 @@ def export_dataset_version(
     db: Session,
     project: Project,
     workspace_path: Path,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1,
+    train_ratio: float = 0.75,
+    val_ratio: float = 0.15,
     test_ratio: float = 0.1,
     split_seed: int | None = None,
 ) -> tuple[DatasetVersion, ValidationResult, dict]:
@@ -115,7 +122,28 @@ def export_dataset_version(
     frames_by_id = {p.frame.id: p.frame for p in planned}
     sources_by_id: dict[str, Source] = {p.frame.source_id: p.source for p in planned}
 
-    split_by_frame = compute_split(list(frames_by_id), train_ratio, val_ratio, test_ratio, split_seed)
+    # By passage, not by frame: a vehicle's few frames go to one split
+    # together, or validation scores the model on pictures it trained on.
+    # Too few passages to split that way (a first, tiny export) falls
+    # back to frames, and says so - better a weak validation set than
+    # none at all.
+    split_unit = "passage"
+    split_note: str | None = None
+    split_by_frame, passage_count = compute_passage_split(
+        [(f.id, f.source_id, f.timestamp_ms) for f in frames_by_id.values()],
+        train_ratio,
+        val_ratio,
+        test_ratio,
+        split_seed,
+    )
+    if passage_count < 3:
+        split_unit = "frame"
+        split_note = (
+            f"Only {passage_count} separate passage(s) of footage, too few to keep each vehicle in one split - "
+            "split frame by frame instead, so validation shares vehicles with training and its scores run high. "
+            "Label frames from more separate moments for an honest split."
+        )
+        split_by_frame = compute_split(list(frames_by_id), train_ratio, val_ratio, test_ratio, split_seed)
 
     # One ordered decode pass per source video, rather than reopening the
     # video for every frame (see materialize_frames).
@@ -142,6 +170,14 @@ def export_dataset_version(
         # this dataset trained against" - only a snapshot can.
         "classes": class_schema,
         "image_mode": "full_frame",
+        # How frames were assigned to splits: by passage (a run of one
+        # source's frames with no gap over PASSAGE_GAP_MS), so a vehicle
+        # is never in both train and val - or by frame, when there were
+        # too few passages.
+        "split_unit": split_unit,
+        "passage_gap_ms": PASSAGE_GAP_MS,
+        "passages": passage_count,
+        **({"split_note": split_note} if split_note else {}),
     }
     dataset_version = DatasetVersion(
         project_id=project.id, version=version_number, split_seed=split_seed, config_snapshot_json=config_snapshot
@@ -291,6 +327,9 @@ def export_dataset_version(
     db.refresh(dataset_version)
 
     validation = validate_export(export_dir, manifest, num_classes=len(class_schema))
+    if split_note:
+        # Said where the export reports back, not only in the manifest.
+        validation.warnings.append(split_note)
     return dataset_version, validation, manifest_summary(manifest)
 
 

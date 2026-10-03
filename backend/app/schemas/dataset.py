@@ -4,8 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DatasetExportRequest(BaseModel):
-    train_ratio: float = Field(default=0.8, gt=0, lt=1)
-    val_ratio: float = Field(default=0.1, ge=0, lt=1)
+    train_ratio: float = Field(default=0.75, gt=0, lt=1)
+    val_ratio: float = Field(default=0.15, ge=0, lt=1)
     test_ratio: float = Field(default=0.1, ge=0, lt=1)
     split_seed: int | None = None
 

@@ -223,7 +223,8 @@ def test_the_split_is_computed_over_what_is_actually_written(tmp_path):
 
     _, manifest = _export(project, split_seed=7)
 
-    assert manifest["counts"] == {"train": 8, "val": 1, "test": 1, "total": 10}
+    # 75/15/10 of the ten actually written.
+    assert manifest["counts"] == {"train": 8, "val": 2, "test": 0, "total": 10}
 
 
 def test_a_dataset_that_is_mostly_background_says_so(tmp_path):
@@ -244,3 +245,18 @@ def test_a_dataset_that_is_mostly_background_says_so(tmp_path):
     version_id = created["dataset_version"]["id"]
     revalidated = client.get(f"/dataset-versions/{version_id}/validate").json()
     assert any("trains a detector to find nothing" in w for w in revalidated["warnings"])
+
+
+def test_too_few_passages_falls_back_to_frames_and_says_so(tmp_path):
+    """One short clip is one passage: splitting by passage would put
+    everything in train. It splits by frame instead, and says plainly
+    that validation now shares vehicles with training."""
+    project, queue = _project_with_queue(tmp_path, "One Passage", frame_count=12)
+    for frame in queue[:10]:
+        client.put(f"/frames/{frame['id']}/annotations", json={"annotations": [{"class_id": 4, "bbox_json": CAR}]})
+
+    created, manifest = _export(project, split_seed=3)
+
+    assert manifest["config"]["split_unit"] == "frame"
+    assert manifest["config"]["passages"] == 1
+    assert any("too few to keep each vehicle in one split" in w for w in created["validation"]["warnings"])

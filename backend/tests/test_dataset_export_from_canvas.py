@@ -148,7 +148,9 @@ def test_the_split_still_applies_to_canvas_labeled_frames(tmp_path):
 
     _, manifest = _export(project, split_seed=42)
 
-    assert manifest["counts"] == {"train": 40, "val": 5, "test": 5, "total": 50}
+    # 75/15/10 of fifty. One continuous clip is one passage, so this
+    # falls back to splitting by frame - which is what is under test.
+    assert manifest["counts"] == {"train": 38, "val": 8, "test": 4, "total": 50}
     assert {item["split"] for item in manifest["items"]} == {"train", "val", "test"}
 
     # Same frames, same ratios, same seed - same assignment.
