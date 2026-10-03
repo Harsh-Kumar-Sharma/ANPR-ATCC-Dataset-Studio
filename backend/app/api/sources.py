@@ -26,7 +26,7 @@ from app.schemas.processing_run import (
     ProcessingRunResult,
     SampledFrameRead,
 )
-from app.schemas.source import SourceContentsRead, SourceImportRequest, SourceRead
+from app.schemas.source import SourceContentsRead, SourceImportRequest, SourceRead, SourceRename
 from app.services import source_deletion
 from app.services.frame_sampler import FrameDecodeError, decode_sampled_frames, sample_frame_timestamps
 from app.services.jobs.runner import Launcher, get_launcher, submit_job
@@ -114,6 +114,20 @@ def _get_source_or_404(db: Session, project_id: str, source_id: str) -> Source:
 def get_source(project_id: str, source_id: str, db: Session = Depends(get_db)) -> Source:
     get_project_or_404(db, project_id)
     return _get_source_or_404(db, project_id, source_id)
+
+
+@router.patch("/{source_id}", response_model=SourceRead)
+def rename_source(project_id: str, source_id: str, payload: SourceRename, db: Session = Depends(get_db)) -> Source:
+    """Give a source a name people recognise. Empty clears it."""
+    get_project_or_404(db, project_id)
+    source = _get_source_or_404(db, project_id, source_id)
+    name = payload.name.strip()
+    if len(name) > 128:
+        raise ConflictError("A source name can be at most 128 characters.", code="name_too_long")
+    source.name = name or None
+    db.commit()
+    db.refresh(source)
+    return source
 
 
 @router.get("/{source_id}/contents", response_model=SourceContentsRead)

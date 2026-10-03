@@ -180,6 +180,7 @@ class SourceQueue:
     source_id: str
     path_or_uri: str
     type: str
+    name: str | None = None
     total: int = 0
     pending: int = 0
     labeled: int = 0
@@ -225,6 +226,7 @@ def queue_by_source(db: Session, project_id: str) -> list[SourceQueue]:
                 source_id=source.id,
                 path_or_uri=source.path_or_uri,
                 type=source.type,
+                name=source.name,
                 total=sum(per_status.values()),
                 **per_status,
             )

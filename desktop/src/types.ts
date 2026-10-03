@@ -9,6 +9,8 @@ export interface Project {
 export interface Source {
   id: string;
   project_id: string;
+  /** A name someone gave it; null shows the file name or camera. */
+  name?: string | null;
   type: string;
   path_or_uri: string;
   fps: number;
@@ -500,6 +502,7 @@ export interface SourceQueue {
   source_id: string;
   path_or_uri: string;
   type: string;
+  name?: string | null;
   total: number;
   pending: number;
   labeled: number;
@@ -662,6 +665,7 @@ export interface LabelingTask {
   source_id: string;
   source_type: string;
   source_path_or_uri: string;
+  source_name?: string | null;
   /** Null once the person it was given to has been deleted. */
   assignee: { id: string; username: string; display_name: string } | null;
   status: TaskStatus;

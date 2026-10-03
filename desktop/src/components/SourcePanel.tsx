@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import { IconAlert, IconCheck, IconFilm, IconPlay, IconX } from "../Icons";
+import { IconAlert, IconCheck, IconFilm, IconPencil, IconPlay, IconX } from "../Icons";
 import ModelPicker, { useModelChoice } from "./ModelPicker";
-import { sourceLabel } from "../sourceLabel";
+import { sourceLabel, sourceOrigin } from "../sourceLabel";
 import type { Project, RunEstimate, Source, SourceContents } from "../types";
 
 interface Props {
@@ -55,6 +55,9 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
   const [doomed, setDoomed] = useState<Source | null>(null);
   const [contents, setContents] = useState<SourceContents | null>(null);
   const [removing, setRemoving] = useState(false);
+  /** The source being renamed, and the name typed so far. */
+  const [naming, setNaming] = useState<{ id: string; draft: string } | null>(null);
+  const [savingName, setSavingName] = useState(false);
 
   function refresh() {
     api
@@ -120,6 +123,22 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
   }
 
   const removeBusy = (contents?.running_jobs ?? 0) > 0;
+
+  async function saveName() {
+    if (!naming) return;
+    setSavingName(true);
+    setError(null);
+    try {
+      const renamed = await api.renameSource(project.id, naming.id, naming.draft);
+      // Only the name changed; keep the counts the list already has.
+      setSources((previous) => previous.map((s) => (s.id === renamed.id ? { ...s, name: renamed.name } : s)));
+      setNaming(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setSavingName(false);
+    }
+  }
 
   async function handleImport(e: React.FormEvent) {
     e.preventDefault();
@@ -235,13 +254,46 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
             {/* The name is the way into this source's frames: not
                 knowing which frames came from which clip is the
                 complaint this answers. */}
-            <button
-              className="source-name source-name--link"
-              title={`Label the frames from ${sourceLabel(s)}`}
-              onClick={() => onLabel?.(s)}
-            >
-              {sourceLabel(s)}
-            </button>
+            {naming?.id === s.id ? (
+              <span className="source-rename">
+                <input
+                  type="text"
+                  aria-label={`Name for ${sourceLabel(s)}`}
+                  autoFocus
+                  maxLength={128}
+                  value={naming.draft}
+                  placeholder={sourceOrigin(s)}
+                  onChange={(e) => setNaming({ id: s.id, draft: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveName();
+                    if (e.key === "Escape") setNaming(null);
+                  }}
+                />
+                <button className="btn-primary" disabled={savingName} onClick={saveName}>
+                  Save
+                </button>
+                <button onClick={() => setNaming(null)}>Cancel</button>
+              </span>
+            ) : (
+              <span className="source-title">
+                <button
+                  className="source-name source-name--link"
+                  title={`Label the frames from ${sourceLabel(s)}`}
+                  onClick={() => onLabel?.(s)}
+                >
+                  {sourceLabel(s)}
+                </button>
+                <button
+                  className="source-rename__start"
+                  aria-label={`Rename ${sourceLabel(s)}`}
+                  title="Give this source a name of its own"
+                  onClick={() => setNaming({ id: s.id, draft: s.name ?? "" })}
+                >
+                  <IconPencil />
+                </button>
+              </span>
+            )}
+            {s.name && <span className="source-origin">{sourceOrigin(s)}</span>}
             <button
               className="source-remove"
               data-testid="remove-source"

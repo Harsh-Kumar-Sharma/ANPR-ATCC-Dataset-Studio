@@ -13,7 +13,17 @@ import type { Source } from "./types";
  * have to agree. Two copies would drift, and the user would be looking
  * at two names for one clip.
  */
-export function sourceLabel(source: { type: string; path_or_uri: string }): string {
+export function sourceLabel(source: { type: string; path_or_uri: string; name?: string | null }): string {
+  // A name someone gave it wins: several live sources from one camera
+  // are otherwise all "host · ch 1".
+  const given = source.name?.trim();
+  if (given) return given;
+  return sourceOrigin(source);
+}
+
+/** Where a source came from - its file, or its camera - whatever it
+ *  has been named. Shown under a given name so the two can be matched. */
+export function sourceOrigin(source: { type: string; path_or_uri: string }): string {
   if (source.type !== "rtsp") return source.path_or_uri.split(/[\\/]/).pop() ?? source.path_or_uri;
   const host = rtspHost(source.path_or_uri);
   const channel = rtspChannel(source.path_or_uri);
@@ -59,4 +69,4 @@ function afterScheme(uri: string): string {
   return match ? match[1] : "";
 }
 
-export type LabelledSource = Pick<Source, "type" | "path_or_uri">;
+export type LabelledSource = Pick<Source, "type" | "path_or_uri" | "name">;

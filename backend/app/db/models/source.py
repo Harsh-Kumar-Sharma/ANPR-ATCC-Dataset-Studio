@@ -30,6 +30,10 @@ class Source(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     frame_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)
+    #: What people call it. Null until someone names it, and the app
+    #: then falls back to the file name or the camera's host and channel
+    #: - which for live sources from one camera are all the same.
+    name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     #: A "frozen validation clip" (docs/02_IMPLEMENTATION_PLAN.md Phase 7):
     #: a fixed benchmark source with a manually-counted ground truth,

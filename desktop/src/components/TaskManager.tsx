@@ -76,6 +76,8 @@ function TaskManager({ project, onOpen }: Props) {
   const tasked = new Set(tasks.map((t) => t.source_id));
   const free = sources.filter((s) => !tasked.has(s.source_id));
   const people = users.filter((u) => u.is_active);
+  const freeNames = free.map((s) => sourceLabel(s));
+  const sharedNames = new Set(freeNames).size < freeNames.length;
   const shown = filter === "all" ? tasks : tasks.filter((t) => t.status === filter);
   const count = (f: Filter) => (f === "all" ? tasks.length : tasks.filter((t) => t.status === f).length);
 
@@ -123,6 +125,11 @@ function TaskManager({ project, onOpen }: Props) {
         <button type="submit" className="btn-primary" disabled={!newSource || !newAssignee || busy === "new"}>
           {busy === "new" ? "Assigning…" : "Assign"}
         </button>
+        {sharedNames && (
+          <p className="task-new__hint">
+            Some sources share a name. Rename them in Sources (the pencil beside each name) to tell them apart.
+          </p>
+        )}
       </form>
 
       {error && (

@@ -20,7 +20,7 @@ export function TaskStatusBadge({ status }: { status: TaskStatus }) {
 }
 
 export function taskSourceName(task: LabelingTask): string {
-  return sourceLabel({ type: task.source_type, path_or_uri: task.source_path_or_uri });
+  return sourceLabel({ type: task.source_type, path_or_uri: task.source_path_or_uri, name: task.source_name });
 }
 
 /** Frames done (labelled or set aside) out of all of them. */

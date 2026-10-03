@@ -13,11 +13,17 @@ class SourceImportRequest(BaseModel):
     path: str
 
 
+class SourceRename(BaseModel):
+    #: Empty clears it, back to the file name or camera.
+    name: str
+
+
 class SourceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     project_id: str
+    name: str | None = None
     type: str
     path_or_uri: str
     fps: float

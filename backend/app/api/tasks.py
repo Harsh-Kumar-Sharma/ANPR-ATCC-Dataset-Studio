@@ -49,6 +49,7 @@ class TaskRead(BaseModel):
     source_id: str
     source_type: str
     source_path_or_uri: str
+    source_name: str | None
     assignee: TaskPerson | None
     status: str
     review_note: str | None
@@ -83,6 +84,7 @@ def _read(db: Session, task: LabelingTask) -> TaskRead:
         source_id=task.source_id,
         source_type=source.type if source else "",
         source_path_or_uri=source.path_or_uri if source else "",
+        source_name=source.name if source else None,
         assignee=TaskPerson(id=assignee.id, username=assignee.username, display_name=assignee.display_name)
         if assignee
         else None,

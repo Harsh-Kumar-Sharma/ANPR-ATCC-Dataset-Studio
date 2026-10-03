@@ -85,6 +85,7 @@ class SourceQueueRead(BaseModel):
     source_id: str
     path_or_uri: str
     type: str
+    name: str | None = None
     total: int
     pending: int
     labeled: int

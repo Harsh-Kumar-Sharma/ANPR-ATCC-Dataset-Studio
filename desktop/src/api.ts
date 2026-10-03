@@ -240,6 +240,9 @@ export const api = {
    *  against the source. */
   deleteSource: (projectId: string, sourceId: string) =>
     request<SourceContents>(`/projects/${projectId}/sources/${sourceId}`, { method: "DELETE" }),
+  /** Give a source a name of its own. Empty clears it. */
+  renameSource: (projectId: string, sourceId: string, name: string) =>
+    request<Source>(`/projects/${projectId}/sources/${sourceId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>
     request<Source>(`/projects/${projectId}/sources`, { method: "POST", body: JSON.stringify({ path }) }),
