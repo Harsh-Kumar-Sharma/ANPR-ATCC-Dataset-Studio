@@ -17,7 +17,14 @@ def _make_engine():
     # writer, and a generous busy_timeout makes a second writer queue
     # instead of raising "database is locked" right away.
     connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
-    engine = create_engine(url, connect_args=connect_args)
+    # More connections than FastAPI has worker threads (40), so the pool
+    # is never what a request waits on. With the default 5 + 10, a page
+    # of thumbnails plus a live preview - every request now checks its
+    # sign-in against the database - used all fifteen, and the rest
+    # failed after 30 seconds with "QueuePool limit reached". A SQLite
+    # connection is cheap; ordering writes is SQLite's lock's job.
+    pool_args = {"pool_size": 20, "max_overflow": 40} if is_sqlite else {}
+    engine = create_engine(url, connect_args=connect_args, **pool_args)
     if is_sqlite:
 
         @event.listens_for(engine, "connect")
