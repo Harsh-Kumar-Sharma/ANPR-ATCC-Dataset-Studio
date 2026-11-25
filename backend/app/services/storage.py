@@ -113,8 +113,9 @@ def clear_frame_images(db: Session, project: Project, source_id: str | None = No
     Only for sources that have a video to decode from. A live
     capture's frames are not a cache: they are the only copy of
     pixels that went past a camera once, and deleting them would take
-    the frames out of the labelling queue for good. Those are skipped,
-    and the message says how many.
+    the frames out of the labelling queue for good. An imported
+    dataset's images are the same - the only copy here. Those are
+    skipped, and the message says how many.
 
     The frame rows and every box on them are untouched.
     """
@@ -145,8 +146,8 @@ def clear_frame_images(db: Session, project: Project, source_id: str | None = No
     detail = f"Cleared decoded frames for {len(recoverable)} source(s). They decode again when next opened."
     if kept:
         detail += (
-            f" {kept} live source(s) were left alone: their frames were captured from a stream and "
-            "cannot be decoded again."
+            f" {kept} live source(s) and imported dataset(s) were left alone: their frames are the only "
+            "copy and cannot be decoded again."
         )
     return Reclaimed(reclaimed_bytes=reclaimed, detail=detail)
 

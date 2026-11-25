@@ -18,6 +18,13 @@ class SourceRename(BaseModel):
     name: str
 
 
+class DatasetImportRequest(BaseModel):
+    """Import a YOLO dataset already on the server - a ``.zip`` or the
+    folder it unpacks to. In a deployment, the incoming folder."""
+
+    path: str
+
+
 class SourceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -59,3 +66,21 @@ class SourceContentsRead(BaseModel):
     #: Any at all and deletion refuses.
     running_jobs: int
     files_removed: bool = False
+
+
+class DatasetImportRead(BaseModel):
+    """What an imported dataset became, and what it left out."""
+
+    source: SourceRead
+    images_imported: int
+    boxes_imported: int
+    #: Already in the project from an earlier import, so not added again.
+    already_imported: int
+    #: Named like images but would not open.
+    unreadable: int
+    #: Frames put first because a box sits where boxes sit in many pictures.
+    repeated_spot_frames: int
+    #: Frames put next because the model was unsure of a box.
+    low_confidence_frames: int
+    #: Dataset class name -> the project class its boxes went into.
+    class_mapping: dict[str, str]

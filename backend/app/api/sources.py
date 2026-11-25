@@ -1,16 +1,18 @@
 import shutil
+import tempfile
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.projects import get_project_or_404
 from app.core.config import get_settings
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import AppError, ConflictError, NotFoundError
 from app.db.models.frame import Frame
 from app.db.models.processing_run import ProcessingRun
 from app.db.models.source import Source
@@ -26,8 +28,15 @@ from app.schemas.processing_run import (
     ProcessingRunResult,
     SampledFrameRead,
 )
-from app.schemas.source import SourceContentsRead, SourceImportRequest, SourceRead, SourceRename
-from app.services import source_deletion
+from app.schemas.source import (
+    DatasetImportRead,
+    DatasetImportRequest,
+    SourceContentsRead,
+    SourceImportRequest,
+    SourceRead,
+    SourceRename,
+)
+from app.services import dataset_import, source_deletion
 from app.services.frame_sampler import FrameDecodeError, decode_sampled_frames, sample_frame_timestamps
 from app.services.jobs.runner import Launcher, get_launcher, submit_job
 from app.services.video_probe import VideoProbeError, probe_video
@@ -38,29 +47,29 @@ router = APIRouter(prefix="/projects/{project_id}/sources", tags=["sources"])
 runs_router = APIRouter(prefix="/processing-runs", tags=["sources"])
 
 
+def _unused_path(dest_dir: Path, name: str) -> Path:
+    """``name`` in ``dest_dir``, or a suffixed one if that is taken -
+    two clips called ``camera1.mp4`` must not overwrite each other."""
+    dest_path = dest_dir / name
+    if dest_path.exists():
+        dest_path = dest_dir / f"{dest_path.stem}-{uuid.uuid4().hex[:8]}{dest_path.suffix}"
+    return dest_path
+
+
 def _copy_into_workspace(source_path: Path, workspace_path: Path) -> Path:
     dest_dir = workspace_path / "source"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / source_path.name
-    if dest_path.exists():
-        dest_path = dest_dir / f"{source_path.stem}-{uuid.uuid4().hex[:8]}{source_path.suffix}"
+    dest_path = _unused_path(dest_dir, source_path.name)
     shutil.copy2(source_path, dest_path)
     return dest_path
 
 
-@router.post("", response_model=SourceRead, status_code=201)
-def import_source(project_id: str, payload: SourceImportRequest, db: Session = Depends(get_db)) -> Source:
-    project = get_project_or_404(db, project_id)
-
-    original_path = Path(payload.path)
-    if not original_path.is_file():
-        raise VideoProbeError(f"Source video not found: {original_path}", code="source_not_found")
-
-    metadata = probe_video(original_path)
-    stored_path = _copy_into_workspace(original_path, Path(project.workspace_path))
-
+def _add_video_source(db: Session, project_id: str, stored_path: Path, metadata=None) -> Source:
+    """A source for a video already in the workspace, probed for what it
+    is unless that was done before it was copied there."""
+    metadata = metadata or probe_video(stored_path)
     source = Source(
-        project_id=project.id,
+        project_id=project_id,
         type="video",
         path_or_uri=str(stored_path),
         fps=metadata.fps,
@@ -73,6 +82,138 @@ def import_source(project_id: str, payload: SourceImportRequest, db: Session = D
     db.commit()
     db.refresh(source)
     return source
+
+
+@router.post("", response_model=SourceRead, status_code=201)
+def import_source(project_id: str, payload: SourceImportRequest, db: Session = Depends(get_db)) -> Source:
+    project = get_project_or_404(db, project_id)
+
+    original_path = Path(payload.path)
+    if not original_path.is_file():
+        raise VideoProbeError(f"Source video not found: {original_path}", code="source_not_found")
+
+    # Probed before copying, so a file that is not a video is refused
+    # without first being copied into the workspace.
+    metadata = probe_video(original_path)
+    stored_path = _copy_into_workspace(original_path, Path(project.workspace_path))
+    return _add_video_source(db, project.id, stored_path, metadata)
+
+
+#: Uploads past these are refused while they stream in, before they can
+#: fill the disk. A week of one camera's dataset is ~100 MB; a day of
+#: 1080p gantry video is a few GB.
+MAX_DATASET_UPLOAD_BYTES = 4 * 1024**3
+MAX_VIDEO_UPLOAD_BYTES = 20 * 1024**3
+
+
+def _upload_name(filename: str, default: str) -> str:
+    """The file's own name, without whatever folders the client sent -
+    and never ``..``, which as a file name is the folder above."""
+    name = filename.replace("\\", "/").split("/")[-1].strip()
+    return default if name in ("", ".", "..") else name
+
+
+async def _receive_body(request: Request, target: Path, limit: int, name: str) -> None:
+    """Stream the request body into ``target``, refusing it past ``limit``."""
+    received = 0
+    with target.open("wb") as handle:
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > limit:
+                raise AppError(
+                    f"{name} is larger than the {limit // 1024**3} GB an upload can be. "
+                    "Split it, or copy it to the server and import it by path.",
+                    code="upload_too_large",
+                    status_code=413,
+                )
+            handle.write(chunk)
+
+
+@router.post("/upload", response_model=SourceRead, status_code=201)
+async def upload_source(
+    project_id: str,
+    request: Request,
+    filename: str = Query(..., min_length=1, max_length=255),
+    db: Session = Depends(get_db),
+) -> Source:
+    """Import a video from the user's own computer, sent as the request body.
+
+    The path import only reaches files already on the server, which in
+    a browser means copying footage there first. This lands the upload
+    where a path import copies its file - the workspace's source folder -
+    so probing, processing and deleting are the same from then on. A
+    file that turns out not to be a video is removed again.
+    """
+    project = await run_in_threadpool(get_project_or_404, db, project_id)
+    dest_dir = Path(project.workspace_path) / "source"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    name = _upload_name(filename, default="video.mp4")
+    stored_path = _unused_path(dest_dir, name)
+    try:
+        await _receive_body(request, stored_path, MAX_VIDEO_UPLOAD_BYTES, name)
+        return await run_in_threadpool(_add_video_source, db, project.id, stored_path)
+    except BaseException:
+        stored_path.unlink(missing_ok=True)
+        raise
+
+
+def _dataset_import_read(result: dataset_import.DatasetImportResult) -> DatasetImportRead:
+    return DatasetImportRead(
+        source=SourceRead.model_validate(result.source).model_copy(
+            update={"stored_frames": result.images_imported}
+        ),
+        images_imported=result.images_imported,
+        boxes_imported=result.boxes_imported,
+        already_imported=result.already_imported,
+        unreadable=result.unreadable,
+        repeated_spot_frames=result.repeated_spot_frames,
+        low_confidence_frames=result.low_confidence_frames,
+        class_mapping=result.class_mapping,
+    )
+
+
+@router.post("/dataset", response_model=DatasetImportRead, status_code=201)
+def import_dataset(project_id: str, payload: DatasetImportRequest, db: Session = Depends(get_db)) -> DatasetImportRead:
+    """Import a YOLO dataset on the server - a ``.zip`` or its folder -
+    as a source whose frames wait for review with the model's boxes on
+    them. See ``services/dataset_import.py``."""
+    project = get_project_or_404(db, project_id)
+    result = dataset_import.import_from_path(db, project, Path(payload.path))
+    db.commit()
+    return _dataset_import_read(result)
+
+
+@router.post("/dataset/upload", response_model=DatasetImportRead, status_code=201)
+async def upload_dataset(
+    project_id: str,
+    request: Request,
+    filename: str = Query(..., min_length=1, max_length=255),
+    db: Session = Depends(get_db),
+) -> DatasetImportRead:
+    """Import a dataset ``.zip`` sent as the request body.
+
+    The raw body rather than a multipart form: it is one file, the
+    server needs no form parser for it, and a browser streams a File
+    straight in. ``filename`` is what the source is called.
+    """
+    project = await run_in_threadpool(get_project_or_404, db, project_id)
+    workspace = Path(project.workspace_path)
+    workspace.mkdir(parents=True, exist_ok=True)
+    name = _upload_name(filename, default="dataset.zip")
+
+    with tempfile.NamedTemporaryFile(prefix="dataset-upload-", suffix=".zip", dir=workspace, delete=False) as handle:
+        upload = Path(handle.name)
+    try:
+        await _receive_body(request, upload, MAX_DATASET_UPLOAD_BYTES, name)
+
+        def _import() -> DatasetImportRead:
+            result = dataset_import.import_archive(db, project, upload, display_name=name)
+            db.commit()
+            return _dataset_import_read(result)
+
+        return await run_in_threadpool(_import)
+    finally:
+        upload.unlink(missing_ok=True)
 
 
 @router.get("", response_model=list[SourceRead])

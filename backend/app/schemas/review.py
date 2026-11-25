@@ -34,6 +34,9 @@ class AnnotationRead(BaseModel):
     class_id: int | None
     bbox_json: list[float]
     attributes: dict
+    #: The model's score for a box that came with one (an imported
+    #: dataset's). Null for a box a human drew.
+    confidence: float | None = None
     status: str
     updated_at: datetime
 

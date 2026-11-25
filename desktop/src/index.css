@@ -635,6 +635,41 @@ label {
   min-width: 0;
 }
 
+/* One way in - a video, or a dataset: the file picker first, the
+   server path beneath it as the alternative. */
+.import-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.65rem 0.75rem 0;
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.import-group__title {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.import-group__choose {
+  justify-content: center;
+  width: 100%;
+}
+
+.import-group .import-form {
+  margin-bottom: 0.65rem;
+}
+
+.import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
 .source-list {
   list-style: none;
   padding: 0;
@@ -1504,7 +1539,8 @@ label.toggle {
 }
 
 .job-row__bar,
-.job-indicator__bar {
+.job-indicator__bar,
+.import-progress__bar {
   margin-top: 6px;
   height: 6px;
   border-radius: 999px;
@@ -1513,7 +1549,8 @@ label.toggle {
 }
 
 .job-row__bar-fill,
-.job-indicator__bar-fill {
+.job-indicator__bar-fill,
+.import-progress__bar-fill {
   height: 100%;
   background: var(--accent);
   transition: width 240ms ease-out;

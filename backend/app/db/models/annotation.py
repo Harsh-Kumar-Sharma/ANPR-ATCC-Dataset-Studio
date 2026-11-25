@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, Integer, JSON, String
+from sqlalchemy import Float, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -51,5 +51,10 @@ class Annotation(Base):
     #: ``[x1, y1, x2, y2]`` in full-frame pixels.
     bbox_json: Mapped[list] = mapped_column(JSON, nullable=False)
     attributes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: How sure the model was, for a ``model`` box that arrived with a
+    #: score - an imported dataset's, today. Null for a human's box: a
+    #: person's label is not a probability. Kept after the human accepts
+    #: the box, as a record of what the model thought.
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow, nullable=False)

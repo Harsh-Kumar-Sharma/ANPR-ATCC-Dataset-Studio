@@ -18,4 +18,7 @@ proxy_buffering off;
 proxy_request_buffering off;
 proxy_read_timeout 3600s;
 proxy_send_timeout 3600s;
-client_max_body_size 50m;
+# Uploads from the user's computer: videos (a day of footage is a few
+# GB) and dataset .zips (~100 MB a camera-week). Studio's own nginx
+# keeps every other path at 50 MB; this only has to let them through.
+client_max_body_size 20g;

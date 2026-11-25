@@ -25,7 +25,11 @@ interface Props {
  */
 /** A frame's reason for being in the queue, as a person would say it. */
 function reasonLabel(reason: string): string {
-  return reason === POSSIBLE_MISS ? "possible miss - a vehicle with no plate found" : reason;
+  if (reason === POSSIBLE_MISS) return "possible miss - a vehicle with no plate found";
+  // An imported dataset's ordering: the model's likeliest mistakes first.
+  if (reason === "repeated_spot") return "same spot in many pictures - often not a plate";
+  if (reason === "low_confidence") return "the model was unsure";
+  return reason;
 }
 
 function LabelQueue({ queue, selectedFrameId, project, onBrowseAll, lockSource = false }: Props) {

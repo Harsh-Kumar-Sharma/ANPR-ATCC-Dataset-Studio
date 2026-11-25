@@ -27,6 +27,23 @@ export interface Source {
   stored_frames: number;
 }
 
+/** What importing a YOLO dataset made, and what it left out. */
+export interface DatasetImportResult {
+  source: Source;
+  images_imported: number;
+  boxes_imported: number;
+  /** Already in the project from an earlier import. */
+  already_imported: number;
+  /** Named like images but would not open. */
+  unreadable: number;
+  /** Put first in the queue: a box where boxes sit in many pictures. */
+  repeated_spot_frames: number;
+  /** Put next: the model was unsure of a box. */
+  low_confidence_frames: number;
+  /** Dataset class name -> project class name. */
+  class_mapping: Record<string, string>;
+}
+
 export interface ProcessingRun {
   id: string;
   source_id: string;
@@ -144,6 +161,9 @@ export interface Annotation {
   class_id: number | null;
   bbox_json: [number, number, number, number];
   attributes: Record<string, unknown>;
+  /** The model's score, for a box that came with one (an imported
+   *  dataset's). Null for a box a human drew. */
+  confidence?: number | null;
   status: string;
   updated_at: string;
 }

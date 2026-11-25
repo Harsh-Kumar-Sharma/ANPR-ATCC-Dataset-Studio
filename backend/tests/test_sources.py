@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -74,3 +76,51 @@ def test_sample_unknown_source_returns_404():
         json={"sampling_config": {"target_fps": 5.0}},
     )
     assert response.status_code == 404
+
+
+def _upload_video(project: dict, body: bytes, filename: str):
+    return client.post(
+        f"/projects/{project['id']}/sources/upload",
+        params={"filename": filename},
+        content=body,
+        headers={"Content-Type": "video/mp4"},
+    )
+
+
+def test_a_video_uploaded_from_this_computer_becomes_a_source_like_an_imported_one(tmp_path):
+    project = _create_project("Upload Project")
+    original = create_synthetic_video(tmp_path / "gate.mp4", frame_count=60, fps=30.0)
+
+    response = _upload_video(project, original.read_bytes(), "C:\\Users\\me\\Videos\\gate.mp4")
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert (body["type"], body["fps"], body["frame_count"]) == ("video", 30.0, 60)
+    stored = Path(body["path_or_uri"])
+    # Only the file's own name, in the project's source folder.
+    assert stored.parent == Path(project["workspace_path"]) / "source"
+    assert stored.name == "gate.mp4"
+    assert stored.read_bytes() == original.read_bytes()
+
+    # The same name twice is two files, not one overwritten.
+    second = _upload_video(project, original.read_bytes(), "gate.mp4").json()
+    assert second["path_or_uri"] != body["path_or_uri"]
+
+
+def test_an_upload_that_is_not_a_video_is_refused_and_not_kept(tmp_path):
+    project = _create_project("Upload Refused Project")
+
+    response = _upload_video(project, b"definitely not a video", "notes.mp4")
+
+    assert response.status_code == 400
+    assert list((Path(project["workspace_path"]) / "source").glob("*")) == []
+
+
+def test_an_upload_named_dot_dot_stays_in_the_source_folder(tmp_path):
+    project = _create_project("Upload Name Project")
+    original = create_synthetic_video(tmp_path / "clip.mp4", frame_count=30, fps=30.0)
+
+    response = _upload_video(project, original.read_bytes(), "..")
+
+    assert response.status_code == 201, response.text
+    assert Path(response.json()["path_or_uri"]).parent == Path(project["workspace_path"]) / "source"

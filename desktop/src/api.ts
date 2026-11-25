@@ -9,6 +9,7 @@ import type {
   ClassDeleteOutcome,
   ClassUsage,
   DatasetExportResult,
+  DatasetImportResult,
   DatasetVersion,
   DeletedFrame,
   DisagreementItem,
@@ -141,6 +142,45 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/** How far an upload has got, in bytes. */
+export type UploadProgress = (sent: number, total: number) => void;
+
+/** Send a file from this computer as the raw request body.
+ *
+ *  XMLHttpRequest rather than fetch: fetch cannot say how much of the
+ *  body has gone, and a video can be gigabytes - without a number the
+ *  screen just sits there. */
+function upload<T>(path: string, file: File, contentType: string, onProgress?: UploadProgress): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}${path}`);
+    xhr.setRequestHeader("Content-Type", contentType);
+    if (authToken) xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      let body: { code?: string; message?: string } = {};
+      try {
+        body = JSON.parse(xhr.responseText || "{}");
+      } catch {
+        // A proxy's own error page, most often nginx refusing the size.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as T);
+        return;
+      }
+      if (xhr.status === 401) unauthorizedHandler?.();
+      const fallback =
+        xhr.status === 413 ? `${file.name} is larger than the server accepts.` : xhr.statusText || "Upload failed";
+      reject(new ApiError(xhr.status, body.code ?? "unknown_error", body.message ?? fallback));
+    };
+    xhr.onerror = () =>
+      reject(new ApiError(0, "network_error", `The upload of ${file.name} was cut off. Check the connection and try again.`));
+    xhr.send(file);
+  });
+}
+
 export const api = {
   // --- signing in -----------------------------------------------------------
   getAuthStatus: () => request<AuthStatus>("/auth/status"),
@@ -247,6 +287,30 @@ export const api = {
   listSources: (projectId: string) => request<Source[]>(`/projects/${projectId}/sources`),
   importSource: (projectId: string, path: string) =>
     request<Source>(`/projects/${projectId}/sources`, { method: "POST", body: JSON.stringify({ path }) }),
+  /** A video on this computer rather than on the server: uploaded, then
+   *  a source like any other. */
+  uploadSource: (projectId: string, file: File, onProgress?: UploadProgress) =>
+    upload<Source>(
+      `/projects/${projectId}/sources/upload${query({ filename: file.name })}`,
+      file,
+      file.type || "application/octet-stream",
+      onProgress,
+    ),
+  /** A YOLO dataset - a production node's export - already on the
+   *  server: a .zip, or the folder it unpacks to. */
+  importDataset: (projectId: string, path: string) =>
+    request<DatasetImportResult>(`/projects/${projectId}/sources/dataset`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  /** The same, for a .zip on this computer. */
+  uploadDataset: (projectId: string, file: File, onProgress?: UploadProgress) =>
+    upload<DatasetImportResult>(
+      `/projects/${projectId}/sources/dataset/upload${query({ filename: file.name })}`,
+      file,
+      "application/zip",
+      onProgress,
+    ),
   /** Queues a detect+track run and returns immediately. Follow it with
    *  getJob or listJobs - the work is not done when this
    *  resolves. */

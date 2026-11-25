@@ -254,7 +254,12 @@ function LabelCanvas({
         // a review screen that already knew where the plate was.
         const startFrom = annotations.length > 0 ? annotations.map(fromAnnotation) : suggestions.map(fromSuggestion);
         setBoxes(startFrom);
-        setSuggested(annotations.length > 0 ? 0 : suggestions.length);
+        // An imported dataset's boxes are stored rows, but still only
+        // the model's until someone saves them - say so, like any other
+        // suggestion.
+        setSuggested(
+          annotations.length > 0 ? annotations.filter((a) => a.source === "model").length : suggestions.length,
+        );
         setSelected(null);
         setDirty(false);
         setError(null);

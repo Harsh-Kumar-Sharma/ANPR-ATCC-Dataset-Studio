@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { IconAlert, IconCheck, IconFilm, IconPencil, IconPlay, IconX } from "../Icons";
 import ModelPicker, { useModelChoice } from "./ModelPicker";
+import ProgressBar from "./ProgressBar";
 import { sourceLabel, sourceOrigin } from "../sourceLabel";
-import type { Project, RunEstimate, Source, SourceContents } from "../types";
+import type { DatasetImportResult, Project, RunEstimate, Source, SourceContents } from "../types";
 
 interface Props {
   project: Project;
@@ -35,9 +36,39 @@ function readableSize(bytes: number): string {
   return `${shown.toFixed(shown < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
+/** One thing to import. ``run`` reports upload progress where there is
+ *  an upload, and resolves to the line that says how it went. */
+interface ImportJob {
+  name: string;
+  /** Bytes to send; 0 for a path on the server, which sends nothing. */
+  size: number;
+  run: (onProgress: (sent: number, total: number) => void) => Promise<string>;
+}
+
+/** What an imported dataset became, and what to look at first. */
+function describeImport(result: DatasetImportResult): string {
+  const parts = [
+    `${sourceLabel(result.source)}: ${result.images_imported} image(s), ${result.boxes_imported} box(es) from the model`,
+  ];
+  if (result.repeated_spot_frames > 0) {
+    parts.push(`${result.repeated_spot_frames} with a box where boxes sit in many pictures - check these first`);
+  }
+  if (result.low_confidence_frames > 0) parts.push(`${result.low_confidence_frames} the model was unsure of`);
+  if (result.already_imported > 0) parts.push(`${result.already_imported} already here, skipped`);
+  if (result.unreadable > 0) parts.push(`${result.unreadable} would not open`);
+  return parts.join(" · ");
+}
+
 function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Props) {
   const [sources, setSources] = useState<Source[]>([]);
   const [path, setPath] = useState("");
+  const [datasetPath, setDatasetPath] = useState("");
+  // One import at a time: they all write to the same project, and one
+  // progress line is all that fits.
+  const [importing, setImporting] = useState(false);
+  const [uploading, setUploading] = useState<{ name: string; sent: number; total: number } | null>(null);
+  const videoFiles = useRef<HTMLInputElement>(null);
+  const datasetFiles = useRef<HTMLInputElement>(null);
   const [targetFps, setTargetFps] = useState(5);
   // Which model detects. Remembered per project: a project is one
   // kind of footage, and what suited it last time suits it now.
@@ -159,6 +190,73 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
     }
   }
 
+  /** Import one thing after another - files chosen on this computer, or
+   *  a path on the server. One that fails does not stop the rest; each
+   *  outcome is named after its file. The sources list refreshes after
+   *  each, so a long batch shows its progress as it goes. */
+  async function runImports(jobs: ImportJob[]) {
+    if (jobs.length === 0) return;
+    setError(null);
+    setStatus(null);
+    setImporting(true);
+    const imported: string[] = [];
+    const failed: string[] = [];
+    try {
+      for (const job of jobs) {
+        setUploading({ name: job.name, sent: 0, total: job.size });
+        try {
+          imported.push(await job.run((sent, total) => setUploading({ name: job.name, sent, total })));
+        } catch (e) {
+          failed.push(`${job.name}: ${e instanceof ApiError ? e.message : String(e)}`);
+        }
+        refresh();
+      }
+    } finally {
+      setUploading(null);
+      setImporting(false);
+    }
+    if (imported.length > 0) setStatus(imported.join(" | "));
+    if (failed.length > 0) setError(failed.join(" | "));
+  }
+
+  function handleVideoFiles(files: File[]) {
+    return runImports(
+      files.map((file) => ({
+        name: file.name,
+        size: file.size,
+        run: async (onProgress) => `${sourceLabel(await api.uploadSource(project.id, file, onProgress))}: imported`,
+      })),
+    );
+  }
+
+  function handleDatasetFiles(files: File[]) {
+    return runImports(
+      files.map((file) => ({
+        name: file.name,
+        size: file.size,
+        run: async (onProgress) => describeImport(await api.uploadDataset(project.id, file, onProgress)),
+      })),
+    );
+  }
+
+  async function handleDatasetPath(e: React.FormEvent) {
+    e.preventDefault();
+    const typed = datasetPath.trim();
+    if (!typed) return;
+    await runImports([
+      { name: typed, size: 0, run: async () => describeImport(await api.importDataset(project.id, typed)) },
+    ]);
+    setDatasetPath("");
+  }
+
+  /** The files a file input was given, cleared afterwards so choosing
+   *  the same file again still counts as a change. */
+  function takeFiles(e: React.ChangeEvent<HTMLInputElement>): File[] {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    return files;
+  }
+
   /** What this run would cost, asked when the settings change.
    *
    *  Shown rather than enforced here: the backend refuses a run that
@@ -231,17 +329,96 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
         <IconFilm /> Sources
       </div>
 
-      <form onSubmit={handleImport} className="import-form">
-        <input
-          type="text"
-          placeholder="Local video path (mp4/avi/mkv)"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-        />
-        <button type="submit" className="btn-primary" disabled={!path.trim()}>
-          Import
+      {/* Choosing a file on this computer is the way in from a browser.
+          A path is for footage already on the server - the incoming
+          folder - where uploading it again would be a waste. */}
+      <div className="import-group">
+        <span className="import-group__title">Video - frames are taken from it</span>
+        <button
+          type="button"
+          className="btn-primary import-group__choose"
+          disabled={importing}
+          title="Pick one or more videos (mp4, avi, mkv, mov) from this computer"
+          onClick={() => videoFiles.current?.click()}
+        >
+          <IconFilm /> Choose video file…
         </button>
-      </form>
+        <input
+          ref={videoFiles}
+          type="file"
+          accept="video/*,.mp4,.avi,.mkv,.mov"
+          multiple
+          hidden
+          data-testid="video-files"
+          onChange={(e) => handleVideoFiles(takeFiles(e))}
+        />
+        <form onSubmit={handleImport} className="import-form">
+          <input
+            type="text"
+            placeholder="…or a video path on the server"
+            aria-label="Video path on the server"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+          />
+          <button type="submit" disabled={!path.trim() || importing}>
+            Import
+          </button>
+        </form>
+      </div>
+
+      {/* A production node's YOLO export: its images arrive with the
+          model's boxes on them, waiting in the label queue for review. */}
+      <div className="import-group">
+        <span className="import-group__title">Dataset - a YOLO .zip exported by production</span>
+        <button
+          type="button"
+          className="btn-primary import-group__choose"
+          disabled={importing}
+          title="Pick one or more dataset .zip files from this computer"
+          onClick={() => datasetFiles.current?.click()}
+        >
+          <IconFilm /> Choose .zip file(s)…
+        </button>
+        <input
+          ref={datasetFiles}
+          type="file"
+          accept=".zip,application/zip"
+          multiple
+          hidden
+          data-testid="dataset-files"
+          onChange={(e) => handleDatasetFiles(takeFiles(e))}
+        />
+        <form onSubmit={handleDatasetPath} className="import-form">
+          <input
+            type="text"
+            placeholder="…or a .zip or folder path on the server"
+            aria-label="Dataset path on the server"
+            value={datasetPath}
+            onChange={(e) => setDatasetPath(e.target.value)}
+          />
+          <button type="submit" disabled={!datasetPath.trim() || importing}>
+            Import dataset
+          </button>
+        </form>
+      </div>
+
+      {uploading && (
+        <div className="import-progress" role="status">
+          <span>
+            {uploading.total > 0 && uploading.sent < uploading.total
+              ? `Uploading ${uploading.name} - ${Math.floor((uploading.sent / uploading.total) * 100)}% ` +
+                `(${readableSize(uploading.sent)} of ${readableSize(uploading.total)})`
+              : `Importing ${uploading.name}…`}
+          </span>
+          {uploading.total > 0 && (
+            <ProgressBar
+              fraction={uploading.sent / uploading.total}
+              label={`Upload of ${uploading.name}`}
+              className="import-progress__bar"
+            />
+          )}
+        </div>
+      )}
 
       {/* While a removal is being asked about, its own box says it. */}
       {error && !doomed && (
@@ -317,7 +494,9 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
                   tell from full ones. */}
               {s.type === "rtsp"
                 ? `live · ${s.fps}fps · ${s.stored_frames} frame(s) saved`
-                : `${s.width}x${s.height} @ ${s.fps}fps · ${s.frame_count} frames`}
+                : s.type === "dataset"
+                  ? `imported dataset · ${s.stored_frames} image(s) · ${s.width}x${s.height}`
+                  : `${s.width}x${s.height} @ ${s.fps}fps · ${s.frame_count} frames`}
             </span>
             <div className="source-actions">
               {s.type === "video" && (
@@ -351,7 +530,9 @@ function SourcePanel({ project, onProcessed, onWatch, onLabel, onRemoved }: Prop
                 </button>
               )}
             </div>
-            {s.is_frozen ? (
+            {/* A validation clip is counted by watching the video; an
+                imported dataset has no video to watch. */}
+            {s.type === "dataset" ? null : s.is_frozen ? (
               <span className="frozen-badge">
                 <IconCheck /> Frozen · {s.ground_truth_vehicle_count} real vehicles
               </span>
